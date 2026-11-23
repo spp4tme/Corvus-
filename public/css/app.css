@@ -233,6 +233,21 @@ code, pre, .mono { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .editor { flex: 1 1 auto; min-height: 60vh; white-space: pre; tab-size: 4; font-size: var(--fs-sm); }
 @media (max-width: 599px) { .editor { min-height: 0; height: 100%; } dialog.dlg .dlg-body:has(.editor) { padding: 0; } }
 
+/* ---------- Git ---------- */
+.row.wrap { flex-wrap: wrap; }
+.diff {
+  margin: 0; padding: var(--s-3); overflow: auto; max-height: 70vh;
+  background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--r-md);
+  font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; white-space: pre; tab-size: 4;
+}
+.diff .d-add { color: var(--c-ok); background: var(--c-ok-soft); display: inline; }
+.diff .d-del { color: var(--c-danger); background: var(--c-danger-soft); }
+.diff .d-hunk { color: var(--c-accent); }
+.diff .d-meta { color: var(--c-text-faint); font-weight: var(--fw-bold); }
+.commit-box { margin-top: var(--s-4); }
+.commit-msg { min-height: 80px; font-family: var(--font-ui); font-size: 16px; }
+.section-title .btn { margin-left: auto; text-transform: none; letter-spacing: 0; }
+
 /* ---------- États ---------- */
 .state { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--s-3); padding: var(--s-10) var(--s-4); color: var(--c-text-dim); }
 .state svg.state-icon { width: 40px; height: 40px; color: var(--c-text-faint); }

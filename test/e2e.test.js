@@ -3,6 +3,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { startFakeSshd } from './helpers/fake-sshd.js';
 import { startCorvus } from './helpers/corvus.js';
 
@@ -280,6 +281,133 @@ describe('fichiers (SFTP)', () => {
     const r = await c.api('GET', '/api/journal?type=sftp');
     const events = r.body.entries.map((e) => e.event);
     for (const e of ['upload', 'edit', 'download', 'rename', 'delete', 'mkdir']) assert.ok(events.includes(e), `événement ${e} absent`);
+  });
+});
+
+describe('git distant', () => {
+  const G = () => `/api/hosts/${hostId}/git`;
+  let repo;
+  let work;
+  let originDir;
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } });
+  const ident = ['-c', 'user.name=Test', '-c', 'user.email=test@corvus.local'];
+
+  before(() => {
+    work = path.join(sshd.root, 'work');
+    originDir = path.join(sshd.root, 'origin.git');
+    fs.mkdirSync(work);
+    git(work, 'init', '-q', '-b', 'main');
+    git(work, 'config', 'user.name', 'Corvus Test');
+    git(work, 'config', 'user.email', 'test@corvus.local');
+    git(work, 'config', 'core.autocrlf', 'false');
+    fs.writeFileSync(path.join(work, 'README.md'), '# Démo\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '-q', '-m', 'Premier commit');
+    git(sshd.root, 'clone', '-q', '--bare', work, originDir);
+    git(work, 'remote', 'add', 'origin', originDir.replace(/\\/g, '/'));
+    git(work, 'fetch', '-q', 'origin');
+    git(work, 'branch', '-q', '--set-upstream-to=origin/main', 'main');
+    repo = `${sshd.rootVirtual}/work`;
+  });
+
+  test('statut d\'un dépôt propre', async () => {
+    const r = await c.api('GET', `${G()}/status?repo=${encodeURIComponent(repo)}`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.branch, 'main');
+    assert.equal(r.body.upstream, 'origin/main');
+    assert.deepEqual(r.body.files, []);
+    assert.deepEqual(r.body.remotes, ['origin']);
+  });
+
+  test('modifications, fichiers non suivis (nom avec quote), diff', async () => {
+    fs.appendFileSync(path.join(work, 'README.md'), 'ligne ajoutée\n');
+    fs.writeFileSync(path.join(work, "fichier d'essai.txt"), 'nouveau\n');
+    const st = await c.api('GET', `${G()}/status?repo=${encodeURIComponent(repo)}`);
+    const byPath = Object.fromEntries(st.body.files.map((f) => [f.path, f]));
+    assert.equal(byPath['README.md'].unstaged, true);
+    assert.equal(byPath["fichier d'essai.txt"].untracked, true);
+    const d = await c.api('GET', `${G()}/diff?repo=${encodeURIComponent(repo)}&path=README.md`);
+    assert.match(d.body.text, /\+ligne ajoutée/);
+    const du = await c.api('GET', `${G()}/diff?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent("fichier d'essai.txt")}&untracked=1`);
+    assert.match(du.body.text, /\+nouveau/);
+  });
+
+  test('stage / unstage', async () => {
+    const s = await c.api('POST', `${G()}/stage`, { repo, paths: ['README.md', "fichier d'essai.txt"] });
+    assert.equal(s.status, 200, JSON.stringify(s.body));
+    assert.ok(s.body.files.every((f) => f.staged));
+    const u = await c.api('POST', `${G()}/unstage`, { repo, paths: ["fichier d'essai.txt"] });
+    assert.equal(u.body.files.find((f) => f.path === "fichier d'essai.txt").untracked, true);
+    const all = await c.api('POST', `${G()}/stage`, { repo, all: true });
+    assert.ok(all.body.files.every((f) => f.staged));
+  });
+
+  test('commit : le message n\'est jamais interprété par le shell', async () => {
+    const message = "Ajout d'un $(touch PWNED) `id` ; echo \"x\"";
+    const r = await c.api('POST', `${G()}/commit`, { repo, message });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.subject, message);
+    assert.equal(r.body.status.ahead, 1);
+    assert.ok(!fs.existsSync(path.join(work, 'PWNED')));
+  });
+
+  test('push puis historique et détail d\'un commit', async () => {
+    const p = await c.api('POST', `${G()}/push`, { repo });
+    assert.equal(p.status, 200, JSON.stringify(p.body));
+    assert.equal(p.body.status.ahead, 0);
+    const log = await c.api('GET', `${G()}/log?repo=${encodeURIComponent(repo)}`);
+    assert.equal(log.body.commits.length, 2);
+    assert.match(log.body.commits[0].subject, /^Ajout d'un/);
+    const show = await c.api('GET', `${G()}/show?repo=${encodeURIComponent(repo)}&sha=${log.body.commits[1].sha}`);
+    assert.match(show.body.text, /Premier commit/);
+  });
+
+  test('branches : création, checkout, retour', async () => {
+    const cr = await c.api('POST', `${G()}/checkout`, { repo, branch: 'feature/essai', create: true });
+    assert.equal(cr.status, 200, JSON.stringify(cr.body));
+    assert.equal(cr.body.branch, 'feature/essai');
+    const br = await c.api('GET', `${G()}/branches?repo=${encodeURIComponent(repo)}`);
+    assert.deepEqual(br.body.local.map((b) => b.name).sort(), ['feature/essai', 'main']);
+    assert.ok(br.body.remote.some((b) => b.name === 'origin/main'));
+    const back = await c.api('POST', `${G()}/checkout`, { repo, branch: 'main' });
+    assert.equal(back.body.branch, 'main');
+  });
+
+  test('pull --ff-only depuis l\'origine', async () => {
+    const other = path.join(sshd.root, 'other');
+    git(sshd.root, 'clone', '-q', originDir, other);
+    fs.writeFileSync(path.join(other, 'distant.txt'), 'depuis ailleurs\n');
+    git(other, 'add', '-A');
+    git(other, ...ident, 'commit', '-q', '-m', 'Commit distant');
+    git(other, 'push', '-q', 'origin', 'main');
+    await c.api('POST', `${G()}/fetch`, { repo });
+    const before = await c.api('GET', `${G()}/status?repo=${encodeURIComponent(repo)}`);
+    assert.equal(before.body.behind, 1);
+    const r = await c.api('POST', `${G()}/pull`, { repo });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.status.behind, 0);
+    assert.ok(fs.existsSync(path.join(work, 'distant.txt')));
+  });
+
+  test('validation : injection dans les refs, SHA, dépôt inexistant', async () => {
+    const inj = await c.api('POST', `${G()}/checkout`, { repo, branch: 'main; touch PWNED2' });
+    assert.equal(inj.status, 400);
+    const opt = await c.api('POST', `${G()}/checkout`, { repo, branch: '--orphan=x' });
+    assert.equal(opt.status, 400);
+    const sha = await c.api('GET', `${G()}/show?repo=${encodeURIComponent(repo)}&sha=HEAD;id`);
+    assert.equal(sha.status, 400);
+    const missing = await c.api('GET', `${G()}/status?repo=${encodeURIComponent(`${repo}-absent`)}`);
+    assert.equal(missing.status, 404);
+    const notRepo = await c.api('GET', `${G()}/status?repo=${encodeURIComponent(sshd.rootVirtual)}`);
+    assert.equal(notRepo.status, 400);
+    assert.equal(notRepo.body.error.code, 'NOT_A_REPO');
+    assert.ok(!fs.existsSync(path.join(work, 'PWNED2')));
+  });
+
+  test('découverte des dépôts sous ~', async () => {
+    const r = await c.api('GET', `${G()}/discover`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.repos.includes('~/work'), JSON.stringify(r.body));
   });
 });
 
