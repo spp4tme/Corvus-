@@ -45,7 +45,7 @@ export class HostRegistry {
     const has = (k) => Object.prototype.hasOwnProperty.call(input, k);
     const base = existing ? { ...existing } : {
       id: newId(), icon: 'server', group: '', pinned: false, tmux: false, tmuxSession: 'corvus',
-      repos: [], createdAt: Date.now(),
+      claudeDir: '', claudeCmd: 'claude', repos: [], createdAt: Date.now(),
     };
     if (!existing || has('hostname')) base.hostname = v.hostname(input.hostname);
     if (!existing || has('username')) base.username = v.username(input.username);
@@ -60,6 +60,8 @@ export class HostRegistry {
     if (has('pinned')) base.pinned = v.bool(input.pinned);
     if (has('tmux')) base.tmux = v.bool(input.tmux);
     if (has('tmuxSession')) base.tmuxSession = v.tmuxName(input.tmuxSession);
+    if (has('claudeDir')) base.claudeDir = v.claudeDir(input.claudeDir);
+    if (has('claudeCmd')) base.claudeCmd = v.claudeCmd(input.claudeCmd);
     if (has('repos')) {
       if (!Array.isArray(input.repos) || input.repos.length > 50) throw v.bad('Liste de dépôts invalide');
       base.repos = [...new Set(input.repos.map((r) => v.remotePath(r, 'dépôt').trim()))];

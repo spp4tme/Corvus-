@@ -572,3 +572,167 @@ describe('host key TOFU', () => {
     assert.equal(again.body.hostKey.firstSeen, true);
   });
 });
+
+describe('Claude Code', () => {
+  let sshd2;
+  let hid; // hôte avec faux tmux + faux claude
+  let hidNoTmux; // hôte du sshd principal (sans tmux)
+  let hidNoClaude; // tmux présent, claude absent
+  let sshd3;
+  const calls = () => (fs.existsSync(path.join(sshd2.tmuxDir, 'calls.log')) ? fs.readFileSync(path.join(sshd2.tmuxDir, 'calls.log'), 'utf8') : '');
+  const open = async (host, query = {}) => {
+    const t = c.terminal({ host, claude: '1', ...query });
+    await t.opened;
+    await t.ready();
+    return t;
+  };
+  const errorOf = (t) => t.ctl.find((x) => x.t === 'error');
+  const sessionNames = async (host = hid) => (await c.api('GET', `/api/hosts/${host}/claude`)).body.sessions.map((s) => s.name);
+
+  before(async () => {
+    sshd2 = await startFakeSshd({ fakeTmux: true });
+    sshd3 = await startFakeSshd({ fakeTmux: true, fakeClaude: false });
+    hid = (await c.api('POST', '/api/hosts', hostBody({ name: 'Banc Claude', port: sshd2.port }))).body.host.id;
+    hidNoClaude = (await c.api('POST', '/api/hosts', hostBody({ name: 'Sans Claude', port: sshd3.port }))).body.host.id;
+    hidNoTmux = (await c.api('POST', '/api/hosts', hostBody({ name: 'Sans tmux' }))).body.host.id;
+  });
+  after(async () => {
+    await sshd2?.close();
+    await sshd3?.close();
+  });
+
+  test('réglages de l\'hôte : valeurs par défaut, validation, avertissement', async () => {
+    const r = await c.api('GET', `/api/hosts/${hid}`);
+    assert.equal(r.body.host.claudeCmd, 'claude');
+    assert.equal(r.body.host.claudeDir, '');
+    for (const claudeCmd of ['claude; id', 'rm -rf /', 'claude $(id)', 'claude `id`']) {
+      assert.equal((await c.api('PATCH', `/api/hosts/${hid}`, { claudeCmd })).status, 400, claudeCmd);
+    }
+    assert.equal((await c.api('PATCH', `/api/hosts/${hid}`, { claudeDir: 'a\nb' })).status, 400);
+    const ok = await c.api('PATCH', `/api/hosts/${hid}`, { claudeCmd: 'claude --dangerously-skip-permissions', claudeDir: '~/proj' });
+    assert.equal(ok.status, 200);
+    const st = await c.api('GET', `/api/hosts/${hid}/claude`);
+    assert.equal(st.body.settings.dangerous, true);
+    assert.equal(st.body.settings.dir, '~/proj');
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeCmd: '', claudeDir: '' });
+    assert.equal((await c.api('GET', `/api/hosts/${hid}/claude`)).body.settings.dangerous, false);
+  });
+
+  test('diagnostic : tmux absent, claude absent, tout présent', async () => {
+    const a = (await c.api('GET', `/api/hosts/${hidNoTmux}/claude`)).body;
+    assert.equal(a.tmux, false);
+    assert.match(a.tmuxInstall, /apt install tmux/);
+    const b = (await c.api('GET', `/api/hosts/${hidNoClaude}/claude`)).body;
+    assert.equal(b.tmux, true);
+    assert.equal(b.claude.installed, false);
+    assert.match(b.install.native, /claude\.ai\/install\.sh/);
+    const d = (await c.api('GET', `/api/hosts/${hid}/claude`)).body;
+    assert.equal(d.claude.installed, true);
+    assert.match(d.claude.version, /9\.9\.9/);
+    assert.deepEqual(d.sessions, []);
+  });
+
+  test('message clair (pas de terminal cassé) si tmux ou claude manquent', async () => {
+    const t1 = await open(hidNoTmux);
+    assert.equal(errorOf(t1).code, 'TMUX_MISSING');
+    assert.match(errorOf(t1).message, /apt install tmux/);
+    const t2 = await open(hidNoClaude);
+    assert.equal(errorOf(t2).code, 'CLAUDE_MISSING');
+    assert.match(errorOf(t2).message, /install\.sh/);
+    assert.match(errorOf(t2).message, /npm install -g @anthropic-ai\/claude-code/);
+    assert.deepEqual((await c.api('GET', '/api/terminals')).body.terminals.filter((x) => x.hostId === hidNoTmux || x.hostId === hidNoClaude), []);
+  });
+
+  test('nouvelle session : tmux new-session -A, nom corvus-claude-<hôte>-<n>, journal', async () => {
+    const t = await open(hid);
+    assert.ok(t.ctl.find((x) => x.t === 'ready'));
+    await t.waitFor((x) => x.output.includes('FAKE-CLAUDE'));
+    assert.match(t.output, /args=\[\]/);
+    assert.ok(calls().includes('new-session -A -s corvus-claude-banc-claude-1'));
+    assert.deepEqual(await sessionNames(), ['corvus-claude-banc-claude-1']);
+    const ready = t.ctl.find((x) => x.t === 'ready');
+    assert.equal(ready.session.claude, 'corvus-claude-banc-claude-1');
+    assert.equal(ready.session.tmux, 'corvus-claude-banc-claude-1');
+    assert.equal(ready.session.title, 'Banc Claude · Claude');
+    const j = (await c.api('GET', '/api/journal?type=terminal')).body.entries;
+    assert.ok(j.some((e) => e.event === 'claude-open' && /nouvelle corvus-claude-banc-claude-1/.test(e.detail)));
+    t.ws.send(JSON.stringify({ t: 'close' }));
+  });
+
+  test('deuxième session numérotée, reprise de la première sans la relancer', async () => {
+    const t2 = await open(hid);
+    await t2.waitFor((x) => x.output.includes('FAKE-CLAUDE'));
+    assert.deepEqual((await sessionNames()).sort(), ['corvus-claude-banc-claude-1', 'corvus-claude-banc-claude-2']);
+    const t1 = await open(hid, { claudeSession: 'corvus-claude-banc-claude-1' });
+    await t1.waitFor((x) => x.output.includes('rattache a corvus-claude-banc-claude-1'));
+    assert.ok(!t1.output.includes('FAKE-CLAUDE'), 'la session existante ne relance pas claude');
+    const j = (await c.api('GET', '/api/journal?type=terminal')).body.entries;
+    assert.ok(j.some((e) => e.event === 'claude-open' && /^reprise corvus-claude-banc-claude-1/.test(e.detail)));
+  });
+
+  test('commande personnalisée et dossier de projet (espaces, apostrophe)', async () => {
+    const dir = "mon projet d'essai";
+    fs.mkdirSync(path.join(sshd2.root, dir), { recursive: true });
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeCmd: 'claude --continue', claudeDir: `~/${dir}` });
+    const t = await open(hid);
+    await t.waitFor((x) => x.output.includes('FAKE-CLAUDE'));
+    assert.match(t.output, /args=\[--continue\]/);
+    assert.ok(t.output.includes(dir), 'cwd = dossier de projet');
+    // dossier passé à la volée par le client (nouvelle session depuis la liste)
+    const t2 = await open(hid, { claudeDir: '' });
+    await t2.waitFor((x) => x.output.includes('FAKE-CLAUDE'));
+    assert.ok(!t2.output.includes(dir), 'dossier vide = dossier personnel');
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeCmd: 'claude', claudeDir: '' });
+  });
+
+  test('sans confirmation des outils : option acceptée, tracée au journal', async () => {
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeCmd: 'claude --dangerously-skip-permissions' });
+    const t = await open(hid);
+    await t.waitFor((x) => x.output.includes('FAKE-CLAUDE'));
+    assert.match(t.output, /args=\[--dangerously-skip-permissions\]/);
+    const j = (await c.api('GET', '/api/journal?type=terminal')).body.entries;
+    assert.ok(j.some((e) => e.event === 'claude-open' && /sans confirmation des outils/.test(e.detail)));
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeCmd: 'claude' });
+  });
+
+  test('dossier inexistant : erreur claire, rien n\'est exécuté', async () => {
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeDir: '~/nexiste-pas' });
+    const t = await open(hid);
+    assert.equal(errorOf(t).code, 'CLAUDE_DIR_MISSING');
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeDir: '' });
+  });
+
+  test('injection : dossier, nom de session et commande ne sont jamais interprétés', async () => {
+    const marker = path.join(sshd2.root, 'pwned');
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeDir: `x'; touch '${sshd2.rootVirtual}/pwned'; '` });
+    const t = await open(hid);
+    assert.equal(errorOf(t).code, 'CLAUDE_DIR_MISSING');
+    await c.api('PATCH', `/api/hosts/${hid}`, { claudeDir: '' });
+    const t2 = await open(hid, { claudeDir: `$(touch '${sshd2.rootVirtual}/pwned')` });
+    assert.equal(errorOf(t2).code, 'CLAUDE_DIR_MISSING');
+    const t3 = await open(hid, { claudeSession: `corvus-claude-a-1; touch '${sshd2.rootVirtual}/pwned'` });
+    assert.equal(errorOf(t3).code, 'BAD_REQUEST');
+    // la commande vient de l'hôte, pas du client : un paramètre claudeCmd est simplement ignoré
+    const t4 = await open(hid, { claudeCmd: `claude; touch '${sshd2.rootVirtual}/pwned'` });
+    await t4.waitFor((x) => x.output.includes('FAKE-CLAUDE'));
+    assert.match(t4.output, /args=\[\]/);
+    assert.equal(fs.existsSync(marker), false);
+  });
+
+  test('tuer une session : supprimée, puis 404 ; nom invalide refusé', async () => {
+    const [first] = await sessionNames();
+    const r = await c.api('DELETE', `/api/hosts/${hid}/claude/sessions/${first}`);
+    assert.equal(r.status, 200);
+    assert.ok(!(await sessionNames()).includes(first));
+    assert.equal((await c.api('DELETE', `/api/hosts/${hid}/claude/sessions/${first}`)).status, 404);
+    assert.equal((await c.api('DELETE', `/api/hosts/${hid}/claude/sessions/${encodeURIComponent('x; id')}`)).status, 400);
+    assert.equal((await c.api('DELETE', `/api/hosts/${hid}/claude/sessions/shell`)).status, 400);
+    const j = (await c.api('GET', '/api/journal?type=terminal')).body.entries;
+    assert.ok(j.some((e) => e.event === 'claude-kill' && e.detail === first));
+  });
+
+  test('authentification requise', async () => {
+    const anon = await fetch(`${env.base}/api/hosts/${hid}/claude`);
+    assert.equal(anon.status, 401);
+  });
+});

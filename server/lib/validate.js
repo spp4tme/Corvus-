@@ -112,6 +112,44 @@ export function tmuxName(v) {
   return v;
 }
 
+// --- Claude Code -------------------------------------------------------------------------
+// La commande Claude est stockée avec l'hôte, jamais fournie par le client au moment du lancement.
+// Chaque mot est restreint à un jeu de caractères sans aucun métacaractère shell ; le premier doit
+// être exactement `claude`.
+const CLAUDE_WORD_RE = /^-{0,2}[A-Za-z0-9][A-Za-z0-9._=:@\/+,-]{0,79}$/;
+const CLAUDE_SESSION_RE = /^corvus-claude-[a-z0-9-]{1,24}-\d{1,4}$/;
+export const CLAUDE_DANGEROUS_FLAG = '--dangerously-skip-permissions';
+
+/** Retourne la commande normalisée (mots séparés par un espace) ; vide → `claude`. */
+export function claudeCmd(v) {
+  if (v === undefined || v === null || String(v).trim() === '') return 'claude';
+  const s = str(v, 'commande Claude', { max: 300 });
+  const words = s.trim().split(/\s+/);
+  if (words.length > 12) throw bad('Commande Claude : 12 mots maximum');
+  if (words[0] !== 'claude') throw bad('Commande Claude : doit commencer par « claude »');
+  for (const w of words) {
+    if (!CLAUDE_WORD_RE.test(w)) throw bad(`Commande Claude : « ${w.slice(0, 30)} » n'est pas autorisé (lettres, chiffres et . _ = : @ / + , - seulement)`);
+  }
+  return words.join(' ');
+}
+
+export function claudeDangerous(cmd) {
+  return String(cmd || '').split(/\s+/).includes(CLAUDE_DANGEROUS_FLAG);
+}
+
+/** Dossier de projet : chemin distant, ou vide pour le dossier personnel. */
+export function claudeDir(v) {
+  if (v === undefined || v === null || String(v).trim() === '') return '';
+  const s = remotePath(String(v).trim(), 'dossier de projet');
+  if (/[\x00-\x1f\x7f]/.test(s)) throw bad('Dossier de projet : caractères interdits');
+  return s;
+}
+
+export function claudeSession(v) {
+  if (typeof v !== 'string' || !CLAUDE_SESSION_RE.test(v)) throw bad('Nom de session Claude invalide');
+  return v;
+}
+
 export function oneOf(v, values, name) {
   if (!values.includes(v)) throw bad(`${name} invalide`);
   return v;

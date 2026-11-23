@@ -11,6 +11,7 @@ import { HostRegistry } from './lib/hosts.js';
 import { KnownHosts } from './lib/knownhosts.js';
 import { SshPool } from './lib/ssh.js';
 import { Journal } from './lib/journal.js';
+import { ClaudeService } from './lib/claude.js';
 import { TerminalManager } from './lib/terminal.js';
 import { ensureDir } from './lib/store.js';
 import { HttpError } from './lib/validate.js';
@@ -63,8 +64,9 @@ export function createCorvus(overrides = {}) {
   const journal = new Journal(config.dataDir);
   const pool = new SshPool({ hosts, knownHosts, config });
   const ctx = { config, auth, vault, hosts, knownHosts, journal, pool, version: pkg.version, token, tokenCreated: created };
+  ctx.claude = new ClaudeService({ pool, hosts, journal });
   ctx.terminals = new TerminalManager({
-    pool, hosts, journal, config,
+    pool, hosts, journal, config, claude: ctx.claude,
     onNotify: (n) => ctx.notify?.(n),
   });
   createServices(ctx);

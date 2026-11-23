@@ -10,6 +10,7 @@ import { parseStatus } from '../server/lib/git.js';
 import { q, qPath, shWrap } from '../server/lib/shell.js';
 import * as v from '../server/lib/validate.js';
 import { Vault } from '../server/lib/vault.js';
+import * as cl from '../server/lib/claude.js';
 import { classifyAddress } from '../server/lib/netcheck.js';
 import { tokenMatches, FailureLimiter, originAllowed } from '../server/lib/auth.js';
 
@@ -232,5 +233,85 @@ describe('réseau et auth', () => {
     assert.equal(originAllowed('https://pi.tail1234.ts.net', req({ host: '127.0.0.1:7680', 'x-forwarded-host': 'pi.tail1234.ts.net' }), opts), true);
     assert.equal(originAllowed('https://evil.ts.net', req({ host: '127.0.0.1:7680', 'x-forwarded-host': 'pi.tail1234.ts.net' }), opts), false);
     assert.equal(originAllowed('null', req({ host: 'x' }), opts), false);
+  });
+});
+
+describe('Claude Code', () => {
+  test('commande : mots simples acceptés, tout le reste refusé', () => {
+    assert.equal(v.claudeCmd(undefined), 'claude');
+    assert.equal(v.claudeCmd('  '), 'claude');
+    assert.equal(v.claudeCmd('claude   --continue'), 'claude --continue');
+    assert.equal(v.claudeCmd('claude --model claude-opus-4-1 -c'), 'claude --model claude-opus-4-1 -c');
+    for (const bad of ['rm -rf /', 'claude; id', 'claude && id', 'claude | cat', 'claude $(id)', 'claude `id`', 'claude > /tmp/x',
+      'claude "a b"', "claude 'x'", 'claude --x=$HOME', '/usr/bin/claude', 'CLAUDE', 'claude ' + '--a '.repeat(13)]) {
+      assert.throws(() => v.claudeCmd(bad), { code: 'BAD_REQUEST' }, bad);
+    }
+    assert.equal(v.claudeDangerous('claude --dangerously-skip-permissions'), true);
+    assert.equal(v.claudeDangerous('claude --continue'), false);
+  });
+
+  test('dossier : chemin libre sans caractère de contrôle', () => {
+    assert.equal(v.claudeDir(''), '');
+    assert.equal(v.claudeDir(' ~/projets/a b '), '~/projets/a b');
+    assert.throws(() => v.claudeDir('/tmp/a\nb'), { code: 'BAD_REQUEST' });
+    assert.throws(() => v.claudeDir('/tmp/a\tb'), { code: 'BAD_REQUEST' });
+  });
+
+  test('nom de session : forme corvus-claude-<hôte>-<n> uniquement', () => {
+    assert.equal(v.claudeSession('corvus-claude-pi-3'), 'corvus-claude-pi-3');
+    for (const bad of ['', 'x', 'corvus-claude-pi', 'corvus-claude-Pi-1', 'corvus-claude-pi-1; id', 'corvus-claude-a b-1', 'corvus-claude--1x']) {
+      assert.throws(() => v.claudeSession(bad), { code: 'BAD_REQUEST' }, bad);
+    }
+  });
+
+  test('numérotation : plus petit numéro libre, alias normalisé', () => {
+    const host = { id: 'abcdef0123456789', name: 'Pi du salon é' };
+    assert.equal(cl.hostSlug(host), 'pi-du-salon-e');
+    assert.equal(cl.hostSlug({ id: 'abcdef0123456789', name: '!!!' }), 'habcdef');
+    assert.equal(cl.nextSessionName(host, []), 'corvus-claude-pi-du-salon-e-1');
+    assert.equal(cl.nextSessionName(host, ['corvus-claude-pi-du-salon-e-1', 'corvus-claude-pi-du-salon-e-3']), 'corvus-claude-pi-du-salon-e-2');
+    assert.ok(cl.sessionName({ id: 'x'.repeat(16), name: 'a'.repeat(80) }, 12).length <= 'corvus-claude-'.length + 20 + 5);
+  });
+
+  test('script de lancement : tmux -A, dossier et commande échappés', () => {
+    const script = cl.launchScript({ session: 'corvus-claude-pi-1', dir: "~/mon projet d'essai", cmd: 'claude --continue' });
+    assert.ok(script.startsWith("sh -c '"));
+    assert.ok(script.includes('new-session -A -s'));
+    assert.ok(script.includes('has-session'));
+    // le dossier passe par qPath : ~ développé hors quotes, apostrophe neutralisée
+    assert.ok(script.includes('"$HOME"/'));
+    assert.ok(!script.includes("d'essai"), 'apostrophe non échappée');
+    // sans dossier : pas d'option -c
+    assert.ok(script.includes(' -c "$HOME"/'));
+    assert.ok(!cl.launchScript({ session: 'corvus-claude-pi-1', dir: '', cmd: 'claude' }).includes('"$HOME"/'));
+    // une session invalide ne produit jamais de script
+    assert.throws(() => cl.launchScript({ session: 'x; id', dir: '', cmd: 'claude' }), { code: 'BAD_REQUEST' });
+    assert.throws(() => cl.launchScript({ session: 'corvus-claude-pi-1', dir: '', cmd: 'claude; id' }), { code: 'BAD_REQUEST' });
+  });
+
+  test('script généré : syntaxe shell valide, même avec des guillemets dans le dossier', () => {
+    const script = cl.launchScript({ session: 'corvus-claude-pi-1', dir: '/tmp/a"b\'c $x', cmd: 'claude --continue' });
+    execFileSync('bash', ['-n', '-c', script]);
+    const m = /^sh -c ('(?:[^']|'\\'')*')$/s.exec(script);
+    assert.ok(m, 'enveloppe sh -c unique');
+  });
+
+  test('diagnostic : analyse de la sortie (sessions Claude seulement)', () => {
+    const out = [
+      '##tmux', 'yes', '##claude', '/home/u/.local/bin/claude', '##version', '2.0.1 (Claude Code)', '##dir', 'yes', '##sessions',
+      'corvus-claude-pi-1|1700000000|1|1700000500|/home/u/proj', 'corvus-claude-pi-2|1700000100|0|1700000200|/home/u/a|b', 'autre|1|0|1|/', '##end',
+    ].join('\n');
+    const st = cl.parseStatus(out);
+    assert.equal(st.tmux, true);
+    assert.deepEqual(st.claude, { installed: true, path: '/home/u/.local/bin/claude', version: '2.0.1 (Claude Code)' });
+    assert.equal(st.dirOk, true);
+    assert.equal(st.sessions.length, 2);
+    assert.equal(st.sessions[0].attached, 1);
+    assert.equal(st.sessions[1].cwd, '/home/u/a|b');
+    const none = cl.parseStatus('##tmux\nno\n##claude\n##sessions\n##end');
+    assert.equal(none.tmux, false);
+    assert.equal(none.claude.installed, false);
+    assert.equal(none.dirOk, null);
+    assert.deepEqual(none.sessions, []);
   });
 });

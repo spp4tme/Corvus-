@@ -7,6 +7,7 @@ import {
   toast, toastError, loadingState, emptyState, errorState, badge, segmented,
 } from '../ui/components.js';
 import { state, sortedHosts } from '../state.js';
+import { claudeButton, dangerNote, isDangerous } from './claude.js';
 
 export default {
   mount(el) {
@@ -67,6 +68,7 @@ export default {
         result,
         h('div', { class: 'host-actions' },
           button({ label: 'Terminal', icon: 'terminal', variant: 'primary', onClick: () => openTerminal(host) }),
+          claudeButton(() => host, (opts) => openClaudeTerminal(host, opts)),
           button({ label: 'Fichiers', icon: 'folder', onClick: () => { state.setActiveHost(host.id); location.hash = '#/files'; } }),
           testBtn));
     }
@@ -88,6 +90,15 @@ export default {
 export function openTerminal(host) {
   state.setActiveHost(host.id);
   location.hash = `#/terminal?host=${host.id}&n=${Date.now()}`;
+}
+
+/** Ouvre un onglet Claude Code : la vue Terminal lit ces paramètres (session à reprendre, dossier). */
+export function openClaudeTerminal(host, { session, dir } = {}) {
+  state.setActiveHost(host.id);
+  const q = new URLSearchParams({ host: host.id, claude: '1', n: String(Date.now()) });
+  if (session) q.set('claudeSession', session);
+  if (dir !== undefined) q.set('claudeDir', dir);
+  location.hash = `#/terminal?${q}`;
 }
 
 /** Affiche le résultat d'un test (et gère le cas critique d'une host key modifiée). */
@@ -169,6 +180,20 @@ export function editHost(host) {
   const pin = checkbox('Épingler en haut de la liste', { checked: !!v.pinned });
   const tmux = checkbox('Ouvrir les terminaux dans tmux (reprise après coupure)', { checked: !!v.tmux });
   const fTmux = field({ label: 'Nom de session tmux', control: input({ value: v.tmuxSession || 'corvus' }) });
+  const fClaudeDir = field({
+    label: 'Claude Code : dossier de projet par défaut',
+    control: input({ value: v.claudeDir || '', placeholder: '~/projets/mon-appli (vide = dossier personnel)' }),
+    hint: 'Dossier de travail des nouvelles sessions Claude Code sur cet hôte.',
+  });
+  const fClaudeCmd = field({
+    label: 'Claude Code : commande',
+    control: input({ value: v.claudeCmd || 'claude', placeholder: 'claude' }),
+    hint: 'Par défaut « claude ». Exemples : claude --continue, claude --model opus. Seuls des mots simples sont acceptés.',
+  });
+  const claudeWarn = h('div', { class: 'span-2', hidden: true }, dangerNote());
+  const syncClaudeWarn = () => { claudeWarn.hidden = !isDangerous(fClaudeCmd.querySelector('input').value); };
+  fClaudeCmd.querySelector('input').addEventListener('input', syncClaudeWarn);
+  syncClaudeWarn();
   const result = h('div', { hidden: true, class: 'span-2' });
 
   const form = h('form', { class: 'form-grid', novalidate: true },
@@ -178,6 +203,7 @@ export function editHost(host) {
     h('div', { class: 'field span-2' }, h('span', { class: 'field-label' }, 'Icône'), iconPick),
     fGroup, groupsList, fTmux,
     h('div', { class: 'span-2' }, pin, tmux),
+    fClaudeDir, fClaudeCmd, claudeWarn,
     result);
 
   const collect = () => {
@@ -186,6 +212,7 @@ export function editHost(host) {
       name: val(fName).trim(), hostname: val(fHost).trim(), port: val(fPort).trim() || 22, username: val(fUser).trim(),
       authType, icon: iconName, group: val(fGroup).trim(), pinned: pin.input.checked, tmux: tmux.input.checked,
       tmuxSession: val(fTmux).trim() || 'corvus',
+      claudeDir: val(fClaudeDir).trim(), claudeCmd: val(fClaudeCmd).trim() || 'claude',
     };
     if (authType === 'password' && val(fPass)) body.password = val(fPass);
     if (authType === 'key') {
@@ -230,7 +257,8 @@ export function editHost(host) {
 
   const d = openDialog({ title: isNew ? 'Nouvel hôte' : `Modifier ${host.name}`, body: form, actions, wide: true });
   form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
-  setTimeout(() => (isNew ? fHost : fName).querySelector('input').focus(), 30);
+  // Focus initial, sauf si l'utilisateur a déjà choisi un champ (sinon la saisie en cours lui serait volée).
+  setTimeout(() => { if (!form.contains(document.activeElement)) (isNew ? fHost : fName).querySelector('input').focus(); }, 30);
 
   async function save() {
     if (!check()) return;

@@ -300,3 +300,76 @@ test('desktop 1280px : rail latéral et reprise des onglets après rechargement'
   await auditLayout(page, 'desktop supervision');
   await ctx.close();
 });
+
+test('mobile 375px : Claude Code (bouton, session tmux, plein écran, reprise, arrêt)', async (t) => {
+  if (!browser) return t.skip('aucun navigateur Chromium/Edge disponible');
+  const sshd2 = await startFakeSshd({ fakeTmux: true });
+  try {
+    await env.client.login();
+    const created = await env.client.api('POST', '/api/hosts', {
+      name: 'Claude Pi', hostname: '127.0.0.1', port: sshd2.port, username: sshd2.user, authType: 'password', password: sshd2.password,
+    });
+    assert.equal(created.status, 201);
+    const hostId = created.body.host.id;
+
+    const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    page.on('console', (m) => { if (m.type() === 'error' && !/favicon|manifest|apple-touch|sw\.js/.test(m.text())) errors.push(m.text()); });
+    await page.goto(env.base);
+    await page.getByLabel('Token d\'accès').fill(env.token);
+    await page.getByRole('button', { name: 'Se connecter' }).click();
+    const card = page.locator('article.host-card', { hasText: 'Claude Pi' });
+    await card.waitFor();
+    await auditLayout(page, 'hôtes avec bouton Claude');
+    await page.screenshot({ path: path.join(OUT, 'mobile-claude-1-hotes.png') });
+
+    // Un tap, aucune session : ouverture directe d'un onglet qui lance claude dans tmux, en plein écran.
+    await card.getByRole('button', { name: 'Claude Code' }).click();
+    await page.waitForFunction(() => document.querySelector('.term-pane:not([hidden]) .xterm-rows')?.textContent.includes('FAKE-CLAUDE'), null, { timeout: 20000 });
+    assert.ok(await page.locator('.app.term-full').count(), 'terminal en plein écran sur mobile');
+    assert.equal(await page.locator('.app-header').isVisible(), false);
+    assert.ok((await page.locator('.term-tab[aria-selected="true"]').innerText()).includes('Claude'));
+    for (const name of ['Shift+Tab (changer de mode dans Claude Code)', 'Entrée', 'Esc', 'Tab']) {
+      assert.ok(await page.getByRole('button', { name }).first().isVisible(), `touche ${name} visible`);
+    }
+    assert.ok(await page.getByRole('button', { name: 'Flèche haut' }).isVisible());
+    // pas de zoom au focus : le champ de saisie d'xterm fait 16 px
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.xterm-helper-textarea')).fontSize), '16px');
+    await auditLayout(page, 'terminal Claude plein écran');
+    await page.screenshot({ path: path.join(OUT, 'mobile-claude-2-terminal.png') });
+    const first = (await env.client.api('GET', `/api/hosts/${hostId}/claude`)).body.sessions.map((s) => s.name);
+    assert.deepEqual(first, ['corvus-claude-claude-pi-1']);
+
+    // Sortie du plein écran, retour à la liste des hôtes.
+    await page.getByRole('button', { name: 'Quitter le plein écran' }).click();
+    await page.locator('.app-header').waitFor();
+    await page.getByRole('link', { name: 'Hôtes' }).click();
+
+    // Une session existe : le bouton ouvre la liste (Reprendre / Tuer / Nouvelle session).
+    await card.getByRole('button', { name: 'Claude Code' }).click();
+    const dlg = page.locator('dialog[open]');
+    await dlg.getByText('corvus-claude-claude-pi-1').waitFor();
+    assert.ok(await dlg.getByRole('button', { name: 'Reprendre' }).isVisible());
+    await auditLayout(page, 'liste des sessions Claude');
+    await page.screenshot({ path: path.join(OUT, 'mobile-claude-3-sessions.png') });
+    await dlg.getByRole('button', { name: 'Nouvelle session' }).click();
+    await page.waitForFunction(() => document.querySelector('.term-pane:not([hidden]) .xterm-rows')?.textContent.includes('FAKE-CLAUDE'));
+    await page.waitForFunction(async (id) => (await (await fetch(`/api/hosts/${id}/claude`)).json()).sessions.length === 2, hostId, { timeout: 15000 });
+
+    // Tuer une session depuis la liste.
+    await page.getByRole('button', { name: 'Quitter le plein écran' }).click();
+    await page.getByRole('link', { name: 'Hôtes' }).click();
+    await card.getByRole('button', { name: 'Claude Code' }).click();
+    await dlg.getByRole('button', { name: 'Tuer corvus-claude-claude-pi-1', exact: true }).click();
+    await page.getByRole('button', { name: 'Tuer', exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector('dialog[open]')?.textContent.includes('corvus-claude-claude-pi-1'), null, { timeout: 15000 });
+    assert.deepEqual((await env.client.api('GET', `/api/hosts/${hostId}/claude`)).body.sessions.map((s) => s.name), ['corvus-claude-claude-pi-2']);
+    await page.screenshot({ path: path.join(OUT, 'mobile-claude-4-apres-kill.png') });
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  } finally {
+    await sshd2.close();
+  }
+});

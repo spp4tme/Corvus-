@@ -33,9 +33,10 @@ tiers.
 8. [Installer la PWA (iOS, Android, desktop)](#installer-la-pwa)
 9. [Configuration](#configuration-variables-denvironnement)
 10. [Sécurité](#sécurité)
-11. [Tests](#tests)
-12. [Structure du dépôt](#structure-du-dépôt)
-13. [Limites connues](#limites-connues)
+11. [Claude Code](#claude-code)
+12. [Tests](#tests)
+13. [Structure du dépôt](#structure-du-dépôt)
+14. [Limites connues](#limites-connues)
 
 ---
 
@@ -45,6 +46,7 @@ tiers.
 |---|---|
 | **Hôtes** | Ajout, modification, suppression ; alias, icône, groupes, épingles ; auth par mot de passe, clé privée (+ passphrase) ou agent SSH ; bouton **Tester la connexion** ; import depuis `tailscale status --json`. |
 | **Terminal** | Onglets multiples (xterm.js), thèmes, taille de police, redimensionnement du PTY, **barre de touches mobile** (Esc, Tab, Ctrl/Alt, flèches, `\| ~ / -`, ^C, ^D, coller, copier, dictée), clavier externe, **OSC 52** (copie vers le presse-papiers), **reconnexion WebSocket automatique** (reprise à l'octet près), **mode tmux** (`tmux new-session -A`) pour survivre aux coupures. |
+| **Claude Code** | Bouton **Claude Code** sur chaque hôte (fiche + barre du terminal) : lance `claude` dans une session tmux dédiée, liste des sessions actives (Reprendre / Tuer / Nouvelle session), plein écran mobile. Voir [Claude Code](#claude-code). |
 | **Fichiers** | Navigation SFTP, envoi (avec progression, glisser-déposer), téléchargement, nouveau dossier, renommer/déplacer, supprimer, **éditeur texte** (≤ 2 Mo, détection de conflit), aperçu d'images. |
 | **Git** | Statut, branches (checkout, suivi, création), historique, diff, stage/unstage, commit, `pull --ff-only`, push, fetch, découverte des dépôts. |
 | **Supervision** | CPU, RAM, swap, disques, réseau, uptime, charge, température (Pi), **graphiques temps réel** (relevé toutes les 3 s), processus (kill), **Docker** (liste, start/stop/restart, logs). |
@@ -288,6 +290,46 @@ Résumé (détails et procédures dans [docs/securite.md](docs/securite.md)) :
 
 ---
 
+## Claude Code
+
+Le bouton **Claude Code** (fiche de l'hôte, et barre des onglets du terminal) ouvre un onglet qui
+lance `claude` sur l'hôte, **toujours dans tmux**. Si vous perdez le réseau ou fermez
+l'application, Claude Code continue de tourner ; en rouvrant, vous reprenez la même session.
+
+**Prérequis sur l'hôte** : `tmux` et `claude` installés pour l'utilisateur SSH. Si l'un manque,
+Corvus n'ouvre pas de terminal : il affiche un message avec la commande d'installation
+(`curl -fsSL https://claude.ai/install.sh | bash` ou `npm install -g @anthropic-ai/claude-code`,
+`sudo apt install tmux`). Le premier lancement de `claude` demande de vous connecter à votre compte.
+
+**Comportement**
+- **Un tap** : s'il n'y a aucune session Claude sur l'hôte, un nouvel onglet s'ouvre directement.
+  S'il y en a, une liste s'affiche : **Reprendre**, **Tuer** (arrête la session tmux) et
+  **Nouvelle session** (avec un dossier de travail modifiable).
+- **Sessions** : nommées `corvus-claude-<hôte>-<n>` (`<hôte>` = alias en minuscules, 20 caractères
+  maximum). Reprise par `tmux new-session -A`. La liste vient de `tmux list-sessions` : elle
+  montre aussi les sessions ouvertes depuis un autre appareil.
+- **Fiche de l'hôte** : *dossier de projet par défaut* (vide = dossier personnel) et *commande*
+  (`claude` par défaut ; ex. `claude --continue`, `claude --model opus`).
+- **Mobile** : l'onglet s'ouvre en plein écran (bouton pour quitter ou revenir). La barre de touches
+  ajoute **⇧Tab** (changer de mode dans Claude Code) et **Entrée** à Esc, Tab, Ctrl, Alt et flèches.
+  Le champ de saisie d'xterm fait 16 px et le double-tap est neutralisé pour éviter les zooms.
+
+**Sécurité**
+- La commande est **construite côté serveur** (`server/lib/claude.js`). Le navigateur n'envoie que
+  le nom de session (forme `corvus-claude-…-<n>` validée) et un dossier ; il ne peut pas fournir
+  de commande.
+- La commande de l'hôte doit commencer par `claude`, avec des mots simples (lettres, chiffres et
+  `. _ = : @ / + , -`) : ni guillemets, ni `; | & $ > <`, ni texte libre avec espaces.
+- Le dossier est échappé pour le shell (`~` développé hors quotes) ; il est vérifié (`test -d`)
+  avant la création de la session.
+- **`--dangerously-skip-permissions`** est accepté, mais : avertissement permanent dans la fiche
+  de l'hôte et dans la liste des sessions, confirmation avant chaque **nouvelle** session, et
+  mention dans le journal. Avec cette option, Claude Code agit **sans demander de confirmation** :
+  réservez-la à une machine ou un dossier jetable.
+- Le journal enregistre `claude-open` (nouvelle ou reprise) et `claude-kill`.
+
+---
+
 ## Tests
 
 ```bash
@@ -302,14 +344,17 @@ npm run check:pure
   `ssh2.Server`). Ce sshd exécute les commandes via bash (Git for Windows sous Windows,
   `/bin/bash` sous Linux), sert le SFTP sur un dossier temporaire et fournit un faux `docker`
   qui journalise ses arguments. Couverture : auth, CSRF, hôtes, secrets, TOFU, terminal et
-  reprise, SFTP, git (dont tentatives d'injection), supervision, processus, Docker, proxy, push.
+  reprise, SFTP, git (dont tentatives d'injection), supervision, processus, Docker, proxy, push,
+  Claude Code (faux `tmux` et faux `claude` fournis par le sshd de test : numérotation, reprise,
+  arrêt, dossier avec apostrophe, messages d'absence, tentatives d'injection).
 - **Unitaires** (`test/unit.test.js`) : parseurs sur de **vraies sorties Linux** (Raspberry Pi :
   `/proc`, `df`, `ps`), `git status -z`, échappement shell vérifié dans un vrai `sh`, validateurs,
   coffre chiffré, classification d'adresses.
 - **Interface** (`test/ui.test.js`) : Edge/Chrome headless via `playwright-core` (aucun navigateur
   téléchargé), viewport **375 px** (mobile) et 1280 px. Vérifie l'absence de débordement
   horizontal, les cibles tactiles ≥ 44 px et l'absence d'erreurs JavaScript. Parcours : connexion,
-  ajout d'hôte, terminal, fichiers, git, supervision, Docker, services, réglages. Captures dans
+  ajout d'hôte, terminal, fichiers, git, supervision, Docker, services, réglages, Claude Code
+  (bouton, plein écran, liste des sessions, arrêt). Captures dans
   `test-results/`.
 
 ---
@@ -323,7 +368,7 @@ server/                 Backend Node.js (Express + ws + ssh2)
   config.js             Variables d'environnement
   cli.js                npm run token / token:rotate
   lib/                  auth, vault (chiffrement), ssh (pool + TOFU), terminal, sftp, git,
-                        monitor, proxy, push, journal, validate, shell (échappement)…
+                        monitor, proxy, push, journal, validate, shell (échappement), claude (sessions tmux)…
   routes/               Routes REST par module
 public/                 PWA (vanilla JS, modules ES, sans build)
   index.html, sw.js, manifest.webmanifest, icons/
@@ -371,6 +416,11 @@ Dockerfile, docker-compose.yml
 - **Dictée vocale** : Chrome, Edge et Safari seulement (pas Firefox) ; la reconnaissance peut
   passer par les serveurs du navigateur.
 - **CSP** : `style-src 'unsafe-inline'` est nécessaire pour xterm.js (les scripts restent stricts).
+- **Claude Code** : testé contre un **faux** `tmux` et un **faux** `claude` (le vrai `tmux` et le
+  vrai `claude` n'ont pas été lancés par les tests) ; l'enchaînement réel (installation de `claude`,
+  mode « sans confirmation », comportement d'un vrai `tmux` à la perte de réseau) est à essayer sur
+  un hôte. La liste des sessions suppose un `tmux` récent (`list-sessions -F`). Les sessions Claude
+  sont des sessions tmux : un `claude` qui se termine ferme la session.
 - **Host keys** : en TOFU, la toute première connexion fait confiance à la clé présentée. Comparez
   l'empreinte affichée par « Tester » avec celle de la machine.
 

@@ -65,7 +65,7 @@ function longname(name, st) {
  * Démarre un sshd de test.
  * @returns {Promise<{port, root, rootVirtual, user, password, clientKey, hostKey, close, sessions}>}
  */
-export async function startFakeSshd({ port = 0, hostKey, root } = {}) {
+export async function startFakeSshd({ port = 0, hostKey, root, fakeTmux = false, fakeClaude = fakeTmux } = {}) {
   const { bash, extraPath } = findBash();
   const hk = hostKey || utils.generateKeyPairSync('ed25519').private;
   const workdir = root || fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-sshd-'));
@@ -88,9 +88,49 @@ export async function startFakeSshd({ port = 0, hostKey, root } = {}) {
     'esac',
     '',
   ].join('\n'), { mode: 0o755 });
+  // Faux tmux (sessions = fichiers dans tmuxDir, appels journalisés) et faux claude (affiche ses arguments et son dossier).
+  const tmuxDir = path.join(fakeBin, 'tmux-state');
+  if (fakeTmux) {
+    fs.writeFileSync(path.join(fakeBin, 'tmux'), [
+      '#!/bin/bash',
+      'D="$CORVUS_FAKE_TMUX_DIR"; mkdir -p "$D"',
+      'echo "tmux $*" >> "$D/calls.log"',
+      'sub="$1"; shift',
+      'case "$sub" in',
+      '  list-sessions) for f in "$D"/sess-*; do [ -e "$f" ] || continue; n="$(basename "$f")"; n="${n#sess-}"; echo "$n|1700000000|0|1700000100|$(cat "$f")"; done; exit 0 ;;',
+      '  has-session) [ "$1" = "-t" ] && t="${2#=}"; [ -e "$D/sess-$t" ]; exit $? ;;',
+      '  kill-session) t="${2#=}"; [ -e "$D/sess-$t" ] || { echo "can\'t find session $t" >&2; exit 1; }; rm "$D/sess-$t"; exit 0 ;;',
+      '  new-session)',
+      '    name=""; dir=""; cmd=""',
+      '    while [ $# -gt 0 ]; do case "$1" in -A) shift ;; -s) name="$2"; shift 2 ;; -c) dir="$2"; shift 2 ;; *) cmd="$1"; shift ;; esac; done',
+      '    if [ -e "$D/sess-$name" ]; then echo "[fake-tmux] rattache a $name"; exit 0; fi',
+      '    printf %s "${dir:-$HOME}" > "$D/sess-$name"',
+      '    echo "[fake-tmux] cree $name"',
+      '    [ -n "$dir" ] && cd "$dir"',
+      '    [ -n "$cmd" ] && bash -c "$cmd"',
+      '    exit 0 ;;',
+      'esac',
+      'exit 1',
+      '',
+    ].join('\n'), { mode: 0o755 });
+  }
+  if (fakeClaude) {
+    fs.writeFileSync(path.join(fakeBin, 'claude'), [
+      '#!/bin/bash',
+      'if [ "$1" = "--version" ]; then echo "9.9.9 (Claude Code)"; exit 0; fi',
+      'echo "FAKE-CLAUDE args=[$*] cwd=$PWD"',
+      '',
+    ].join('\n'), { mode: 0o755 });
+  }
+  // « claude absent » : le PATH du poste de test peut contenir un vrai claude, qu'il faut masquer.
+  const hideClaude = fakeTmux && !fakeClaude;
+  const hostPath = hideClaude
+    ? (process.env.PATH || '').split(path.delimiter).filter((d) => !d || !['claude', 'claude.exe', 'claude.cmd', 'claude.bat'].some((n) => fs.existsSync(path.join(d, n)))).join(path.delimiter)
+    : process.env.PATH;
   const env = {
     ...process.env,
-    PATH: [fakeBin, ...extraPath, process.env.PATH].join(isWin ? ';' : ':'),
+    CORVUS_FAKE_TMUX_DIR: toVirtual(tmuxDir),
+    PATH: [fakeBin, ...extraPath, hostPath].join(isWin ? ';' : ':'),
     CORVUS_FAKE_DOCKER_LOG: dockerLog,
     HOME: workdir,
     SHELL: isWin ? '/usr/bin/bash' : '/bin/bash',
@@ -167,7 +207,7 @@ export async function startFakeSshd({ port = 0, hostKey, root } = {}) {
     rootVirtual: toVirtual(workdir),
     user, password, clientKey,
     hostKey: hk,
-    stats,
+    stats, tmuxDir,
     bash, env, dockerLog,
     async close() {
       for (const c of children) c.kill();

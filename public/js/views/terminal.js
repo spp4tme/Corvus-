@@ -6,6 +6,7 @@ import { icon } from '../ui/icons.js';
 import { button, openDialog, emptyState, toast, badge } from '../ui/components.js';
 import { state, sortedHosts } from '../state.js';
 import { terminalTheme } from '../terminal-themes.js';
+import { claudeButton } from './claude.js';
 
 const tabs = [];
 let active = null;
@@ -28,8 +29,9 @@ export const termSettings = {
 };
 
 class Tab {
-  constructor({ hostId, sessionId = null, title }) {
+  constructor({ hostId, sessionId = null, title, claude = null }) {
     this.hostId = hostId;
+    this.claude = claude; // { session?, dir? } : premier lancement d'une session Claude Code
     this.sessionId = sessionId;
     this.title = title;
     this.received = undefined; // offset absolu reçu ; undefined → rejeu complet
@@ -103,6 +105,11 @@ class Tab {
       q.set('host', this.hostId);
       q.set('cols', String(Math.max(10, dims.cols || 80)));
       q.set('rows', String(Math.max(4, dims.rows || 24)));
+      if (this.claude) {
+        q.set('claude', '1');
+        if (this.claude.session) q.set('claudeSession', this.claude.session);
+        if (this.claude.dir !== undefined) q.set('claudeDir', this.claude.dir);
+      }
     }
     this.setStatus(this.attempts ? 'reconnexion' : 'connexion', this.attempts ? 'Reconnexion…' : 'Connexion…');
     const ws = new WebSocket(`${proto}//${location.host}/ws/terminal?${q}`);
@@ -212,9 +219,9 @@ function applyModifiers(d) {
   return out;
 }
 
-function openTab(hostId, sessionId, focus = true) {
+function openTab(hostId, sessionId, focus = true, { title, claude } = {}) {
   const host = state.host(hostId);
-  const tab = new Tab({ hostId, sessionId, title: host?.name || 'Terminal' });
+  const tab = new Tab({ hostId, sessionId, title: title || (claude ? `${host?.name || 'Terminal'} · Claude` : host?.name || 'Terminal'), claude });
   tabs.push(tab);
   activate(tab, focus);
   return tab;
@@ -253,7 +260,35 @@ function renderTabs() {
     t.tabEl = el;
     ui.tabs.appendChild(el);
   }
-  ui.tabs.appendChild(button({ label: 'Nouveau terminal', icon: 'plus', iconOnly: true, variant: 'ghost', onClick: pickHost }));
+  clear(ui.actions);
+  ui.actions.appendChild(button({ label: 'Nouveau terminal', icon: 'plus', iconOnly: true, variant: 'ghost', onClick: pickHost }));
+  ui.actions.appendChild(claudeButton(claudeTarget, (opts) => openClaudeTab(claudeTarget(), opts), { iconOnly: true }));
+  ui.actions.appendChild(button({
+    label: fullscreen ? 'Quitter le plein écran' : 'Plein écran', icon: fullscreen ? 'collapse' : 'expand', iconOnly: true, variant: 'ghost',
+    pressed: fullscreen, onClick: () => setFullscreen(!fullscreen),
+  }));
+}
+
+// Hôte visé par le bouton Claude : celui de l'onglet actif, sinon le dernier hôte utilisé.
+function claudeTarget() {
+  const host = state.host(active?.hostId) || state.host(state.activeHostId) || sortedHosts()[0];
+  return host || null;
+}
+
+function openClaudeTab(host, opts) {
+  if (!host) return;
+  state.setActiveHost(host.id);
+  openTab(host.id, null, true, { claude: opts });
+  if (matchMedia('(max-width: 599px)').matches) setFullscreen(true);
+}
+
+// Plein écran (mobile surtout) : masque l'en-tête et la navigation pour laisser tout l'écran au terminal.
+let fullscreen = false;
+function setFullscreen(on) {
+  fullscreen = on;
+  document.querySelector('.app')?.classList.toggle('term-full', on);
+  renderTabs();
+  tabs.forEach((t) => t.fitSoon(true));
 }
 
 function renderEmpty() {
@@ -279,6 +314,8 @@ function pickHost() {
 const KEYS = [
   { label: 'Esc', send: '\x1b' },
   { label: 'Tab', send: '\t' },
+  { label: '⇧Tab', send: '\x1b[Z', title: 'Shift+Tab (changer de mode dans Claude Code)' },
+  { label: 'Entrée', send: '\r', title: 'Entrée' },
   { label: 'Ctrl', mod: 'ctrl' },
   { label: 'Alt', mod: 'alt' },
   { label: 'Flèche haut', icon: 'arrowUp', arrow: 'A' },
@@ -392,8 +429,9 @@ export default {
     });
     stage.appendChild(empty);
     const keybar = buildKeybar();
-    ui = { tabs: tabsEl, stage, keybar, empty };
-    el.append(h('div', { class: 'term-view' }, tabsEl, stage, keybar));
+    const actionsEl = h('div', { class: 'term-actions' });
+    ui = { tabs: tabsEl, actions: actionsEl, stage, keybar, empty };
+    el.append(h('div', { class: 'term-view' }, h('div', { class: 'term-bar' }, tabsEl, actionsEl), stage, keybar));
     termSettings.apply();
     renderTabs();
     renderEmpty();
@@ -401,13 +439,15 @@ export default {
     new ResizeObserver(() => active?.fitSoon()).observe(stage);
     window.addEventListener('corvus:viewport', () => active?.fitSoon());
     window.addEventListener('online', () => tabs.forEach((t) => t.nudge()));
+    // Hors de la vue Terminal, le plein écran n'a plus de sens (la navigation serait masquée).
+    window.addEventListener('hashchange', () => { if (fullscreen && !location.hash.startsWith('#/terminal')) setFullscreen(false); });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') tabs.forEach((t) => t.nudge());
     });
 
     // Restaurer les sessions encore vivantes côté serveur (rechargement de page).
     get('/api/terminals').then(({ terminals }) => {
-      for (const s of terminals) if (!s.exited && !tabs.some((t) => t.sessionId === s.id)) openTab(s.hostId, s.id, false);
+      for (const s of terminals) if (!s.exited && !tabs.some((t) => t.sessionId === s.id)) openTab(s.hostId, s.id, false, { title: s.title });
       if (!active && tabs.length) activate(tabs[0], false);
       this.show({ params });
     }).catch(() => this.show({ params }));
@@ -417,7 +457,12 @@ export default {
     const hostId = params?.get('host');
     if (hostId && state.host(hostId)) {
       history.replaceState(null, '', '#/terminal');
-      openTab(hostId);
+      if (params.get('claude') === '1') {
+        const claude = {};
+        if (params.get('claudeSession')) claude.session = params.get('claudeSession');
+        if (params.has('claudeDir')) claude.dir = params.get('claudeDir');
+        openClaudeTab(state.host(hostId), claude);
+      } else openTab(hostId);
     } else {
       active?.fitSoon(true);
       if (active && !matchMedia('(pointer: coarse)').matches) active.term.focus();

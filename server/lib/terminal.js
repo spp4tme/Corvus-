@@ -58,8 +58,8 @@ export function tmuxCommand(sessionName) {
 }
 
 export class TerminalManager {
-  constructor({ pool, hosts, journal, config, onNotify }) {
-    Object.assign(this, { pool, hosts, journal, config, onNotify });
+  constructor({ pool, hosts, journal, config, onNotify, claude }) {
+    Object.assign(this, { pool, hosts, journal, config, onNotify, claude });
     this.sessions = new Map();
   }
 
@@ -69,7 +69,7 @@ export class TerminalManager {
 
   view(s) {
     return {
-      id: s.id, hostId: s.hostId, title: s.title, tmux: s.tmux, createdAt: s.createdAt,
+      id: s.id, hostId: s.hostId, title: s.title, tmux: s.tmux, claude: s.claude, createdAt: s.createdAt,
       attached: s.clients.size, exited: s.exited, cols: s.cols, rows: s.rows,
     };
   }
@@ -80,14 +80,26 @@ export class TerminalManager {
     return s;
   }
 
-  async create(hostId, { cols = 80, rows = 24, tmux, tmuxSession } = {}) {
+  /**
+   * `claude` : { session?, dir? } → ouvre Claude Code dans une session tmux dédiée (voir claude.js).
+   * La commande est construite côté serveur ; le client ne fournit que le nom de session et le dossier.
+   */
+  async create(hostId, { cols = 80, rows = 24, tmux, tmuxSession, claude } = {}) {
     if (this.sessions.size >= MAX_SESSIONS) throw new HttpError(429, 'TOO_MANY', 'Trop de terminaux ouverts');
     const host = this.hosts.get(hostId);
-    const useTmux = tmux ?? host.tmux;
-    const name = v.tmuxName(tmuxSession ?? host.tmuxSession);
+    let useTmux = tmux ?? host.tmux;
+    let name = v.tmuxName(tmuxSession ?? host.tmuxSession);
+    let command = useTmux ? tmuxCommand(name) : undefined;
+    let claudeInfo = null;
     let stream;
     try {
-      stream = await this.pool.openPty(hostId, { cols, rows, command: useTmux ? tmuxCommand(name) : undefined });
+      if (claude) {
+        claudeInfo = await this.claude.prepare(hostId, claude);
+        useTmux = true;
+        name = claudeInfo.name;
+        command = claudeInfo.command;
+      }
+      stream = await this.pool.openPty(hostId, { cols, rows, command });
     } catch (err) {
       this.journal.add({ type: 'terminal', event: 'open', ok: false, host, detail: err.message });
       throw err;
@@ -95,8 +107,9 @@ export class TerminalManager {
     const s = {
       id: crypto.randomBytes(9).toString('base64url'),
       hostId,
-      title: host.name,
+      title: claudeInfo ? `${host.name} · Claude` : host.name,
       tmux: useTmux ? name : null,
+      claude: claudeInfo ? name : null,
       createdAt: Date.now(),
       cols, rows,
       stream,
@@ -107,8 +120,11 @@ export class TerminalManager {
       oscTail: '',
     };
     this.sessions.set(s.id, s);
-    this.journal.add({ type: 'terminal', event: 'open', host, detail: useTmux ? `tmux:${name}` : 'shell' });
-    log.info(`Terminal ${s.id} ouvert sur ${host.name}${useTmux ? ` (tmux ${name})` : ''}`);
+    this.journal.add({
+      type: 'terminal', event: claudeInfo ? 'claude-open' : 'open', host,
+      detail: claudeInfo ? `${claudeInfo.resumed ? 'reprise' : 'nouvelle'} ${name}${claudeInfo.dangerous ? ' (sans confirmation des outils)' : ''}` : useTmux ? `tmux:${name}` : 'shell',
+    });
+    log.info(`Terminal ${s.id} ouvert sur ${host.name}${claudeInfo ? ` (Claude, tmux ${name})` : useTmux ? ` (tmux ${name})` : ''}`);
 
     const onData = (chunk) => {
       s.buffer.push(chunk);
@@ -207,6 +223,9 @@ export class TerminalManager {
           rows: v.int(params.get('rows') ?? undefined, 'rows', { min: 4, max: 300, def: 24 }),
           tmux: params.has('tmux') ? params.get('tmux') === '1' : undefined,
           tmuxSession: params.get('tmuxSession') || undefined,
+          claude: params.get('claude') === '1'
+            ? { session: params.get('claudeSession') || undefined, dir: params.get('claudeDir') ?? undefined }
+            : undefined,
         });
       }
     } catch (err) {
