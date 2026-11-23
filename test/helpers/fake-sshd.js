@@ -73,9 +73,25 @@ export async function startFakeSshd({ port = 0, hostKey, root } = {}) {
   const allowedPub = utils.parseKey(clientKey.public);
   const user = 'tester';
   const password = 'motdepasse-test';
+  // Faux binaire `docker` (hors du dossier personnel) : sorties prévisibles + journal des appels.
+  const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-fakebin-'));
+  const dockerLog = path.join(fakeBin, 'docker.log');
+  fs.writeFileSync(path.join(fakeBin, 'docker'), [
+    '#!/bin/bash',
+    'echo "$*" >> "$CORVUS_FAKE_DOCKER_LOG"',
+    'case "$1" in',
+    "  ps) echo '{\"ID\":\"abc123def4567890\",\"Names\":\"web\",\"Image\":\"nginx:alpine\",\"State\":\"running\",\"Status\":\"Up 2 hours\",\"Ports\":\"0.0.0.0:80->80/tcp\"}'",
+    "      echo '{\"ID\":\"0011223344556677\",\"Names\":\"db\",\"Image\":\"postgres:16\",\"State\":\"exited\",\"Status\":\"Exited (0) 1 day ago\",\"Ports\":\"\"}' ;;",
+    '  start|stop|restart) echo "$2" ;;',
+    '  logs) echo "2026-01-01T00:00:00Z journal de ${@: -1}" ;;',
+    '  *) echo "inconnu" >&2; exit 1 ;;',
+    'esac',
+    '',
+  ].join('\n'), { mode: 0o755 });
   const env = {
     ...process.env,
-    PATH: [...extraPath, process.env.PATH].join(isWin ? ';' : ':'),
+    PATH: [fakeBin, ...extraPath, process.env.PATH].join(isWin ? ';' : ':'),
+    CORVUS_FAKE_DOCKER_LOG: dockerLog,
     HOME: workdir,
     SHELL: isWin ? '/usr/bin/bash' : '/bin/bash',
     LC_ALL: 'C',
@@ -152,7 +168,7 @@ export async function startFakeSshd({ port = 0, hostKey, root } = {}) {
     user, password, clientKey,
     hostKey: hk,
     stats,
-    bash, env,
+    bash, env, dockerLog,
     async close() {
       for (const c of children) c.kill();
       for (const c of clients) c.end();

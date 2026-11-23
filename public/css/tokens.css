@@ -25,11 +25,15 @@
   --c-overlay: rgba(4, 6, 10, 0.72);
   --c-focus: #b8c8ff;
 
-  /* Séries de graphiques (supervision) */
-  --c-chart-1: #8aa4ff;
-  --c-chart-2: #46d39a;
-  --c-chart-3: #f2b84b;
-  --c-chart-4: #e08cff;
+  /* Séries de graphiques (supervision) — ordre catégoriel fixe, validé (validate_palette.js,
+     mode sombre, surfaces #141821 et #0c0e13 : bande L, chroma, CVD ΔE ≥ 26, contraste ≥ 3:1).
+     Distinctes des couleurs de statut (ok / warn / danger), qui restent réservées. */
+  --c-chart-1: #3987e5;
+  --c-chart-2: #d95926;
+  --c-chart-3: #9085e9;
+  --c-chart-4: #c98500;
+  --c-chart-grid: #232937;
+  --c-chart-axis: #6f788a;
 
   /* Espacements — base 4 */
   --s-1: 4px;

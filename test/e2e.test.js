@@ -411,6 +411,54 @@ describe('git distant', () => {
   });
 });
 
+describe('supervision et docker', () => {
+  const M = () => `/api/hosts/${hostId}`;
+
+  test('statistiques : CPU calculé, mémoire, disques, uptime', async () => {
+    const r = await c.api('GET', `${M()}/monitor/stats`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.mem && r.body.mem.total > 0, 'mémoire');
+    assert.ok(r.body.mem.percent >= 0 && r.body.mem.percent <= 100);
+    assert.ok(r.body.uptime > 0, 'uptime');
+    assert.ok(Array.isArray(r.body.disks) && r.body.disks.length > 0, 'disques');
+    assert.ok(r.body.cpu === null || (r.body.cpu >= 0 && r.body.cpu <= 100));
+    const r2 = await c.api('GET', `${M()}/monitor/stats`);
+    assert.equal(typeof r2.body.cpu, 'number', 'CPU calculé au 2e relevé');
+  });
+
+  test('processus : liste puis kill', async () => {
+    const spawn = await env.corvus.ctx.pool.exec(hostId, 'sleep 300 >/dev/null 2>&1 & echo $!');
+    const pid = Number(spawn.stdout.toString().trim());
+    assert.ok(pid > 1);
+    const list = await c.api('GET', `${M()}/monitor/processes`);
+    assert.equal(list.status, 200, JSON.stringify(list.body));
+    assert.ok(list.body.processes.some((p) => p.pid === pid), 'sleep présent');
+    const k = await c.api('POST', `${M()}/monitor/kill`, { pid, signal: 'TERM' });
+    assert.equal(k.status, 200, JSON.stringify(k.body));
+    const bad = await c.api('POST', `${M()}/monitor/kill`, { pid: '1; reboot', signal: 'TERM' });
+    assert.equal(bad.status, 400);
+    const badSig = await c.api('POST', `${M()}/monitor/kill`, { pid, signal: 'TERM; reboot' });
+    assert.equal(badSig.status, 400);
+  });
+
+  test('docker : liste, actions, logs, validation', async () => {
+    const list = await c.api('GET', `${M()}/docker/containers`);
+    assert.equal(list.status, 200, JSON.stringify(list.body));
+    assert.deepEqual(list.body.containers.map((x) => [x.name, x.state]), [['web', 'running'], ['db', 'exited']]);
+    const st = await c.api('POST', `${M()}/docker/db/start`);
+    assert.equal(st.status, 200, JSON.stringify(st.body));
+    const logs = await c.api('GET', `${M()}/docker/web/logs?tail=50`);
+    assert.match(logs.body.logs, /journal de web/);
+    const inj = await c.api('POST', `${M()}/docker/${encodeURIComponent('web;id')}/restart`);
+    assert.equal(inj.status, 400);
+    const act = await c.api('POST', `${M()}/docker/web/rm`);
+    assert.equal(act.status, 400);
+    const calls = fs.readFileSync(sshd.dockerLog, 'utf8');
+    assert.match(calls, /^start db$/m);
+    assert.match(calls, /^logs --tail 50 --timestamps web$/m);
+  });
+});
+
 describe('host key TOFU', () => {
   test('changement d\'empreinte détecté puis réinitialisation explicite', async () => {
     const port = sshd.port;

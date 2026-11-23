@@ -211,6 +211,42 @@ test('mobile 375px : git (découverte, diff, commit, historique)', async (t) => 
   await ctx.close();
 });
 
+test('mobile 375px : supervision (tuiles, graphiques, processus, docker)', async (t) => {
+  if (!browser) return t.skip('aucun navigateur disponible');
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`${env.base}/#/monitor`);
+  await page.getByLabel('Token d\'accès').fill(env.token);
+  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await page.getByLabel('Hôte').selectOption({ label: 'Pi du salon' });
+  await page.locator('.tile').first().waitFor();
+  // 3 relevés : le CPU devient un nombre et les courbes ont des points
+  await page.waitForFunction(() => document.querySelectorAll('.values-table tbody tr').length >= 3, null, { timeout: 20000 });
+  const cpuText = await page.locator('.tile').first().locator('.tile-value').innerText();
+  assert.match(cpuText, /\d+ %/);
+  await auditLayout(page, 'supervision');
+  await page.screenshot({ path: path.join(OUT, 'mobile-9-supervision.png'), fullPage: false });
+  // survol d'un graphique : infobulle
+  const canvas = page.locator('.chart-canvas').first();
+  const box = await canvas.boundingBox();
+  await page.mouse.move(box.x + box.width - 10, box.y + box.height / 2);
+  await page.locator('.chart-tip').first().waitFor();
+
+  await page.getByRole('tab', { name: 'Processus' }).click();
+  await page.getByText(/processus — \d+ affichés/).waitFor();
+  await auditLayout(page, 'processus');
+  await page.getByRole('tab', { name: 'Docker' }).click();
+  await page.getByText('nginx:alpine', { exact: false }).waitFor();
+  await auditLayout(page, 'docker');
+  await page.screenshot({ path: path.join(OUT, 'mobile-10-docker.png') });
+  await page.getByRole('button', { name: 'Logs' }).first().click();
+  await page.getByText('journal de web').waitFor();
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('desktop 1280px : rail latéral et reprise des onglets après rechargement', async (t) => {
   if (!browser) return t.skip('aucun navigateur disponible');
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -227,5 +263,13 @@ test('desktop 1280px : rail latéral et reprise des onglets après rechargement'
   await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent.includes('ui-42'), null, { timeout: 15000 });
   await page.screenshot({ path: path.join(OUT, 'desktop-terminal.png') });
   await auditLayout(page, 'desktop terminal');
+  await page.getByRole('link', { name: 'Supervision' }).click();
+  await page.getByLabel('Hôte').selectOption({ label: 'Pi du salon' });
+  await page.waitForFunction(() => document.querySelectorAll('.values-table tbody tr').length >= 4, null, { timeout: 25000 });
+  const net = page.locator('.chart-canvas').nth(2);
+  const nb = await net.boundingBox();
+  await page.mouse.move(nb.x + nb.width * 0.9, nb.y + nb.height / 2);
+  await page.screenshot({ path: path.join(OUT, 'desktop-supervision.png') });
+  await auditLayout(page, 'desktop supervision');
   await ctx.close();
 });
