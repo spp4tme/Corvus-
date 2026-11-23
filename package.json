@@ -1,0 +1,32 @@
+{
+  "name": "corvus",
+  "version": "0.1.0",
+  "description": "Corvus — passerelle SSH/SFTP/DevOps auto-hébergée pour réseaux Tailscale, en PWA.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "token": "node server/cli.js token",
+    "token:rotate": "node server/cli.js rotate-token",
+    "test": "node --test --test-concurrency=1 test/",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e.test.js",
+    "test:ui": "node --test test/ui.test.js",
+    "check:pure": "node scripts/check-pure-js.js"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "express": "^5.1.0",
+    "ssh2": "^1.16.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

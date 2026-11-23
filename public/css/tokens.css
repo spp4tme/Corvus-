@@ -1,0 +1,81 @@
+/* Corvus — source unique des valeurs de thème. Toutes les vues passent par ces variables. */
+:root {
+  color-scheme: dark;
+
+  /* Couleurs — « plumage de corbeau » : encre bleu-noir, reflets bleu-violet. */
+  --c-bg: #0c0e13;
+  --c-surface: #141821;
+  --c-surface-2: #1b202b;
+  --c-surface-3: #242a37;
+  --c-border: #2b3240;
+  --c-border-strong: #3a4354;
+  --c-text: #e7eaf2;
+  --c-text-dim: #a2abbd;
+  --c-text-faint: #6f788a;
+  --c-accent: #8aa4ff;
+  --c-accent-strong: #a9bcff;
+  --c-accent-soft: rgba(138, 164, 255, 0.14);
+  --c-on-accent: #0b1020;
+  --c-ok: #46d39a;
+  --c-ok-soft: rgba(70, 211, 154, 0.14);
+  --c-warn: #f2b84b;
+  --c-warn-soft: rgba(242, 184, 75, 0.14);
+  --c-danger: #ff7a7a;
+  --c-danger-soft: rgba(255, 122, 122, 0.14);
+  --c-overlay: rgba(4, 6, 10, 0.72);
+  --c-focus: #b8c8ff;
+
+  /* Séries de graphiques (supervision) */
+  --c-chart-1: #8aa4ff;
+  --c-chart-2: #46d39a;
+  --c-chart-3: #f2b84b;
+  --c-chart-4: #e08cff;
+
+  /* Espacements — base 4 */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+
+  /* Rayons */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  /* Typographie */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 21px;
+  --fw-medium: 500;
+  --fw-bold: 650;
+  --lh: 1.45;
+
+  /* Dimensions */
+  --tap: 44px;              /* cible tactile minimale */
+  --header-h: 52px;
+  --nav-h: 60px;
+  --rail-w: 84px;
+  --content-max: 1100px;
+
+  /* Effets */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --t-fast: 120ms ease;
+
+  /* Safe areas iOS */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* Points de rupture (référence, utilisés littéralement dans les @media) : 600px, 900px */
+}

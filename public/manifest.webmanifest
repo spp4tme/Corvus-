@@ -1,0 +1,22 @@
+{
+  "name": "Corvus — passerelle SSH du tailnet",
+  "short_name": "Corvus",
+  "description": "Terminal SSH, fichiers SFTP, git et supervision pour les machines de votre réseau Tailscale.",
+  "lang": "fr",
+  "start_url": "/#/hosts",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0c0e13",
+  "theme_color": "#141821",
+  "icons": [
+    { "src": "/icons/logo.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Terminal", "url": "/#/terminal" },
+    { "name": "Supervision", "url": "/#/monitor" }
+  ]
+}
