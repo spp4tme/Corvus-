@@ -16,7 +16,7 @@ import { ensureDir } from './lib/store.js';
 import { HttpError } from './lib/validate.js';
 import { logger, setLogLevel } from './lib/log.js';
 import { authRoutes, hostRoutes } from './routes/core.js';
-import { extraRoutes } from './routes/index.js';
+import { extraRoutes, createServices } from './routes/index.js';
 
 const log = logger('http');
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -51,7 +51,7 @@ function securityHeaders(req, res, next) {
 }
 
 export function createCorvus(overrides = {}) {
-  const config = { ...baseConfig, ...overrides };
+  const config = { ...baseConfig, ...overrides, allowedOrigins: [...(overrides.allowedOrigins || baseConfig.allowedOrigins)] };
   setLogLevel(config.logLevel);
   ensureDir(config.dataDir);
 
@@ -67,12 +67,15 @@ export function createCorvus(overrides = {}) {
     pool, hosts, journal, config,
     onNotify: (n) => ctx.notify?.(n),
   });
+  createServices(ctx);
 
   const trustForwarded = config.trustProxy !== false && config.trustProxy !== 'false';
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', config.trustProxy === 'false' ? false : config.trustProxy);
   app.set('etag', false);
+  // Proxy web : monté AVANT les en-têtes globaux (il impose sa propre CSP « sandbox »).
+  if (config.webProxy) app.use('/proxy/:cap', ctx.proxy.handler());
   app.use(securityHeaders);
 
   // --- API ---------------------------------------------------------------

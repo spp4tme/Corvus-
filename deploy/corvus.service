@@ -1,0 +1,43 @@
+# Unité systemd Corvus — installée par deploy/install-pi.sh dans /etc/systemd/system/
+[Unit]
+Description=Corvus — passerelle SSH/SFTP/DevOps du tailnet
+Documentation=file:///opt/corvus/README.md
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=corvus
+Group=corvus
+WorkingDirectory=/opt/corvus
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/corvus/corvus.env
+ExecStart=/usr/local/bin/node /opt/corvus/server/index.js
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+# Durcissement : Corvus n'a besoin que de son dossier de données et du réseau.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/corvus
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

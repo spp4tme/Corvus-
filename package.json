@@ -17,7 +17,8 @@
     "test": "node --test --test-concurrency=1 test/",
     "test:e2e": "node --test --test-concurrency=1 test/e2e.test.js",
     "test:ui": "node --test test/ui.test.js",
-    "check:pure": "node scripts/check-pure-js.js"
+    "check:pure": "node scripts/check-pure-js.js",
+    "icons": "node scripts/render-icons.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

@@ -1,0 +1,35 @@
+# Corvus via Docker Compose (Linux : Raspberry Pi OS 64 bits ou PC).
+#
+#   docker compose up -d --build
+#   docker compose exec corvus node server/cli.js token     # afficher le token
+#   sudo tailscale serve --bg --https=443 http://127.0.0.1:7680
+#
+# network_mode: host → Corvus écoute sur 127.0.0.1:7680 DE L'HÔTE, et joint les machines
+# du tailnet via le Tailscale de l'hôte. Rien n'est publié sur le réseau local.
+services:
+  corvus:
+    build: .
+    image: corvus:latest
+    container_name: corvus
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      BIND: 127.0.0.1
+      PORT: 7680
+      CORVUS_DATA: /data
+      # CORVUS_MASTER_PASSPHRASE: "à définir pour chiffrer les secrets avec une passphrase"
+      # CORVUS_ALLOWED_ORIGINS: "https://corvus.mon-tailnet.ts.net"
+      # CORVUS_WEB_PROXY: "1"
+      TZ: Europe/Paris
+    volumes:
+      - corvus-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  corvus-data:

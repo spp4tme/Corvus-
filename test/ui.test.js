@@ -247,6 +247,33 @@ test('mobile 375px : supervision (tuiles, graphiques, processus, docker)', async
   await ctx.close();
 });
 
+test('mobile 375px : services web et réglages', async (t) => {
+  if (!browser) return t.skip('aucun navigateur disponible');
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`${env.base}/#/proxy`);
+  await page.getByLabel('Token d\'accès').fill(env.token);
+  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await page.getByText('Aucun service').waitFor();
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  await page.getByLabel('Nom').fill('Tableau de bord');
+  await page.getByLabel('URL du service').fill(`${env.base}/`);
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).last().click();
+  await page.getByText('Tableau de bord').waitFor();
+  await auditLayout(page, 'services web');
+  await page.screenshot({ path: path.join(OUT, 'mobile-11-services.png') });
+  await page.getByRole('link', { name: 'Plus' }).click();
+  await page.getByRole('link', { name: /Réglages/ }).click();
+  await page.getByText('Taille de police').waitFor();
+  await page.getByText('Notifications', { exact: true }).waitFor();
+  await auditLayout(page, 'réglages');
+  await page.screenshot({ path: path.join(OUT, 'mobile-12-reglages.png') });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('desktop 1280px : rail latéral et reprise des onglets après rechargement', async (t) => {
   if (!browser) return t.skip('aucun navigateur disponible');
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });

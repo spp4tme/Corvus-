@@ -1,11 +1,14 @@
-// Tests de bout en bout : Corvus réel + sshd de test (ou un vrai sshd via CORVUS_TEST_SSH_*).
+// Tests de bout en bout : Corvus réel (HTTP + WebSocket) contre un sshd de test en pur JS
+// (test/helpers/fake-sshd.js : exec/shell via bash, SFTP sur un dossier temporaire, faux docker).
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { startFakeSshd } from './helpers/fake-sshd.js';
-import { startCorvus } from './helpers/corvus.js';
+import { startCorvus, waitFor } from './helpers/corvus.js';
 
 let sshd;
 let env;
@@ -456,6 +459,99 @@ describe('supervision et docker', () => {
     const calls = fs.readFileSync(sshd.dockerLog, 'utf8');
     assert.match(calls, /^start db$/m);
     assert.match(calls, /^logs --tail 50 --timestamps web$/m);
+  });
+});
+
+describe('proxy web isolé', () => {
+  let upstream;
+  let seen;
+  before(async () => {
+    upstream = http.createServer((req, res) => {
+      seen = { url: req.url, cookie: req.headers.cookie, host: req.headers.host, xc: req.headers['x-corvus'] };
+      if (req.url === '/app/go') { res.writeHead(302, { location: '/app/arrivee?x=1' }); return res.end(); }
+      res.writeHead(200, {
+        'content-type': 'text/html', 'set-cookie': 'sess=abc', 'content-security-policy': "default-src *",
+      });
+      res.end(`<h1>service ${req.url}</h1>`);
+    });
+    await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  });
+  after(() => upstream?.close());
+
+  let svcId;
+  test('création : cibles publiques refusées, locale acceptée', async () => {
+    const pub = await c.api('POST', '/api/services', { name: 'Public', url: 'http://8.8.8.8/' });
+    assert.equal(pub.status, 201);
+    const open = await c.api('POST', `/api/services/${pub.body.service.id}/open`);
+    assert.equal(open.status, 403);
+    assert.equal(open.body.error.code, 'TARGET_FORBIDDEN');
+    const bad = await c.api('POST', '/api/services', { name: 'x', url: 'file:///etc/passwd' });
+    assert.equal(bad.status, 400);
+    const ok = await c.api('POST', '/api/services', { name: 'Local', url: `http://127.0.0.1:${upstream.address().port}/app` });
+    assert.equal(ok.status, 201);
+    svcId = ok.body.service.id;
+  });
+
+  test('ouverture : page servie en bac à sable, sans cookie Corvus, Set-Cookie retiré', async () => {
+    const open = await c.api('POST', `/api/services/${svcId}/open`);
+    assert.equal(open.status, 200, JSON.stringify(open.body));
+    assert.match(open.body.url, /^\/proxy\/[A-Za-z0-9_-]{24}\/$/);
+    const res = await c.raw('GET', `${open.body.url}page?q=1`);
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /service \/app\/page\?q=1/);
+    const csp = res.headers.get('content-security-policy');
+    assert.match(csp, /^sandbox/);
+    assert.doesNotMatch(csp, /allow-same-origin/);
+    assert.equal(res.headers.get('set-cookie'), null);
+    assert.equal(seen.cookie, undefined, 'le cookie de session Corvus ne doit jamais partir vers le service');
+    assert.equal(seen.xc, undefined);
+    const redir = await fetch(`${env.base}${open.body.url}go`, { redirect: 'manual' });
+    assert.equal(redir.headers.get('location'), `${open.body.url}arrivee?x=1`);
+    const anon = await fetch(`${env.base}${open.body.url}`);
+    assert.equal(anon.status, 200, 'le jeton suffit (pas de cookie dans le bac à sable)');
+  });
+
+  test('jeton invalide → 404', async () => {
+    const r = await fetch(`${env.base}/proxy/${'A'.repeat(24)}/`);
+    assert.equal(r.status, 404);
+  });
+});
+
+describe('notifications push', () => {
+  test('anti-SSRF : seuls les services de push des navigateurs sont acceptés', async () => {
+    for (const endpoint of ['https://127.0.0.1/x', 'http://fcm.googleapis.com/fcm/send/x', 'https://evil.example/push']) {
+      const r = await c.api('POST', '/api/push/subscribe', { endpoint });
+      assert.equal(r.status, 400, endpoint);
+    }
+    const key = await c.api('GET', '/api/push/key');
+    assert.match(key.body.publicKey, /^B[A-Za-z0-9_-]{86}$/, 'clé publique P-256 non compressée (65 octets)');
+  });
+
+  test('JWT VAPID signé ES256 et vérifiable', () => {
+    const push = env.corvus.ctx.push;
+    const header = push.vapidHeader('https://fcm.googleapis.com/fcm/send/abc');
+    const m = /^vapid t=([^.]+)\.([^.]+)\.([^,]+), k=(.+)$/.exec(header);
+    assert.ok(m);
+    const payload = JSON.parse(Buffer.from(m[2], 'base64url').toString());
+    assert.equal(payload.aud, 'https://fcm.googleapis.com');
+    const raw = Buffer.from(m[4], 'base64url');
+    const pub = crypto.createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: raw.subarray(1, 33).toString('base64url'), y: raw.subarray(33).toString('base64url') }, format: 'jwk' });
+    const ok = crypto.verify('sha256', Buffer.from(`${m[1]}.${m[2]}`), { key: pub, dsaEncoding: 'ieee-p1363' }, Buffer.from(m[3], 'base64url'));
+    assert.equal(ok, true);
+  });
+
+  test('séquence OSC 777 dans un terminal → notification enregistrée', async () => {
+    const t = c.terminal({ host: hostId });
+    await t.opened;
+    await t.ready();
+    t.send("printf '\\033]777;notify;Build;compilation terminée\\007'\n");
+    const latest = await waitFor(async () => {
+      const r = await c.api('GET', '/api/push/latest');
+      return r.status === 200 ? r.body.notification : null;
+    });
+    assert.equal(latest.title, 'Build');
+    assert.equal(latest.body, 'compilation terminée');
+    t.ws.send(JSON.stringify({ t: 'close' }));
   });
 });
 

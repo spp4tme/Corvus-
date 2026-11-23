@@ -4,6 +4,7 @@ import { createCorvus } from './app.js';
 import { config } from './config.js';
 import { classifyAddress } from './lib/netcheck.js';
 import { logger } from './lib/log.js';
+import { tailscalePeers } from './lib/tailscale.js';
 
 const log = logger('corvus');
 
@@ -38,6 +39,16 @@ try {
   } else if (kind === 'private' || kind === 'hostname') {
     log.warn(`BIND=${config.bind} : Corvus est joignable depuis ce réseau. Préférez 127.0.0.1 + tailscale serve.`);
   }
+  // Origine MagicDNS de cette machine (https://<machine>.<tailnet>.ts.net) autorisée automatiquement,
+  // pour que `tailscale serve` fonctionne sans configuration.
+  tailscalePeers(config.tailscaleBin).then(({ peers }) => {
+    const self = peers.find((p) => p.self);
+    if (self?.dnsName) {
+      const origin = `https://${self.dnsName}`;
+      if (!corvus.config.allowedOrigins.includes(origin)) corvus.config.allowedOrigins.push(origin);
+      log.info(`Tailscale détecté : accès recommandé via ${origin} (tailscale serve)`);
+    }
+  }).catch(() => log.info('CLI tailscale absent : définissez CORVUS_ALLOWED_ORIGINS si vous passez par un reverse-proxy.'));
   if (corvus.ctx.tokenCreated) {
     const line = '='.repeat(64);
     process.stdout.write(`\n${line}\n  PREMIER LANCEMENT — token d'accès Corvus (à coller dans l'app) :\n\n  ${corvus.ctx.token}\n\n  Réaffichable avec : npm run token   (fichier data/token, chmod 600)\n${line}\n\n`);

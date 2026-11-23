@@ -34,7 +34,8 @@ export function authRoutes(ctx) {
     res.cookie(COOKIE, sid, {
       httpOnly: true,
       sameSite: 'strict',
-      secure: req.secure,
+      // https direct, via tailscale serve (X-Forwarded-Proto) ou origine https déclarée par le navigateur
+      secure: req.secure || String(req.headers.origin || '').startsWith('https://'),
       path: '/',
       maxAge: config.sessionTtlDays * 86_400_000,
     });
