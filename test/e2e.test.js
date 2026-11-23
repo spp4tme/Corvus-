@@ -198,6 +198,91 @@ describe('terminal', () => {
   });
 });
 
+describe('fichiers (SFTP)', () => {
+  const base = () => `/api/hosts/${hostId}/fs`;
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc0f01f0005000201a3f1d1b80000000049454e44ae426082', 'hex');
+  let dir;
+
+  test('liste du dossier personnel', async () => {
+    const r = await c.api('GET', `${base()}/list`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.path, sshd.rootVirtual);
+    assert.equal(r.body.home, sshd.rootVirtual);
+    dir = `${r.body.path}/essai sftp`;
+  });
+
+  test('créer un dossier, envoyer des fichiers', async () => {
+    const mk = await c.api('POST', `${base()}/mkdir`, { path: dir });
+    assert.equal(mk.status, 201, JSON.stringify(mk.body));
+    const up = await c.raw('POST', `${base()}/upload?dir=${encodeURIComponent(dir)}&name=note.txt`, {
+      body: Buffer.from('bonjour\nCorvus é\n'), headers: { 'content-type': 'application/octet-stream' },
+    });
+    assert.equal(up.status, 201, await up.text());
+    const img = await c.raw('POST', `${base()}/upload?dir=${encodeURIComponent(dir)}&name=pixel.png`, {
+      body: PNG, headers: { 'content-type': 'application/octet-stream' },
+    });
+    assert.equal(img.status, 201);
+    const again = await c.raw('POST', `${base()}/upload?dir=${encodeURIComponent(dir)}&name=note.txt`, {
+      body: Buffer.from('x'), headers: { 'content-type': 'application/octet-stream' },
+    });
+    assert.equal(again.status, 409, 'pas d\'écrasement silencieux');
+    const list = await c.api('GET', `${base()}/list?path=${encodeURIComponent(dir)}`);
+    assert.deepEqual(list.body.entries.map((e) => e.name), ['note.txt', 'pixel.png']);
+  });
+
+  test('lire, éditer, détecter un conflit', async () => {
+    const rd = await c.api('GET', `${base()}/read?path=${encodeURIComponent(`${dir}/note.txt`)}`);
+    assert.equal(rd.status, 200);
+    assert.equal(rd.body.content, 'bonjour\nCorvus é\n');
+    const conflict = await c.api('PUT', `${base()}/write`, { path: `${dir}/note.txt`, content: 'x', expectedMtime: rd.body.mtime - 100 });
+    assert.equal(conflict.status, 409);
+    const wr = await c.api('PUT', `${base()}/write`, { path: `${dir}/note.txt`, content: 'modifié\n', expectedMtime: rd.body.mtime });
+    assert.equal(wr.status, 200, JSON.stringify(wr.body));
+    const rd2 = await c.api('GET', `${base()}/read?path=${encodeURIComponent(`${dir}/note.txt`)}`);
+    assert.equal(rd2.body.content, 'modifié\n');
+    const bin = await c.api('GET', `${base()}/read?path=${encodeURIComponent(`${dir}/pixel.png`)}`);
+    assert.equal(bin.status, 415);
+  });
+
+  test('téléchargement et aperçu isolés (CSP sandbox)', async () => {
+    const dl = await c.raw('GET', `${base()}/download?path=${encodeURIComponent(`${dir}/pixel.png`)}`);
+    assert.equal(dl.status, 200);
+    assert.ok(Buffer.from(await dl.arrayBuffer()).equals(PNG));
+    assert.match(dl.headers.get('content-disposition'), /attachment/);
+    assert.match(dl.headers.get('content-security-policy'), /sandbox/);
+    const pv = await c.raw('GET', `${base()}/preview?path=${encodeURIComponent(`${dir}/pixel.png`)}`);
+    assert.equal(pv.headers.get('content-type'), 'image/png');
+    assert.match(pv.headers.get('content-security-policy'), /sandbox/);
+    const txt = await c.raw('GET', `${base()}/preview?path=${encodeURIComponent(`${dir}/note.txt`)}`);
+    assert.equal(txt.status, 415);
+  });
+
+  test('renommer puis supprimer récursivement', async () => {
+    const rn = await c.api('POST', `${base()}/rename`, { from: `${dir}/note.txt`, to: `${dir}/renommé.txt` });
+    assert.equal(rn.status, 200, JSON.stringify(rn.body));
+    const del = await c.api('POST', `${base()}/delete`, { path: dir });
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal(del.body.deleted, 3);
+    const gone = await c.api('GET', `${base()}/list?path=${encodeURIComponent(dir)}`);
+    assert.equal(gone.status, 404);
+  });
+
+  test('garde-fous : dossier personnel, chemins invalides', async () => {
+    const home = await c.api('POST', `${base()}/delete`, { path: '~' });
+    assert.equal(home.status, 400);
+    const bad = await c.api('POST', `${base()}/mkdir`, { path: 'a\nb' });
+    assert.equal(bad.status, 400);
+    const badName = await c.raw('POST', `${base()}/upload?dir=~&name=..%2Fevil`, { body: Buffer.from('x'), headers: { 'content-type': 'application/octet-stream' } });
+    assert.equal(badName.status, 400);
+  });
+
+  test('journal SFTP', async () => {
+    const r = await c.api('GET', '/api/journal?type=sftp');
+    const events = r.body.entries.map((e) => e.event);
+    for (const e of ['upload', 'edit', 'download', 'rename', 'delete', 'mkdir']) assert.ok(events.includes(e), `événement ${e} absent`);
+  });
+});
+
 describe('host key TOFU', () => {
   test('changement d\'empreinte détecté puis réinitialisation explicite', async () => {
     const port = sshd.port;

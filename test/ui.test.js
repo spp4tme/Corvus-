@@ -125,6 +125,47 @@ test('mobile 375px : connexion, ajout d\'hôte, terminal', async (t) => {
   await ctx.close();
 });
 
+test('mobile 375px : fichiers (dossier, envoi, édition)', async (t) => {
+  if (!browser) return t.skip('aucun navigateur disponible');
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(env.base);
+  await page.getByLabel('Token d\'accès').fill(env.token);
+  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await page.getByRole('heading', { name: 'Pi du salon' }).waitFor();
+  await page.getByRole('button', { name: 'Fichiers' }).first().click();
+  await page.getByRole('button', { name: 'Nouveau dossier' }).waitFor();
+
+  await page.getByRole('button', { name: 'Nouveau dossier' }).click();
+  await page.getByLabel('Nom du dossier').fill('projet-ui');
+  await page.getByRole('button', { name: 'Valider' }).click();
+  await page.getByText('projet-ui', { exact: true }).click();
+  await page.getByText('Dossier vide').waitFor();
+
+  const tmp = path.join(OUT, 'notes.md');
+  fs.writeFileSync(tmp, '# Notes\n\nligne 1\n');
+  await page.locator('input[type=file]').setInputFiles(tmp);
+  await page.getByText('notes.md', { exact: true }).waitFor();
+  await auditLayout(page, 'fichiers');
+  await page.screenshot({ path: path.join(OUT, 'mobile-5-fichiers.png') });
+
+  await page.getByText('notes.md', { exact: true }).click();
+  const editor = page.getByLabel(/Contenu de/);
+  await editor.waitFor();
+  assert.match(await editor.inputValue(), /ligne 1/);
+  await editor.press('End');
+  await editor.type('ligne 2 ajoutée depuis le téléphone\n');
+  await page.getByRole('button', { name: 'Enregistrer' }).click();
+  await page.getByText(/· enregistré/).waitFor();
+  await page.screenshot({ path: path.join(OUT, 'mobile-6-editeur.png') });
+  const written = fs.readFileSync(path.join(sshd.root, 'projet-ui', 'notes.md'), 'utf8');
+  assert.match(written, /ligne 2 ajoutée depuis le téléphone/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('desktop 1280px : rail latéral et reprise des onglets après rechargement', async (t) => {
   if (!browser) return t.skip('aucun navigateur disponible');
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
