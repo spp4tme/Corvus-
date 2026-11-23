@@ -8,6 +8,7 @@ import { renderLogin } from './views/login.js';
 const ROUTES = {
   hosts: { title: 'Hôtes', icon: 'server', load: () => import('./views/hosts.js') },
   terminal: { title: 'Terminal', icon: 'terminal', load: () => import('./views/terminal.js'), persistent: true, full: true },
+  claude: { title: 'Claude', icon: 'sparkle', load: () => import('./views/claude.js') },
   files: { title: 'Fichiers', icon: 'folder', load: () => import('./views/files.js') },
   git: { title: 'Git', icon: 'git', load: () => import('./views/git.js') },
   monitor: { title: 'Supervision', icon: 'activity', load: () => import('./views/monitor.js') },
@@ -16,7 +17,7 @@ const ROUTES = {
   settings: { title: 'Réglages', icon: 'settings', load: () => import('./views/settings.js'), secondary: true },
   more: { title: 'Plus', icon: 'more', load: () => import('./views/more.js'), mobileOnly: true },
 };
-const NAV = ['hosts', 'terminal', 'files', 'git', 'monitor', 'journal', 'settings', 'more'];
+const NAV = ['hosts', 'terminal', 'claude', 'files', 'git', 'monitor', 'journal', 'settings', 'more'];
 
 const root = document.getElementById('root');
 let shell = null;

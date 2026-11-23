@@ -46,7 +46,7 @@ tiers.
 |---|---|
 | **Hôtes** | Ajout, modification, suppression ; alias, icône, groupes, épingles ; auth par mot de passe, clé privée (+ passphrase) ou agent SSH ; bouton **Tester la connexion** ; import depuis `tailscale status --json`. |
 | **Terminal** | Onglets multiples (xterm.js), thèmes, taille de police, redimensionnement du PTY, **barre de touches mobile** (Esc, Tab, Ctrl/Alt, flèches, `\| ~ / -`, ^C, ^D, coller, copier, dictée), clavier externe, **OSC 52** (copie vers le presse-papiers), **reconnexion WebSocket automatique** (reprise à l'octet près), **mode tmux** (`tmux new-session -A`) pour survivre aux coupures. |
-| **Claude Code** | Bouton **Claude Code** sur chaque hôte (fiche + barre du terminal) : lance `claude` dans une session tmux dédiée, liste des sessions actives (Reprendre / Tuer / Nouvelle session), plein écran mobile. Voir [Claude Code](#claude-code). |
+| **Claude Code** | Onglet **Claude** dans la navigation (et bouton sur chaque fiche d'hôte) : lance `claude` dans une session tmux dédiée, liste des sessions actives (Reprendre / Tuer / Nouvelle session). Voir [Claude Code](#claude-code). |
 | **Fichiers** | Navigation SFTP, envoi (avec progression, glisser-déposer), téléchargement, nouveau dossier, renommer/déplacer, supprimer, **éditeur texte** (≤ 2 Mo, détection de conflit), aperçu d'images. |
 | **Git** | Statut, branches (checkout, suivi, création), historique, diff, stage/unstage, commit, `pull --ff-only`, push, fetch, découverte des dépôts. |
 | **Supervision** | CPU, RAM, swap, disques, réseau, uptime, charge, température (Pi), **graphiques temps réel** (relevé toutes les 3 s), processus (kill), **Docker** (liste, start/stop/restart, logs). |
@@ -292,8 +292,9 @@ Résumé (détails et procédures dans [docs/securite.md](docs/securite.md)) :
 
 ## Claude Code
 
-Le bouton **Claude Code** (fiche de l'hôte, et barre des onglets du terminal) ouvre un onglet qui
-lance `claude` sur l'hôte, **toujours dans tmux**. Si vous perdez le réseau ou fermez
+L'onglet **Claude** de la navigation (comme Hôtes, Terminal, Fichiers ; le bouton « Claude Code » de
+la fiche d'un hôte y mène) permet de choisir un hôte, puis ouvre dans le **Terminal** un onglet qui
+lance `claude` sur cet hôte, **toujours dans tmux**. Si vous perdez le réseau ou fermez
 l'application, Claude Code continue de tourner ; en rouvrant, vous reprenez la même session.
 
 **Prérequis sur l'hôte** : `tmux` et `claude` installés pour l'utilisateur SSH. Si l'un manque,
@@ -302,17 +303,18 @@ Corvus n'ouvre pas de terminal : il affiche un message avec la commande d'instal
 `sudo apt install tmux`). Le premier lancement de `claude` demande de vous connecter à votre compte.
 
 **Comportement**
-- **Un tap** : s'il n'y a aucune session Claude sur l'hôte, un nouvel onglet s'ouvre directement.
-  S'il y en a, une liste s'affiche : **Reprendre**, **Tuer** (arrête la session tmux) et
-  **Nouvelle session** (avec un dossier de travail modifiable).
+- **La page Claude** affiche l'état de l'hôte (tmux, `claude` et sa version), les sessions actives
+  avec **Reprendre** et **Tuer** (arrête la session tmux), et **Nouvelle session** avec un dossier
+  de travail modifiable. Le terminal lui-même reste le terminal habituel.
 - **Sessions** : nommées `corvus-claude-<hôte>-<n>` (`<hôte>` = alias en minuscules, 20 caractères
   maximum). Reprise par `tmux new-session -A`. La liste vient de `tmux list-sessions` : elle
   montre aussi les sessions ouvertes depuis un autre appareil.
 - **Fiche de l'hôte** : *dossier de projet par défaut* (vide = dossier personnel) et *commande*
   (`claude` par défaut ; ex. `claude --continue`, `claude --model opus`).
-- **Mobile** : l'onglet s'ouvre en plein écran (bouton pour quitter ou revenir). La barre de touches
-  ajoute **⇧Tab** (changer de mode dans Claude Code) et **Entrée** à Esc, Tab, Ctrl, Alt et flèches.
-  Le champ de saisie d'xterm fait 16 px et le double-tap est neutralisé pour éviter les zooms.
+- **Mobile** : dans un onglet Claude, la barre de touches ajoute **⇧Tab** (changer de mode dans
+  Claude Code) et **Entrée** à Esc, Tab, Ctrl, Alt et flèches ; ces deux touches n'apparaissent pas
+  dans un terminal ordinaire. Le champ de saisie d'xterm fait 16 px et le double-tap est neutralisé
+  pour éviter les zooms.
 
 **Sécurité**
 - La commande est **construite côté serveur** (`server/lib/claude.js`). Le navigateur n'envoie que
@@ -354,7 +356,7 @@ npm run check:pure
   téléchargé), viewport **375 px** (mobile) et 1280 px. Vérifie l'absence de débordement
   horizontal, les cibles tactiles ≥ 44 px et l'absence d'erreurs JavaScript. Parcours : connexion,
   ajout d'hôte, terminal, fichiers, git, supervision, Docker, services, réglages, Claude Code
-  (bouton, plein écran, liste des sessions, arrêt). Captures dans
+  (onglet de navigation, session, reprise, arrêt). Captures dans
   `test-results/`.
 
 ---

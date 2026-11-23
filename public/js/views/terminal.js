@@ -6,7 +6,6 @@ import { icon } from '../ui/icons.js';
 import { button, openDialog, emptyState, toast, badge } from '../ui/components.js';
 import { state, sortedHosts } from '../state.js';
 import { terminalTheme } from '../terminal-themes.js';
-import { claudeButton } from './claude.js';
 
 const tabs = [];
 let active = null;
@@ -29,9 +28,10 @@ export const termSettings = {
 };
 
 class Tab {
-  constructor({ hostId, sessionId = null, title, claude = null }) {
+  constructor({ hostId, sessionId = null, title, claude = null, isClaude = false }) {
     this.hostId = hostId;
     this.claude = claude; // { session?, dir? } : premier lancement d'une session Claude Code
+    this.isClaude = isClaude || !!claude;
     this.sessionId = sessionId;
     this.title = title;
     this.received = undefined; // offset absolu reçu ; undefined → rejeu complet
@@ -219,9 +219,9 @@ function applyModifiers(d) {
   return out;
 }
 
-function openTab(hostId, sessionId, focus = true, { title, claude } = {}) {
+function openTab(hostId, sessionId, focus = true, { title, claude, isClaude } = {}) {
   const host = state.host(hostId);
-  const tab = new Tab({ hostId, sessionId, title: title || (claude ? `${host?.name || 'Terminal'} · Claude` : host?.name || 'Terminal'), claude });
+  const tab = new Tab({ hostId, sessionId, title: title || `${host?.name || 'Terminal'}${claude ? ' · Claude' : ''}`, claude, isClaude });
   tabs.push(tab);
   activate(tab, focus);
   return tab;
@@ -232,6 +232,7 @@ function activate(tab, focus = true) {
   for (const t of tabs) t.pane.hidden = t !== tab;
   renderTabs();
   renderEmpty();
+  updateClaudeKeys();
   if (tab) {
     tab.fitSoon(true);
     if (focus) setTimeout(() => tab.term.focus(), 0);
@@ -260,35 +261,7 @@ function renderTabs() {
     t.tabEl = el;
     ui.tabs.appendChild(el);
   }
-  clear(ui.actions);
-  ui.actions.appendChild(button({ label: 'Nouveau terminal', icon: 'plus', iconOnly: true, variant: 'ghost', onClick: pickHost }));
-  ui.actions.appendChild(claudeButton(claudeTarget, (opts) => openClaudeTab(claudeTarget(), opts), { iconOnly: true }));
-  ui.actions.appendChild(button({
-    label: fullscreen ? 'Quitter le plein écran' : 'Plein écran', icon: fullscreen ? 'collapse' : 'expand', iconOnly: true, variant: 'ghost',
-    pressed: fullscreen, onClick: () => setFullscreen(!fullscreen),
-  }));
-}
-
-// Hôte visé par le bouton Claude : celui de l'onglet actif, sinon le dernier hôte utilisé.
-function claudeTarget() {
-  const host = state.host(active?.hostId) || state.host(state.activeHostId) || sortedHosts()[0];
-  return host || null;
-}
-
-function openClaudeTab(host, opts) {
-  if (!host) return;
-  state.setActiveHost(host.id);
-  openTab(host.id, null, true, { claude: opts });
-  if (matchMedia('(max-width: 599px)').matches) setFullscreen(true);
-}
-
-// Plein écran (mobile surtout) : masque l'en-tête et la navigation pour laisser tout l'écran au terminal.
-let fullscreen = false;
-function setFullscreen(on) {
-  fullscreen = on;
-  document.querySelector('.app')?.classList.toggle('term-full', on);
-  renderTabs();
-  tabs.forEach((t) => t.fitSoon(true));
+  ui.tabs.appendChild(button({ label: 'Nouveau terminal', icon: 'plus', iconOnly: true, variant: 'ghost', onClick: pickHost }));
 }
 
 function renderEmpty() {
@@ -314,8 +287,8 @@ function pickHost() {
 const KEYS = [
   { label: 'Esc', send: '\x1b' },
   { label: 'Tab', send: '\t' },
-  { label: '⇧Tab', send: '\x1b[Z', title: 'Shift+Tab (changer de mode dans Claude Code)' },
-  { label: 'Entrée', send: '\r', title: 'Entrée' },
+  { label: '⇧Tab', send: '\x1b[Z', title: 'Shift+Tab (changer de mode dans Claude Code)', claudeOnly: true },
+  { label: 'Entrée', send: '\r', title: 'Entrée', claudeOnly: true },
   { label: 'Ctrl', mod: 'ctrl' },
   { label: 'Alt', mod: 'alt' },
   { label: 'Flèche haut', icon: 'arrowUp', arrow: 'A' },
@@ -334,6 +307,12 @@ const KEYS = [
   { label: 'Masquer le clavier', icon: 'keyboard', action: 'blur' },
 ];
 const modButtons = {};
+const claudeKeys = [];
+
+// ⇧Tab et Entrée ne s'affichent que dans un onglet Claude Code (le terminal ordinaire reste inchangé).
+function updateClaudeKeys() {
+  for (const b of claudeKeys) b.style.display = active?.isClaude ? '' : 'none';
+}
 
 function renderMods() {
   for (const [k, b] of Object.entries(modButtons)) b.setAttribute('aria-pressed', String(mods[k]));
@@ -351,6 +330,7 @@ function buildKeybar() {
     b.addEventListener('pointerdown', (e) => e.preventDefault());
     b.addEventListener('click', () => pressKey(k));
     if (k.mod) modButtons[k.mod] = b;
+    if (k.claudeOnly) { claudeKeys.push(b); b.style.display = 'none'; }
     bar.appendChild(b);
   }
   return bar;
@@ -429,9 +409,8 @@ export default {
     });
     stage.appendChild(empty);
     const keybar = buildKeybar();
-    const actionsEl = h('div', { class: 'term-actions' });
-    ui = { tabs: tabsEl, actions: actionsEl, stage, keybar, empty };
-    el.append(h('div', { class: 'term-view' }, h('div', { class: 'term-bar' }, tabsEl, actionsEl), stage, keybar));
+    ui = { tabs: tabsEl, stage, keybar, empty };
+    el.append(h('div', { class: 'term-view' }, tabsEl, stage, keybar));
     termSettings.apply();
     renderTabs();
     renderEmpty();
@@ -439,15 +418,13 @@ export default {
     new ResizeObserver(() => active?.fitSoon()).observe(stage);
     window.addEventListener('corvus:viewport', () => active?.fitSoon());
     window.addEventListener('online', () => tabs.forEach((t) => t.nudge()));
-    // Hors de la vue Terminal, le plein écran n'a plus de sens (la navigation serait masquée).
-    window.addEventListener('hashchange', () => { if (fullscreen && !location.hash.startsWith('#/terminal')) setFullscreen(false); });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') tabs.forEach((t) => t.nudge());
     });
 
     // Restaurer les sessions encore vivantes côté serveur (rechargement de page).
     get('/api/terminals').then(({ terminals }) => {
-      for (const s of terminals) if (!s.exited && !tabs.some((t) => t.sessionId === s.id)) openTab(s.hostId, s.id, false, { title: s.title });
+      for (const s of terminals) if (!s.exited && !tabs.some((t) => t.sessionId === s.id)) openTab(s.hostId, s.id, false, { title: s.claude ? s.title : undefined, isClaude: !!s.claude });
       if (!active && tabs.length) activate(tabs[0], false);
       this.show({ params });
     }).catch(() => this.show({ params }));
@@ -461,7 +438,7 @@ export default {
         const claude = {};
         if (params.get('claudeSession')) claude.session = params.get('claudeSession');
         if (params.has('claudeDir')) claude.dir = params.get('claudeDir');
-        openClaudeTab(state.host(hostId), claude);
+        openTab(hostId, null, true, { claude });
       } else openTab(hostId);
     } else {
       active?.fitSoon(true);

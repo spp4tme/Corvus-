@@ -1,10 +1,11 @@
-// Claude Code sur un hôte : bouton (fiche hôte + barre du terminal), liste des sessions tmux
-// actives (Reprendre / Tuer / Nouvelle session) et messages clairs si tmux ou claude manquent.
-// Ce module ne lance rien lui-même : il appelle `launch({ session?, dir? })` fourni par la vue
-// appelante (navigation vers le terminal, ou ouverture d'un onglet déjà dans le terminal).
+// Page Claude Code : choix de l'hôte, sessions tmux actives (Reprendre / Tuer), nouvelle session
+// et messages clairs si tmux ou claude manquent. La session s'ouvre dans la vue Terminal
+// (`#/terminal?host=…&claude=1`) ; la commande réelle est construite côté serveur.
 import { get, del, qs } from '../api.js';
 import { h, replace } from '../ui/dom.js';
-import { button, busy, field, input, openDialog, confirmDialog, toast, toastError, badge, loadingState } from '../ui/components.js';
+import { button, busy, field, input, confirmDialog, toast, toastError, loadingState, emptyState, errorState, badge } from '../ui/components.js';
+import { hostPicker } from '../ui/hostpicker.js';
+import { state } from '../state.js';
 
 export const DANGEROUS_FLAG = '--dangerously-skip-permissions';
 export const isDangerous = (cmd) => String(cmd || '').split(/\s+/).includes(DANGEROUS_FLAG);
@@ -18,24 +19,11 @@ const ago = (ms) => {
   return `il y a ${Math.round(s / 86_400)} j`;
 };
 
-/** Avertissement affiché dans le formulaire d'hôte et avant le lancement. */
+/** Avertissement affiché dans le formulaire d'hôte et sur la page Claude. */
 export function dangerNote() {
   return h('div', { class: 'danger-note', role: 'alert' },
     h('strong', null, 'Attention : Claude agira sans demander de confirmation. '),
     `Avec ${DANGEROUS_FLAG}, Claude Code peut lire, modifier et supprimer des fichiers et lancer des commandes sur cette machine sans vous demander. À réserver à une machine ou un dossier jetable.`);
-}
-
-/** Bouton « Claude Code » : `getHost()` donne l'hôte visé au moment du tap. */
-export function claudeButton(getHost, launch, { iconOnly = false } = {}) {
-  const btn = button({
-    label: 'Claude Code', icon: 'sparkle', iconOnly,
-    onClick: () => {
-      const host = getHost();
-      if (host) openClaude(host, launch, btn);
-      else toast('Ajoutez d\'abord un hôte.', 'warn');
-    },
-  });
-  return btn;
 }
 
 function codeLine(text) {
@@ -48,128 +36,124 @@ function codeLine(text) {
   return h('div', { class: 'row' }, h('code', { class: 'mono grow', style: 'user-select: all; overflow-wrap: anywhere' }, text), copy);
 }
 
-function missingDialog(host, kind, st, retry) {
-  const isTmux = kind === 'tmux';
-  const body = h('div', { class: 'stack' },
-    h('p', null, isTmux
-      ? `tmux n'est pas installé sur ${host.name}. Claude Code y est lancé dans tmux pour continuer à tourner si vous perdez le réseau ou fermez l'application.`
-      : `Claude Code n'est pas installé sur ${host.name} (ou n'est pas dans le PATH de l'utilisateur ${host.username}).`),
-    h('p', { class: 'dim' }, 'Installation, à lancer sur cet hôte (par exemple depuis un terminal Corvus) :'),
-    isTmux ? codeLine(st.tmuxInstall) : [codeLine(st.install.native), h('p', { class: 'dim' }, 'ou, avec Node.js :'), codeLine(st.install.npm)],
-    isTmux ? null : h('p', { class: 'dim' }, 'Puis lancez « claude » une fois pour vous connecter à votre compte.'));
-  const d = openDialog({
-    title: isTmux ? 'tmux manquant' : 'Claude Code non installé', body,
-    actions: [
-      button({ label: 'Fermer', variant: 'ghost', onClick: () => d.close() }),
-      button({ label: 'Revérifier', icon: 'refresh', variant: 'primary', onClick: () => { d.close(); retry(); } }),
-    ],
-  });
+/** Navigue vers la vue Terminal, qui ouvre l'onglet (nouvelle session ou reprise). */
+export function launchClaude(host, { session, dir } = {}) {
+  state.setActiveHost(host.id);
+  const q = new URLSearchParams({ host: host.id, claude: '1', n: String(Date.now()) });
+  if (session) q.set('claudeSession', session);
+  if (dir !== undefined) q.set('claudeDir', dir);
+  location.hash = `#/terminal?${q}`;
 }
 
-async function beginNew(host, st, launch, dir) {
-  if (st.settings.dangerous) {
-    const ok = await confirmDialog({
-      title: 'Lancer sans confirmation ?',
-      message: `La commande de ${host.name} contient ${DANGEROUS_FLAG} : Claude Code pourra modifier des fichiers et lancer des commandes sans rien demander. Continuer ?`,
-      confirmLabel: 'Lancer quand même', danger: true,
-    });
-    if (!ok) return false;
-  }
-  launch(dir === undefined ? {} : { dir });
-  return true;
-}
+export default {
+  mount(el) {
+    let hostId = state.activeHostId;
+    let seq = 0;
+    let st = null;
+    const content = h('div', { class: 'stack' });
+    const picker = hostPicker((id) => { hostId = id; load(); });
+    const refresh = button({ label: 'Actualiser', icon: 'refresh', onClick: () => load() });
+    el.append(h('div', { class: 'toolbar' }, picker, refresh), content);
 
-/**
- * Un tap : diagnostic de l'hôte puis, s'il n'y a aucune session, ouverture directe d'un nouvel
- * onglet ; sinon liste des sessions (Reprendre / Tuer / Nouvelle session).
- */
-export async function openClaude(host, launch, btn) {
-  let st;
-  try {
-    const load = () => get(`/api/hosts/${host.id}/claude`);
-    st = await (btn ? busy(btn, load) : load());
-  } catch (err) { toastError(err); return; }
-  const retry = () => openClaude(host, launch, btn);
-  if (!st.tmux) return missingDialog(host, 'tmux', st, retry);
-  if (!st.sessions.length) {
-    if (!st.claude.installed) return missingDialog(host, 'claude', st, retry);
-    if (st.settings.dir && st.dirOk === false) {
-      toast(`Le dossier de projet « ${st.settings.dir} » n'existe pas sur ${host.name}. Corrigez-le dans la fiche de l'hôte.`, 'error', 7000);
-      return;
+    const host = () => state.host(hostId);
+
+    async function load(dir) {
+      const mine = ++seq;
+      if (!host()) {
+        replace(content, emptyState({ icon: 'sparkle', title: 'Claude Code', text: 'Choisissez un hôte pour voir ou lancer ses sessions Claude Code.' }));
+        return;
+      }
+      replace(content, loadingState('Recherche des sessions…'));
+      try {
+        const data = await get(`/api/hosts/${hostId}/claude${dir === undefined ? '' : `?${qs({ dir })}`}`);
+        if (mine !== seq) return;
+        st = data;
+        render();
+      } catch (err) {
+        if (mine === seq) replace(content, errorState(err, () => load()));
+      }
     }
-    await beginNew(host, st, launch);
-    return;
-  }
-  sessionsDialog(host, st, launch);
-}
 
-function sessionsDialog(host, st, launch) {
-  const list = h('div', { class: 'list' });
-  const dirField = field({
-    label: 'Dossier de la nouvelle session',
-    control: input({ value: st.settings.dir, placeholder: '~ (dossier personnel)' }),
-    hint: 'Laissez vide pour le dossier personnel de l\'utilisateur.',
-  });
-  const newBtn = button({ label: 'Nouvelle session', icon: 'plus', variant: 'primary', onClick: () => startNew() });
-  const info = h('div', { class: 'stack' });
+    function missing(kind) {
+      const isTmux = kind === 'tmux';
+      return h('div', { class: 'card stack', style: 'padding: var(--s-3)' },
+        h('strong', null, isTmux ? 'tmux manquant' : 'Claude Code non installé'),
+        h('p', null, isTmux
+          ? `tmux n'est pas installé sur ${host().name}. Claude Code y est lancé dans tmux pour continuer à tourner si vous perdez le réseau ou fermez l'application.`
+          : `Claude Code n'est pas installé sur ${host().name}, ou n'est pas dans le PATH de l'utilisateur ${host().username}.`),
+        h('p', { class: 'dim' }, 'Installation, à lancer sur cet hôte (par exemple depuis un terminal Corvus) :'),
+        isTmux ? codeLine(st.tmuxInstall) : [codeLine(st.install.native), h('p', { class: 'dim' }, 'ou, avec Node.js :'), codeLine(st.install.npm)],
+        isTmux ? null : h('p', { class: 'dim' }, 'Puis lancez « claude » une fois pour vous connecter à votre compte.'),
+        button({ label: 'Revérifier', icon: 'refresh', onClick: () => load() }));
+    }
 
-  const d = openDialog({
-    title: `Claude Code — ${host.name}`,
-    body: h('div', { class: 'stack' }, info, list, dirField),
-    actions: [button({ label: 'Fermer', variant: 'ghost', onClick: () => d.close() }), newBtn],
-  });
+    function sessionCard(s) {
+      return h('div', { class: 'card stack', style: 'padding: var(--s-3)' },
+        h('div', null,
+          h('div', { class: 'host-name mono', style: 'overflow-wrap: anywhere' }, s.name),
+          h('div', { class: 'host-addr', style: 'overflow-wrap: anywhere' }, `${s.cwd || '~'} · ${ago(s.activityAt)}`),
+          h('div', { class: 'row' }, s.attached ? badge(`${s.attached} client${s.attached > 1 ? 's' : ''}`, 'ok') : badge('détachée'))),
+        h('div', { class: 'row' },
+          button({ label: 'Reprendre', icon: 'play', variant: 'primary', attrs: { style: 'flex: 1 1 auto' }, onClick: () => launchClaude(host(), { session: s.name }) }),
+          button({ label: `Tuer ${s.name}`, icon: 'trash', iconOnly: true, variant: 'danger', onClick: () => kill(s) })));
+    }
 
-  function renderInfo() {
-    replace(info,
-      h('p', { class: 'dim' }, st.claude.installed
-        ? `Claude Code ${st.claude.version || ''} · commande : `
-        : 'Claude Code n\'est pas installé sur cet hôte · commande : ', h('code', { class: 'mono' }, st.settings.cmd)),
-      st.settings.dangerous ? dangerNote() : null);
-  }
+    function render() {
+      const ready = st.tmux && st.claude.installed;
+      const dirField = field({
+        label: 'Dossier de la nouvelle session',
+        control: input({ value: st.settings.dir, placeholder: '~ (dossier personnel)' }),
+        hint: 'Laissez vide pour le dossier personnel de l\'utilisateur. Dossier par défaut : fiche de l\'hôte.',
+      });
+      const newBtn = button({ label: 'Nouvelle session', icon: 'plus', variant: 'primary', disabled: !ready, onClick: () => startNew(dirField, newBtn) });
+      replace(content,
+        h('p', { class: 'dim' },
+          st.claude.installed ? `Claude Code ${st.claude.version || ''} · commande : ` : 'Commande : ', h('code', { class: 'mono' }, st.settings.cmd)),
+        st.settings.dangerous ? dangerNote() : null,
+        !st.tmux ? missing('tmux') : null,
+        st.tmux && !st.claude.installed ? missing('claude') : null,
+        h('h2', { class: 'section-title' }, 'Sessions actives', badge(String(st.sessions.length))),
+        st.sessions.length ? st.sessions.map(sessionCard) : h('p', { class: 'dim' }, 'Aucune session Claude active sur cet hôte.'),
+        h('h2', { class: 'section-title' }, 'Nouvelle session'),
+        dirField,
+        newBtn);
+    }
 
-  function renderList() {
-    replace(list, st.sessions.length ? st.sessions.map((s) => h('div', { class: 'card stack', style: 'padding: var(--s-3)' },
-      h('div', null,
-        h('div', { class: 'host-name mono', style: 'overflow-wrap: anywhere' }, s.name),
-        h('div', { class: 'host-addr', style: 'overflow-wrap: anywhere' }, `${s.cwd || '~'} · ${ago(s.activityAt)}`),
-        h('div', { class: 'row' }, s.attached ? badge(`${s.attached} client${s.attached > 1 ? 's' : ''}`, 'ok') : badge('détachée'))),
-      h('div', { class: 'row' },
-        button({ label: 'Reprendre', icon: 'play', variant: 'primary', attrs: { style: 'flex: 1 1 auto' }, onClick: () => { d.close(); launch({ session: s.name }); } }),
-        button({ label: `Tuer ${s.name}`, icon: 'trash', iconOnly: true, variant: 'danger', onClick: () => kill(s) }))))
-      : h('p', { class: 'dim' }, 'Aucune session Claude active sur cet hôte.'));
-  }
+    async function kill(s) {
+      const ok = await confirmDialog({
+        title: 'Tuer la session ?',
+        message: `« ${s.name} » sera arrêtée : le travail en cours de Claude Code sera interrompu et la conversation de cette session fermée.`,
+        confirmLabel: 'Tuer', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await del(`/api/hosts/${hostId}/claude/sessions/${s.name}`);
+        toast('Session arrêtée', 'ok', 1500);
+      } catch (err) { toastError(err); }
+      await load();
+    }
 
-  async function kill(s) {
-    const ok = await confirmDialog({
-      title: 'Tuer la session ?',
-      message: `« ${s.name} » sera arrêtée : le travail en cours de Claude Code sera interrompu et la conversation de cette session fermée.`,
-      confirmLabel: 'Tuer', danger: true,
-    });
-    if (!ok) return;
-    try {
-      await del(`/api/hosts/${host.id}/claude/sessions/${s.name}`);
-      await refresh();
-      toast('Session arrêtée', 'ok', 1500);
-    } catch (err) { toastError(err); await refresh().catch(() => {}); }
-  }
+    async function startNew(dirField, btn) {
+      const dir = dirField.querySelector('input').value.trim();
+      let fresh;
+      try { fresh = await busy(btn, () => get(`/api/hosts/${hostId}/claude?${qs({ dir })}`)); } catch (err) { toastError(err); return; }
+      st = fresh;
+      if (!fresh.tmux || !fresh.claude.installed) { render(); return; }
+      if (dir && fresh.dirOk === false) { dirField.setError?.(`Dossier introuvable sur ${host().name}`); return; }
+      dirField.setError?.(null);
+      if (fresh.settings.dangerous) {
+        const ok = await confirmDialog({
+          title: 'Lancer sans confirmation ?',
+          message: `La commande de ${host().name} contient ${DANGEROUS_FLAG} : Claude Code pourra modifier des fichiers et lancer des commandes sans rien demander. Continuer ?`,
+          confirmLabel: 'Lancer quand même', danger: true,
+        });
+        if (!ok) return;
+      }
+      launchClaude(host(), { dir });
+    }
 
-  async function refresh() {
-    replace(list, loadingState('Actualisation…'));
-    const dir = dirField.querySelector('input').value.trim();
-    st = await get(`/api/hosts/${host.id}/claude?${qs({ dir })}`);
-    renderInfo();
-    renderList();
-  }
-
-  async function startNew() {
-    const dir = dirField.querySelector('input').value.trim();
-    try { st = await busy(newBtn, () => get(`/api/hosts/${host.id}/claude?${qs({ dir })}`)); } catch (err) { toastError(err); return; }
-    if (!st.claude.installed) { d.close(); return missingDialog(host, 'claude', st, () => openClaude(host, launch)); }
-    if (dir && st.dirOk === false) { dirField.setError?.(`Dossier introuvable sur ${host.name}`); return; }
-    dirField.setError?.(null);
-    if (await beginNew(host, st, launch, dir)) d.close();
-  }
-
-  renderInfo();
-  renderList();
-}
+    const unsub = state.subscribe(() => { if (!host() && hostId) { hostId = null; load(); } });
+    load();
+    return () => { seq++; picker.destroy(); unsub(); };
+  },
+};

@@ -301,7 +301,7 @@ test('desktop 1280px : rail latéral et reprise des onglets après rechargement'
   await ctx.close();
 });
 
-test('mobile 375px : Claude Code (bouton, session tmux, plein écran, reprise, arrêt)', async (t) => {
+test('mobile 375px : page Claude Code (navigation, session tmux, reprise, arrêt)', async (t) => {
   if (!browser) return t.skip('aucun navigateur Chromium/Edge disponible');
   const sshd2 = await startFakeSshd({ fakeTmux: true });
   try {
@@ -311,6 +311,7 @@ test('mobile 375px : Claude Code (bouton, session tmux, plein écran, reprise, a
     });
     assert.equal(created.status, 201);
     const hostId = created.body.host.id;
+    const live = '.term-pane:not([hidden]) .xterm-rows';
 
     const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     const page = await ctx.newPage();
@@ -323,48 +324,54 @@ test('mobile 375px : Claude Code (bouton, session tmux, plein écran, reprise, a
     const card = page.locator('article.host-card', { hasText: 'Claude Pi' });
     await card.waitFor();
     await auditLayout(page, 'hôtes avec bouton Claude');
-    await page.screenshot({ path: path.join(OUT, 'mobile-claude-1-hotes.png') });
 
-    // Un tap, aucune session : ouverture directe d'un onglet qui lance claude dans tmux, en plein écran.
+    // « Claude » est un onglet de la navigation, comme Hôtes, Terminal, Fichiers.
+    const navLink = page.locator('.app-nav').getByRole('link', { name: 'Claude' });
+    assert.ok(await navLink.isVisible(), 'onglet Claude dans la barre de navigation');
+    const labels = await page.locator('.app-nav .nav-item:visible').allInnerTexts();
+    assert.deepEqual(labels.slice(0, 3).map((x) => x.trim()), ['Hôtes', 'Terminal', 'Claude']);
+
+    // Le bouton de la fiche d'hôte ouvre cette page sur l'hôte choisi.
     await card.getByRole('button', { name: 'Claude Code' }).click();
-    await page.waitForFunction(() => document.querySelector('.term-pane:not([hidden]) .xterm-rows')?.textContent.includes('FAKE-CLAUDE'), null, { timeout: 20000 });
-    assert.ok(await page.locator('.app.term-full').count(), 'terminal en plein écran sur mobile');
-    assert.equal(await page.locator('.app-header').isVisible(), false);
+    await page.getByText('Aucune session Claude active').waitFor();
+    await auditLayout(page, 'page Claude vide');
+    await page.screenshot({ path: path.join(OUT, 'mobile-claude-1-page.png') });
+
+    // Nouvelle session → onglet du terminal ordinaire (même barre d'onglets), touches Claude visibles.
+    await page.getByRole('button', { name: 'Nouvelle session' }).click();
+    await page.waitForFunction((sel) => document.querySelector(sel)?.textContent.includes('FAKE-CLAUDE'), live, { timeout: 20000 });
+    assert.equal(await page.locator('.app-header').isVisible(), true, 'pas de plein écran : en-tête conservé');
+    assert.equal(await page.locator('.app-nav').isVisible(), true, 'pas de plein écran : navigation conservée');
+    assert.equal(await page.locator('.term-actions').count(), 0, 'barre d\'onglets d\'origine');
     assert.ok((await page.locator('.term-tab[aria-selected="true"]').innerText()).includes('Claude'));
-    for (const name of ['Shift+Tab (changer de mode dans Claude Code)', 'Entrée', 'Esc', 'Tab']) {
-      assert.ok(await page.getByRole('button', { name }).first().isVisible(), `touche ${name} visible`);
+    for (const name of ['Shift+Tab (changer de mode dans Claude Code)', 'Entrée']) {
+      assert.ok(await page.getByRole('button', { name }).isVisible(), `touche ${name} visible`);
     }
-    assert.ok(await page.getByRole('button', { name: 'Flèche haut' }).isVisible());
-    // pas de zoom au focus : le champ de saisie d'xterm fait 16 px
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.xterm-helper-textarea')).fontSize), '16px');
-    await auditLayout(page, 'terminal Claude plein écran');
+    await auditLayout(page, 'terminal Claude');
     await page.screenshot({ path: path.join(OUT, 'mobile-claude-2-terminal.png') });
-    const first = (await env.client.api('GET', `/api/hosts/${hostId}/claude`)).body.sessions.map((s) => s.name);
-    assert.deepEqual(first, ['corvus-claude-claude-pi-1']);
+    assert.deepEqual((await env.client.api('GET', `/api/hosts/${hostId}/claude`)).body.sessions.map((s) => s.name), ['corvus-claude-claude-pi-1']);
 
-    // Sortie du plein écran, retour à la liste des hôtes.
-    await page.getByRole('button', { name: 'Quitter le plein écran' }).click();
-    await page.locator('.app-header').waitFor();
+    // Un onglet de terminal ordinaire n'affiche pas ces touches.
     await page.getByRole('link', { name: 'Hôtes' }).click();
+    await card.getByRole('button', { name: 'Terminal' }).click();
+    await page.waitForFunction(() => document.querySelector('.term-tab[aria-selected="true"] .dot-ok'), null, { timeout: 15000 });
+    assert.equal(await page.getByRole('button', { name: 'Shift+Tab (changer de mode dans Claude Code)' }).isVisible(), false);
 
-    // Une session existe : le bouton ouvre la liste (Reprendre / Tuer / Nouvelle session).
-    await card.getByRole('button', { name: 'Claude Code' }).click();
-    const dlg = page.locator('dialog[open]');
-    await dlg.getByText('corvus-claude-claude-pi-1').waitFor();
-    assert.ok(await dlg.getByRole('button', { name: 'Reprendre' }).isVisible());
-    await auditLayout(page, 'liste des sessions Claude');
+    // Retour sur la page : la session est listée (Reprendre / Tuer).
+    await navLink.click();
+    await page.locator('.host-name.mono', { hasText: 'corvus-claude-claude-pi-1' }).waitFor();
+    assert.ok(await page.getByRole('button', { name: 'Reprendre' }).isVisible());
+    await auditLayout(page, 'page Claude avec session');
     await page.screenshot({ path: path.join(OUT, 'mobile-claude-3-sessions.png') });
-    await dlg.getByRole('button', { name: 'Nouvelle session' }).click();
-    await page.waitForFunction(() => document.querySelector('.term-pane:not([hidden]) .xterm-rows')?.textContent.includes('FAKE-CLAUDE'));
-    await page.waitForFunction(async (id) => (await (await fetch(`/api/hosts/${id}/claude`)).json()).sessions.length === 2, hostId, { timeout: 15000 });
+    await page.getByRole('button', { name: 'Nouvelle session' }).click();
+    await page.waitForFunction(async (id) => (await (await fetch(`/api/hosts/${id}/claude`)).json()).sessions.length === 2, hostId, { timeout: 20000 });
 
-    // Tuer une session depuis la liste.
-    await page.getByRole('button', { name: 'Quitter le plein écran' }).click();
-    await page.getByRole('link', { name: 'Hôtes' }).click();
-    await card.getByRole('button', { name: 'Claude Code' }).click();
-    await dlg.getByRole('button', { name: 'Tuer corvus-claude-claude-pi-1', exact: true }).click();
+    // Tuer la première depuis la page.
+    await navLink.click();
+    await page.getByRole('button', { name: 'Tuer corvus-claude-claude-pi-1', exact: true }).click();
     await page.getByRole('button', { name: 'Tuer', exact: true }).click();
-    await page.waitForFunction(() => !document.querySelector('dialog[open]')?.textContent.includes('corvus-claude-claude-pi-1'), null, { timeout: 15000 });
+    await page.waitForFunction(() => ![...document.querySelectorAll('.host-name.mono')].some((e) => e.textContent === 'corvus-claude-claude-pi-1'), null, { timeout: 15000 });
     assert.deepEqual((await env.client.api('GET', `/api/hosts/${hostId}/claude`)).body.sessions.map((s) => s.name), ['corvus-claude-claude-pi-2']);
     await page.screenshot({ path: path.join(OUT, 'mobile-claude-4-apres-kill.png') });
     assert.deepEqual(errors, []);

@@ -7,7 +7,7 @@ import {
   toast, toastError, loadingState, emptyState, errorState, badge, segmented,
 } from '../ui/components.js';
 import { state, sortedHosts } from '../state.js';
-import { claudeButton, dangerNote, isDangerous } from './claude.js';
+import { dangerNote, isDangerous } from './claude.js';
 
 export default {
   mount(el) {
@@ -68,7 +68,7 @@ export default {
         result,
         h('div', { class: 'host-actions' },
           button({ label: 'Terminal', icon: 'terminal', variant: 'primary', onClick: () => openTerminal(host) }),
-          claudeButton(() => host, (opts) => openClaudeTerminal(host, opts)),
+          button({ label: 'Claude Code', icon: 'sparkle', onClick: () => { state.setActiveHost(host.id); location.hash = '#/claude'; } }),
           button({ label: 'Fichiers', icon: 'folder', onClick: () => { state.setActiveHost(host.id); location.hash = '#/files'; } }),
           testBtn));
     }
@@ -90,15 +90,6 @@ export default {
 export function openTerminal(host) {
   state.setActiveHost(host.id);
   location.hash = `#/terminal?host=${host.id}&n=${Date.now()}`;
-}
-
-/** Ouvre un onglet Claude Code : la vue Terminal lit ces paramètres (session à reprendre, dossier). */
-export function openClaudeTerminal(host, { session, dir } = {}) {
-  state.setActiveHost(host.id);
-  const q = new URLSearchParams({ host: host.id, claude: '1', n: String(Date.now()) });
-  if (session) q.set('claudeSession', session);
-  if (dir !== undefined) q.set('claudeDir', dir);
-  location.hash = `#/terminal?${q}`;
 }
 
 /** Affiche le résultat d'un test (et gère le cas critique d'une host key modifiée). */
