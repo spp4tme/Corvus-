@@ -60,9 +60,9 @@ export function launchScript({ session, dir, cmd }) {
   const script = [
     PATH_FIX,
     `command -v tmux >/dev/null 2>&1 || { printf '\\r\\n[corvus] tmux est introuvable sur cet hote : %s\\r\\n' ${q(TMUX_INSTALL)}; exit 127; }`,
-    `if tmux has-session -t ${q(`=${name}`)} 2>/dev/null; then exec tmux new-session -A -s ${s}; fi`,
+    `if tmux has-session -t ${q(`=${name}`)} 2>/dev/null; then exec tmux new-session -A -s ${s} \\; set-option -q mouse on; fi`,
     `command -v claude >/dev/null 2>&1 || { printf '\\r\\n[corvus] claude est introuvable sur cet hote. Installation : %s\\r\\n' ${q(INSTALL.native)}; exit 127; }`,
-    `exec tmux new-session -A -s ${s}${cwd} ${q(shWrap(inner))}`,
+    `exec tmux new-session -A -s ${s}${cwd} ${q(shWrap(inner))} \\; set-option -q mouse on`,
   ].join('\n');
   return shWrap(script);
 }

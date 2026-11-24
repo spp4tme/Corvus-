@@ -380,3 +380,5 @@ dialog.dlg::backdrop { background: var(--c-overlay); }
 .xterm-helper-textarea { font-size: 16px !important; }
 .term-stage, .term-tabs, .keybar { touch-action: manipulation; }
 .term-stage .xterm { -webkit-text-size-adjust: 100%; }
+/* Le glisser du doigt appartient au terminal (défilement de l'historique) : jamais à la page. */
+.term-stage, .term-pane, .term-pane * { touch-action: none; overscroll-behavior: none; }

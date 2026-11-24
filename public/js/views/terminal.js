@@ -58,6 +58,7 @@ class Tab {
     this.pane.appendChild(host);
     ui.stage.appendChild(this.pane);
     this.term.open(host);
+    this.bindTouchScroll(host);
 
     // OSC 52 : le programme distant demande une copie vers le presse-papiers (tmux, vim, etc.).
     this.term.parser.registerOscHandler(52, (data) => {
@@ -126,6 +127,7 @@ class Tab {
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.t === 'ready') {
         this.sessionId = msg.session.id;
+        this.tmux = !!msg.session.tmux;
         if (msg.reset) this.term.reset();
         this.received = msg.offset;
         this.attempts = 0;
@@ -175,6 +177,42 @@ class Tab {
 
   sendBinary(d) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(Uint8Array.from(d, (c) => c.charCodeAt(0) & 0xff));
+  }
+
+  /** Glisser un doigt = molette : défile l'historique (tmux en mode souris, scrollback xterm, ou copy-mode tmux). */
+  bindTouchScroll(host) {
+    let y0 = null;
+    let acc = 0;
+    host.addEventListener('touchstart', (e) => {
+      y0 = e.touches.length === 1 ? e.touches[0].clientY : null;
+      acc = 0;
+    }, { passive: true });
+    host.addEventListener('touchmove', (e) => {
+      if (y0 === null || e.touches.length !== 1) return;
+      const y = e.touches[0].clientY;
+      acc += y - y0;
+      y0 = y;
+      const step = Math.max(12, host.clientHeight / this.term.rows) * 0.6;
+      const n = Math.trunc(acc / step);
+      if (!n) return;
+      acc -= n * step;
+      e.preventDefault();
+      this.touchScroll(n > 0 ? -1 : 1, Math.min(Math.abs(n), 20));
+    }, { passive: false });
+    host.addEventListener('touchend', () => { y0 = null; }, { passive: true });
+  }
+
+  touchScroll(dir, n) {
+    const t = this.term;
+    if (t.modes?.mouseTrackingMode && t.modes.mouseTrackingMode !== 'none') {
+      // Molette SGR (64 = haut, 65 = bas) : tmux (mouse on) entre/sort seul du mode copie.
+      const seq = `\x1b[<${dir < 0 ? 64 : 65};${Math.ceil(t.cols / 2)};${Math.ceil(t.rows / 2)}M`;
+      this.sendInput(seq.repeat(n));
+    } else if (t.buffer.active.type === 'normal') {
+      t.scrollLines(dir * n * 5);
+    } else if (this.tmux) {
+      scrollHistory(dir);
+    }
   }
 
   fitSoon(force = false) {
@@ -358,6 +396,17 @@ async function pressKey(k) {
   }
   if (k.action === 'paste') { paste(); return; }
   if (k.action === 'dictate') { dictate(); }
+}
+
+/** Défilement de l'historique sans souris : copy-mode de tmux (Ctrl-b [) + PageUp/PageDown, sinon scrollback xterm. */
+function scrollHistory(dir) {
+  const tab = active;
+  if (tab.tmux) {
+    if (dir < 0) tab.sendInput('\x02[');
+    tab.sendInput(dir < 0 ? '\x1b[5~' : '\x1b[6~');
+  } else {
+    tab.term.scrollPages(dir);
+  }
 }
 
 async function paste() {

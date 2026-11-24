@@ -51,7 +51,7 @@ class RingBuffer {
 export function tmuxCommand(sessionName) {
   const s = q(sessionName);
   return shWrap(
-    `if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s ${s}; ` +
+    `if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s ${s} \\; set-option -q mouse on; ` +
     `else printf '\\r\\n\\033[33m[corvus] tmux introuvable sur cet hôte — shell classique (pas de reprise de session).\\033[0m\\r\\n'; ` +
     `exec "\${SHELL:-/bin/sh}" -l; fi`,
   );
