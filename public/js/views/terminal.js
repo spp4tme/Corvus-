@@ -6,6 +6,7 @@ import { icon } from '../ui/icons.js';
 import { button, openDialog, emptyState, toast, badge } from '../ui/components.js';
 import { state, sortedHosts } from '../state.js';
 import { terminalTheme } from '../terminal-themes.js';
+import { parseUtterance, createVoice, voiceSupported } from '../voice.js';
 
 const tabs = [];
 let active = null;
@@ -341,7 +342,7 @@ const KEYS = [
   { label: '^D', send: '\x04', title: 'Ctrl+D (fin de saisie)' },
   { label: 'Coller', icon: 'clipboard', action: 'paste' },
   { label: 'Copier la sélection', icon: 'copy', action: 'copy' },
-  { label: 'Dictée vocale', icon: 'mic', action: 'dictate', optional: true },
+  { label: 'Contrôle vocal (écoute continue)', icon: 'mic', action: 'dictate', optional: true },
   { label: 'Masquer le clavier', icon: 'keyboard', action: 'blur' },
 ];
 const modButtons = {};
@@ -359,7 +360,7 @@ function renderMods() {
 function buildKeybar() {
   const bar = h('div', { class: 'keybar', role: 'toolbar', 'aria-label': 'Touches spéciales' });
   for (const k of KEYS) {
-    if (k.optional && !(window.SpeechRecognition || window.webkitSpeechRecognition)) continue;
+    if (k.optional && !voiceSupported()) continue;
     const b = h('button', {
       type: 'button', class: 'key', title: k.title || k.label, 'aria-label': k.icon || k.title ? k.title || k.label : undefined,
       'aria-pressed': k.mod ? 'false' : undefined,
@@ -368,6 +369,7 @@ function buildKeybar() {
     b.addEventListener('pointerdown', (e) => e.preventDefault());
     b.addEventListener('click', () => pressKey(k));
     if (k.mod) modButtons[k.mod] = b;
+    if (k.action === 'dictate') { voiceMic = b; b.setAttribute('aria-pressed', 'false'); }
     if (k.claudeOnly) { claudeKeys.push(b); b.style.display = 'none'; }
     bar.appendChild(b);
   }
@@ -426,21 +428,54 @@ async function paste() {
   setTimeout(() => area.focus(), 30);
 }
 
+// --- Contrôle vocal ---------------------------------------------------------------------------
+// Écoute continue : le texte dicté est saisi SANS être exécuté ; « entrée » (ou « envoie ») valide,
+// « annule » = Ctrl-C, « monte/descends » fait défiler, « arrête l'écoute » coupe le micro.
+let voice = null;
+let voiceTab = null;
+let voiceMic = null;
+let voicePill = null;
+
+function setPill(text, listening = true) {
+  if (!voicePill) return;
+  voicePill.hidden = !listening;
+  voicePill.querySelector('.voice-text').textContent = text || 'Je vous écoute… (« entrée », « annule », « arrête l’écoute »)';
+}
+
+function runVoiceAction(a) {
+  const tab = voiceTab && tabs.includes(voiceTab) ? voiceTab : active;
+  if (!tab) return;
+  if (a.kind === 'stop') { voice.stop(); return; }
+  if (a.kind === 'text') tab.sendInput(a.v);
+  else if (a.kind === 'key') tab.sendInput(a.v);
+  else if (a.kind === 'arrow') {
+    const appMode = tab.term.modes?.applicationCursorKeysMode;
+    tab.sendInput(`${appMode ? '\x1bO' : '\x1b['}${a.v}`);
+  } else if (a.kind === 'scroll') { const prev = active; active = tab; scrollHistory(a.v); active = prev; }
+  navigator.vibrate?.(8);
+}
+
 function dictate() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR || !active) return;
-  const tab = active;
-  const rec = new SR();
-  rec.lang = prefs.get('speechLang', 'fr-FR');
-  rec.interimResults = false;
-  rec.maxAlternatives = 1;
-  toast('Parlez… (la commande sera saisie sans être exécutée)', 'info', 3000);
-  rec.onresult = (e) => {
-    const text = e.results[0]?.[0]?.transcript;
-    if (text) tab.sendInput(text);
-  };
-  rec.onerror = (e) => toast(`Dictée indisponible : ${e.error}`, 'warn');
-  rec.start();
+  if (!active) return;
+  if (voice?.active) { voice.stop(); return; }
+  voiceTab = active;
+  voice = createVoice({
+    lang: prefs.get('speechLang', 'fr-FR'),
+    onText: (t) => {
+      const tab = voiceTab && tabs.includes(voiceTab) ? voiceTab : active;
+      const actions = parseUtterance(t, { shell: !tab?.isClaude });
+      if (actions.length) setPill(`« ${t.trim()} »`);
+      actions.forEach(runVoiceAction);
+    },
+    onInterim: (t) => { if (voice?.active) setPill(t ? `${t}…` : ''); },
+    onState: (on) => {
+      voiceMic?.setAttribute('aria-pressed', String(on));
+      voiceMic?.classList.toggle('listening', on);
+      setPill('', on);
+    },
+    onError: (m) => toast(m, 'warn', 4000),
+  });
+  voice.start();
 }
 
 export default {
@@ -458,6 +493,10 @@ export default {
     });
     stage.appendChild(empty);
     const keybar = buildKeybar();
+    voicePill = h('button', { type: 'button', class: 'voice-pill', hidden: true, 'aria-live': 'polite', title: 'Toucher pour arrêter l’écoute' },
+      icon('mic'), h('span', { class: 'voice-text' }));
+    voicePill.addEventListener('click', () => voice?.stop());
+    stage.appendChild(voicePill);
     ui = { tabs: tabsEl, stage, keybar, empty };
     el.append(h('div', { class: 'term-view' }, tabsEl, stage, keybar));
     termSettings.apply();

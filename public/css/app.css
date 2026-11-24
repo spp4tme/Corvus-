@@ -373,6 +373,18 @@ dialog.dlg::backdrop { background: var(--c-overlay); }
 .key svg { width: 18px; height: 18px; }
 .key[aria-pressed="true"] { background: var(--c-accent); color: var(--c-on-accent); border-color: var(--c-accent); }
 .key:active { background: var(--c-surface-3); }
+.key.listening { animation: voice-pulse 1.4s ease-in-out infinite; }
+.voice-pill {
+  position: absolute; left: 50%; bottom: var(--s-3); transform: translateX(-50%); z-index: 6; max-width: 92%;
+  display: inline-flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-3);
+  border-radius: 999px; border: 1px solid var(--c-accent); background: var(--c-surface); color: var(--c-text);
+  font: var(--fs-sm) inherit; box-shadow: 0 2px 12px rgba(0,0,0,.4); cursor: pointer;
+}
+.voice-pill[hidden] { display: none; }
+.voice-pill svg { width: 16px; height: 16px; color: var(--c-accent); flex: none; animation: voice-pulse 1.4s ease-in-out infinite; }
+.voice-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes voice-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .key.listening, .voice-pill svg { animation: none; } }
 @media (hover: hover) and (pointer: fine) { .keybar.auto-hide { display: none; } }
 
 /* ---------- Terminal : saisie mobile ---------- */

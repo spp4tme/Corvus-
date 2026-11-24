@@ -1,11 +1,11 @@
 // Service worker Corvus : coquille de l'app disponible hors ligne.
 // L'API, les WebSockets, les téléchargements et le proxy ne sont JAMAIS mis en cache.
-const VERSION = 'corvus-v10';
+const VERSION = 'corvus-v11';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest',
   '/css/tokens.css', '/css/app.css',
   '/vendor/xterm.css', '/vendor/xterm.js', '/vendor/addon-fit.js',
-  '/js/main.js', '/js/api.js', '/js/state.js', '/js/push.js', '/js/terminal-themes.js',
+  '/js/main.js', '/js/api.js', '/js/state.js', '/js/push.js', '/js/terminal-themes.js', '/js/voice.js',
   '/js/ui/dom.js', '/js/ui/icons.js', '/js/ui/components.js', '/js/ui/hostpicker.js', '/js/ui/chart.js',
   '/js/views/login.js', '/js/views/hosts.js', '/js/views/terminal.js', '/js/views/claude.js', '/js/views/files.js',
   '/js/views/git.js', '/js/views/monitor.js', '/js/views/journal.js', '/js/views/proxy.js',

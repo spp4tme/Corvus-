@@ -372,3 +372,32 @@ describe('correctifs de l\'audit', () => {
     assert.equal(got[1].body, 'plus tard');
   });
 });
+
+describe('contrôle vocal : parseUtterance', async () => {
+  const { parseUtterance: pu } = await import('../public/js/voice.js');
+  const flat = (t, o) => pu(t, o).map((a) => a.v);
+  test('commandes seules', () => {
+    assert.deepEqual(flat('Entrée'), ['\r']);
+    assert.deepEqual(flat('Annule.'), ['\x03']);
+    assert.deepEqual(flat('trois'), ['3']);
+    assert.deepEqual(pu('Monte'), [{ kind: 'scroll', v: -1 }]);
+    assert.deepEqual(pu("Arrête l'écoute"), [{ kind: 'stop' }]);
+  });
+  test("le texte n'est exécuté qu'avec « entrée »", () => {
+    assert.deepEqual(flat('Liste les fichiers.'), ['liste les fichiers']);
+    assert.deepEqual(flat('git status envoie'), ['git status', '\r']);
+    assert.deepEqual(flat('annule la commande'), ['annule la commande']);
+  });
+  test('symboles et chemins', () => {
+    assert.deepEqual(flat('ls tiret la'), ['ls -la']);
+    assert.deepEqual(flat('cd slash var slash log'), ['cd /var/log']);
+    assert.deepEqual(flat('cd tilde slash corvus'), ['cd ~/corvus']);
+    assert.deepEqual(flat('cd point point slash'), ['cd ../']);
+    assert.deepEqual(flat('cat a point txt'), ['cat a.txt']);
+    assert.deepEqual(flat('ls pipe grep foo'), ['ls | grep foo']);
+  });
+  test('onglet Claude : la casse est conservée', () => {
+    assert.deepEqual(flat('Corrige le bug.', { shell: false }), ['Corrige le bug.']);
+    assert.deepEqual(flat('Corrige le bug.', { shell: true }), ['corrige le bug']);
+  });
+});
