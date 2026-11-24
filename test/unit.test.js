@@ -13,6 +13,9 @@ import { Vault } from '../server/lib/vault.js';
 import * as cl from '../server/lib/claude.js';
 import { classifyAddress } from '../server/lib/netcheck.js';
 import { tokenMatches, FailureLimiter, originAllowed } from '../server/lib/auth.js';
+import { buildTarget } from '../server/lib/proxy.js';
+import { SshPool } from '../server/lib/ssh.js';
+import { TerminalManager } from '../server/lib/terminal.js';
 
 // Sortie réelle (Raspberry Pi 4, Raspberry Pi OS 64 bits), deux relevés à 3 s d'intervalle.
 const PI_SAMPLE = (cpu, rx, tx) => `##stat
@@ -313,5 +316,59 @@ describe('Claude Code', () => {
     assert.equal(none.claude.installed, false);
     assert.equal(none.dirOk, null);
     assert.deepEqual(none.sessions, []);
+  });
+});
+
+describe('correctifs de l\'audit', () => {
+  test('proxy : le chemin ne peut jamais changer d\'hôte ni sortir du préfixe', () => {
+    const base = new URL('http://100.64.0.5:8080');
+    assert.equal(buildTarget(base, '/a/b?x=1').href, 'http://100.64.0.5:8080/a/b?x=1');
+    assert.equal(buildTarget(base, '/').pathname, '/');
+    // Ces chemins étaient interprétés comme « autre hôte » par new URL().
+    for (const evil of ['//127.0.0.1:7680/api/health', '///127.0.0.1/x', '/\\\\127.0.0.1/x', '\\\\127.0.0.1\\x']) {
+      const t = buildTarget(base, evil);
+      assert.equal(t.host, '100.64.0.5:8080', `hôte conservé pour ${evil}`);
+    }
+    const sub = new URL('http://100.64.0.5:3000/grafana');
+    assert.equal(buildTarget(sub, '/d/abc').pathname, '/grafana/d/abc');
+    assert.equal(buildTarget(sub, '//127.0.0.1/x').host, '100.64.0.5:3000');
+    assert.throws(() => buildTarget(sub, '/../admin'), /sort du service/);
+  });
+
+  test('limiteur : le volume global ne bloque pas un autre appareil (pas de déni de service)', () => {
+    const l = new FailureLimiter({ maxPerIp: 10, windowMs: 60_000, maxGlobal: 5 });
+    for (let i = 0; i < 20; i++) l.fail(`10.0.0.${i}`);
+    assert.equal(l.blockedFor('100.64.0.1'), 0, 'le propriétaire peut toujours se connecter');
+    assert.ok(l.fail('10.0.0.99') >= 4000, 'mais la pénalité augmente');
+  });
+
+  test('SSH : une connexion tenue (transfert SFTP) n\'est pas fermée par le « reaper »', () => {
+    const pool = new SshPool({ hosts: {}, knownHosts: {}, config: { sshIdleMs: 1000 } });
+    let ended = 0;
+    const conn = { hostId: 'h', client: { end: () => { ended++; } }, lastUsed: Date.now() - 60_000, channels: 0, closed: false };
+    pool.conns.set('h', conn);
+    const release = pool.hold('h');
+    pool.reap();
+    assert.equal(ended, 0, 'tenue : pas fermée');
+    release();
+    release(); // idempotent
+    assert.equal(conn.channels, 0);
+    conn.lastUsed = Date.now() - 60_000;
+    pool.reap();
+    assert.equal(ended, 1, 'inactive : fermée');
+    pool.closeAll();
+  });
+
+  test('terminal : les notifications OSC 777 sont limitées en débit', () => {
+    const got = [];
+    const tm = new TerminalManager({ config: {}, onNotify: (n) => got.push(n) });
+    const s = { id: 's1', hostId: 'h1', title: 'T', oscTail: '' };
+    const osc = (body) => Buffer.from(`\x1b]777;notify;Titre;${body}\x07`);
+    for (let i = 0; i < 500; i++) tm.scanNotify(s, osc(`n${i}`));
+    assert.equal(got.length, 1, 'une seule notification dans la fenêtre');
+    s.lastNotify -= 10_000;
+    tm.scanNotify(s, osc('plus tard'));
+    assert.equal(got.length, 2);
+    assert.equal(got[1].body, 'plus tard');
   });
 });

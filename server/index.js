@@ -34,6 +34,9 @@ try {
   const shown = addr.family === 'IPv6' ? `[${addr.address}]` : addr.address;
   log.info(`Corvus ${corvus.ctx.version} à l'écoute sur http://${shown}:${addr.port}`);
   log.info(`Données : ${config.dataDir} — secrets chiffrés (clé dérivée ${config.masterPassphrase ? 'de la passphrase maître' : 'du token'})`);
+  if (!config.masterPassphrase) {
+    log.warn('Secrets chiffrés avec une clé dérivée du token (stocké dans le même dossier) : voler data/ donne accès aux secrets. Définissez CORVUS_MASTER_PASSPHRASE pour une vraie protection au repos.');
+  }
   if (kind === 'any') {
     log.warn('BIND sur toutes les interfaces : assurez-vous qu\'un pare-feu limite l\'accès au réseau Tailscale (tailscale0).');
   } else if (kind === 'private' || kind === 'hostname') {

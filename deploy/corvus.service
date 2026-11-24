@@ -1,4 +1,4 @@
-# Unité systemd Corvus — installée par deploy/install-pi.sh dans /etc/systemd/system/
+# Unité systemd Corvus — installée par deploy/install-linux.sh dans /etc/systemd/system/
 [Unit]
 Description=Corvus — passerelle SSH/SFTP/DevOps du tailnet
 Documentation=file:///opt/corvus/README.md

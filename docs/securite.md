@@ -27,7 +27,8 @@ vers le port 443 de la machine Corvus).
   durée 30 jours (`SESSION_TTL_DAYS`). Le token n'est jamais stocké dans le navigateur.
 - `Authorization: Bearer <token>` accepté pour les scripts.
 - **Limitation des échecs** : délai exponentiel (0,25 s → 8 s) par tentative, blocage 15 min
-  après 10 échecs par IP, ou 50 échecs au total.
+  après 10 échecs **par IP**. Le volume global d'échecs n'alourdit que le délai (4 s minimum) et ne
+  bloque jamais un autre appareil : personne ne peut vous enfermer dehors.
 - Rotation : `npm run token:rotate` (re-chiffre les secrets, révoque toutes les sessions).
 
 ### API et WebSocket
@@ -65,12 +66,14 @@ vers le port 443 de la machine Corvus).
 
 ### Proxy web
 - Cibles limitées aux adresses Tailscale et loopback, vérifiées **après** résolution DNS
-  (anti DNS-rebinding). Pour le LAN, définir `CORVUS_PROXY_ALLOW_PRIVATE=1`.
+  (anti DNS-rebinding). Le chemin demandé ne peut jamais changer d'hôte ni sortir du préfixe du
+  service enregistré (`//autre-hote/…` est refusé). Pour le LAN, définir `CORVUS_PROXY_ALLOW_PRIVATE=1`.
 - Accès par jeton aléatoire (expiration glissante de 12 h). Le cookie Corvus n'est jamais transmis.
 - Pages servies sous `CSP: sandbox` sans `allow-same-origin` : origine opaque, aucun accès à l'API.
 
 ### Notifications push
 - VAPID (ES256), push **sans contenu** : le détail est récupéré par le service worker avec la session.
+- Les notifications déclenchées par un terminal (OSC 777) sont limitées à une toutes les 3 s par session : un processus distant ne peut pas inonder le journal ni vos appareils.
 - Seuls les services de push des navigateurs (Google, Mozilla, Apple, Microsoft) sont contactés (anti-SSRF).
 
 ## Que faire si…

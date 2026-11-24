@@ -53,8 +53,9 @@ export class FailureLimiter {
     const now = Date.now();
     this._prune(now);
     const rec = this.byIp.get(ip);
+    // Blocage par IP uniquement. Un blocage global permettrait à n'importe quel appareil du tailnet
+    // d'enfermer dehors le propriétaire ; le volume global ne fait qu'alourdir la pénalité (voir fail).
     if (rec && rec.times.length >= this.maxPerIp) return this.windowMs - (now - rec.times[0]);
-    if (this.global.length >= this.maxGlobal) return this.windowMs - (now - this.global[0]);
     return 0;
   }
   /** Enregistre un échec et retourne le délai de pénalité à appliquer (ms). */
@@ -64,7 +65,8 @@ export class FailureLimiter {
     rec.times.push(now);
     this.byIp.set(ip, rec);
     this.global.push(now);
-    return Math.min(250 * 2 ** (rec.times.length - 1), 8000);
+    const perIp = Math.min(250 * 2 ** (rec.times.length - 1), 8000);
+    return this.global.length >= this.maxGlobal ? Math.max(perIp, 4000) : perIp;
   }
   success(ip) {
     this.byIp.delete(ip);

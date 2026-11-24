@@ -119,9 +119,13 @@ export class ProxyService {
       }
       const base = new URL(svc.url);
       // Monté via app.use('/proxy/:cap') : req.url ne contient plus le préfixe.
-      const rest = (req.url || '/').split('?')[0];
-      const target = new URL(base.pathname.replace(/\/$/, '') + (rest.startsWith('/') ? rest : `/${rest}`), base);
-      target.search = new URL(req.url, 'http://x').search;
+      let target;
+      try {
+        target = buildTarget(base, req.url);
+      } catch (err) {
+        res.status(err.status || 400).type('text/plain').end(err.message);
+        return;
+      }
       let address;
       try {
         address = await this.checkTarget(target.toString());
@@ -173,6 +177,25 @@ export class ProxyService {
       req.pipe(upstream);
     };
   }
+}
+
+/**
+ * Construit l'URL amont à partir du service enregistré et du chemin demandé au proxy.
+ * Le résultat reste TOUJOURS sur l'origine du service et sous son préfixe : un chemin comme
+ * `//127.0.0.1:7680/x` ou `/\\autre-hote/x` serait sinon interprété par `new URL` comme un autre hôte.
+ */
+export function buildTarget(base, reqUrl) {
+  const raw = String(reqUrl || '/');
+  const qi = raw.indexOf('?');
+  const rest = qi < 0 ? raw : raw.slice(0, qi);
+  const search = qi < 0 ? '' : raw.slice(qi);
+  const basePath = base.pathname.replace(/\/$/, '');
+  const target = new URL(`${basePath}/${rest.replace(/^[\\/]+/, '')}`, base);
+  target.search = search;
+  if (target.origin !== base.origin || (basePath && target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`))) {
+    throw new HttpError(400, 'BAD_PATH', 'Chemin refusé : il sort du service enregistré');
+  }
+  return target;
 }
 
 export function rewriteLocation(loc, base, cap) {

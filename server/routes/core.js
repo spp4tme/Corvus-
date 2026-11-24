@@ -84,7 +84,10 @@ export function hostRoutes(ctx) {
     const connChanged = ['hostname', 'port', 'username', 'authType', 'password', 'privateKey', 'passphrase', 'clearSecrets']
       .some((k) => k in (req.body || {}));
     const host = hosts.update(id, req.body);
-    if (connChanged) pool.drop(id);
+    if (connChanged) {
+      pool.drop(id);
+      ctx.sftp?.forget(id);
+    }
     res.json({ host });
   });
 

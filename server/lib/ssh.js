@@ -202,6 +202,23 @@ export class SshPool {
     }
   }
 
+  /**
+   * Marque la connexion comme active (transfert SFTP long) pour que le « reaper » ne la ferme pas.
+   * Retourne la fonction de libération (idempotente).
+   */
+  hold(hostId) {
+    const conn = this.conns.get(hostId);
+    if (!conn) return () => {};
+    conn.channels++;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      conn.channels--;
+      conn.lastUsed = Date.now();
+    };
+  }
+
   /** Session SFTP partagée par hôte. */
   async sftp(hostId) {
     const conn = await this.get(hostId);

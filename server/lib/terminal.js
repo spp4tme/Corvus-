@@ -9,6 +9,11 @@ import { logger } from './log.js';
 
 const log = logger('term');
 const MAX_SESSIONS = 32;
+// Un processus distant ne doit pas pouvoir inonder le journal et les appareils de notifications.
+const NOTIFY_MIN_INTERVAL_MS = 3000;
+// Contre-pression : au-delà de HIGH octets en attente côté WebSocket, on suspend la lecture SSH.
+const WS_HIGH_WATER = 1024 * 1024;
+const WS_LOW_WATER = 256 * 1024;
 const OSC_NOTIFY = /\x1b\]777;notify;([^;\x07\x1b]{0,120});([^\x07\x1b]{0,400})(?:\x07|\x1b\\)/g;
 
 class RingBuffer {
@@ -128,8 +133,14 @@ export class TerminalManager {
 
     const onData = (chunk) => {
       s.buffer.push(chunk);
-      for (const ws of s.clients) if (ws.readyState === 1) ws.send(chunk, { binary: true });
+      let slow = false;
+      for (const ws of s.clients) {
+        if (ws.readyState !== 1) continue;
+        ws.send(chunk, { binary: true });
+        if (ws.bufferedAmount > WS_HIGH_WATER) slow = true;
+      }
       this.scanNotify(s, chunk);
+      if (slow) this.pauseUntilDrained(s);
     };
     stream.on('data', onData);
     stream.stderr?.on('data', onData);
@@ -156,9 +167,27 @@ export class TerminalManager {
     let lastEnd = 0;
     while ((m = OSC_NOTIFY.exec(text))) {
       lastEnd = m.index + m[0].length;
+      const now = Date.now();
+      if (now - (s.lastNotify || 0) < NOTIFY_MIN_INTERVAL_MS) continue;
+      s.lastNotify = now;
       this.onNotify({ sessionId: s.id, hostId: s.hostId, title: m[1] || s.title, body: m[2] });
     }
     s.oscTail = text.slice(Math.max(lastEnd, text.length - 600));
+  }
+
+  /** Suspend la lecture du canal SSH tant qu'un client WebSocket n'a pas écoulé son retard (évite la mémoire sans limite). */
+  pauseUntilDrained(s) {
+    if (s.paused || s.exited) return;
+    s.paused = true;
+    s.stream.pause();
+    const timer = setInterval(() => {
+      const behind = [...s.clients].some((ws) => ws.readyState === 1 && ws.bufferedAmount > WS_LOW_WATER);
+      if (behind && !s.exited) return;
+      clearInterval(timer);
+      s.paused = false;
+      if (!s.exited) s.stream.resume();
+    }, 50);
+    timer.unref();
   }
 
   armGrace(s) {

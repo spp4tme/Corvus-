@@ -1,4 +1,5 @@
 // Opérations SFTP (aucune commande shell : tout passe par le protocole SFTP).
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
@@ -48,6 +49,11 @@ export class SftpService {
 
   log(hostId, event, detail, ok = true) {
     this.journal.add({ type: 'sftp', event, host: this.hosts.get(hostId), detail, ok });
+  }
+
+  /** À appeler quand la connexion d'un hôte change (utilisateur, adresse…) : le dossier personnel peut différer. */
+  forget(hostId) {
+    this.homes.delete(hostId);
   }
 
   async home(hostId, sftp) {
@@ -159,12 +165,22 @@ export class SftpService {
     const { sftp, abs, st, type } = await this.stat(hostId, p);
     if (type !== 'file') throw new HttpError(400, 'NOT_A_FILE', 'Ce n\'est pas un fichier');
     if (maxBytes && st.size > maxBytes) throw new HttpError(413, 'FILE_TOO_LARGE', 'Fichier trop gros pour l\'aperçu');
-    return { stream: sftp.createReadStream(abs), size: st.size, abs, name: P.basename(abs) };
+    // La connexion reste « active » pendant tout le transfert (sinon coupée après SSH_IDLE_MIN).
+    const release = this.pool.hold(hostId);
+    const stream = sftp.createReadStream(abs);
+    stream.once('close', release);
+    stream.once('error', release);
+    return { stream, size: st.size, abs, name: P.basename(abs) };
   }
 
+  /**
+   * Téléversement atomique : écriture dans un fichier temporaire voisin, puis renommage.
+   * Un échec ou une coupure en cours de route ne détruit donc jamais le fichier existant.
+   */
   async upload(hostId, dir, name, source, { overwrite = false } = {}) {
     const { sftp, abs: dirAbs } = await this.open(hostId, dir);
     const target = P.join(dirAbs, name);
+    const tmp = P.join(dirAbs, `.${name.slice(0, 100)}.corvus-${crypto.randomBytes(4).toString('hex')}.part`);
     let written = 0;
     const limit = this.config.maxUploadBytes;
     const counter = new Transform({
@@ -174,16 +190,28 @@ export class SftpService {
         cb(null, chunk);
       },
     });
-    if (!overwrite) {
-      const exists = await call(sftp, 'stat', target).then(() => true, () => false);
-      if (exists) throw new HttpError(409, 'EXISTS', `« ${name} » existe déjà dans ce dossier`);
-    }
+    const exists = () => call(sftp, 'lstat', target).then((st) => st, () => null);
+    const previous = await exists();
+    if (previous && !overwrite) throw new HttpError(409, 'EXISTS', `« ${name} » existe déjà dans ce dossier`);
+    const release = this.pool.hold(hostId);
     try {
-      await pipeline(source, counter, sftp.createWriteStream(target, { flags: 'w' }));
+      try {
+        await pipeline(source, counter, sftp.createWriteStream(tmp, { flags: 'wx' }));
+      } catch (err) {
+        await call(sftp, 'unlink', tmp).catch(() => {});
+        throw err;
+      }
+      try {
+        await finalizeUpload(sftp, tmp, target, { overwrite, previous, exists });
+      } catch (err) {
+        await call(sftp, 'unlink', tmp).catch(() => {});
+        throw err;
+      }
     } catch (err) {
-      await call(sftp, 'unlink', target).catch(() => {});
       this.log(hostId, 'upload', target, false);
       throw mapSftpError(err, target);
+    } finally {
+      release();
     }
     this.log(hostId, 'upload', `${target} (${written} o)`);
     return { path: target, size: written };
@@ -236,6 +264,32 @@ export class SftpService {
     }
     this.log(hostId, 'delete', `${abs}${count > 1 ? ` (${count} éléments)` : ''}`);
     return { deleted: count };
+  }
+}
+
+/** Remplace `target` par `tmp` sans jamais laisser l'utilisateur sans fichier. */
+async function finalizeUpload(sftp, tmp, target, { overwrite, previous, exists }) {
+  if (previous && previous.mode != null) {
+    // Conserve les droits du fichier remplacé (le fichier temporaire a ceux par défaut).
+    await call(sftp, 'chmod', tmp, previous.mode & 0o7777).catch(() => {});
+  }
+  if (!overwrite) {
+    if (await exists()) throw new HttpError(409, 'EXISTS', 'Le fichier vient d\'être créé par ailleurs');
+    await call(sftp, 'rename', tmp, target);
+    return;
+  }
+  // OpenSSH : posix-rename remplace atomiquement la destination.
+  try {
+    await call(sftp, 'ext_openssh_rename', tmp, target);
+    return;
+  } catch { /* extension absente → renommage classique */ }
+  try {
+    await call(sftp, 'rename', tmp, target);
+  } catch (err) {
+    if (!(await exists())) throw err;
+    // Serveur SFTP sans écrasement : le fichier complet est déjà dans `tmp`, la fenêtre de risque est minime.
+    await call(sftp, 'unlink', target);
+    await call(sftp, 'rename', tmp, target);
   }
 }
 

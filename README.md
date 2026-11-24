@@ -25,10 +25,10 @@ tiers.
 
 1. [Fonctionnalités](#fonctionnalités)
 2. [Démarrage rapide](#démarrage-rapide-npm-start)
-3. [Où l'héberger : PC ou Raspberry Pi ?](#où-lhéberger--pc-ou-raspberry-pi-)
-4. [Installation sur Raspberry Pi (recommandé)](#installation-sur-raspberry-pi-recommandé)
+3. [Où l'héberger : PC, serveur ou Raspberry Pi ?](#où-lhéberger--pc-serveur-ou-raspberry-pi-)
+4. [Installation sur Linux : serveur, PC, Raspberry Pi (recommandé)](#installation-sur-linux--serveur-pc-raspberry-pi-recommandé)
 5. [Installation avec Docker](#installation-avec-docker)
-6. [Installation sur le PC](#installation-sur-le-pc)
+6. [Installation sur un PC Windows ou macOS](#installation-sur-un-pc-windows-ou-macos)
 7. [Exposer Corvus sur le tailnet (`tailscale serve`)](#exposer-corvus-sur-le-tailnet-tailscale-serve)
 8. [Installer la PWA (iOS, Android, desktop)](#installer-la-pwa)
 9. [Configuration](#configuration-variables-denvironnement)
@@ -45,7 +45,7 @@ tiers.
 | Module | Ce qu'il fait |
 |---|---|
 | **Hôtes** | Ajout, modification, suppression ; alias, icône, groupes, épingles ; auth par mot de passe, clé privée (+ passphrase) ou agent SSH ; bouton **Tester la connexion** ; import depuis `tailscale status --json`. |
-| **Terminal** | Onglets multiples (xterm.js), thèmes, taille de police, redimensionnement du PTY, **barre de touches mobile** (Esc, Tab, Ctrl/Alt, flèches, `\| ~ / -`, ^C, ^D, coller, copier, dictée), clavier externe, **OSC 52** (copie vers le presse-papiers), **reconnexion WebSocket automatique** (reprise à l'octet près), **mode tmux** (`tmux new-session -A`) pour survivre aux coupures. |
+| **Terminal** | Onglets multiples (xterm.js), thèmes, taille de police, redimensionnement du PTY, **barre de touches mobile** (Esc, Tab, Ctrl/Alt, flèches, `\| ~ / -`, ^C, ^D, coller, copier, dictée), clavier externe, **OSC 52** (copie vers le presse-papiers), **reconnexion WebSocket automatique** (reprise à l'octet près), **mode tmux** (`tmux new-session -A`) pour survivre aux coupures, **défilement de l'historique au doigt** sur mobile (voir [Terminal sur mobile](#terminal-sur-mobile)). |
 | **Claude Code** | Onglet **Claude** dans la navigation (et bouton sur chaque fiche d'hôte) : lance `claude` dans une session tmux dédiée, liste des sessions actives (Reprendre / Tuer / Nouvelle session). Voir [Claude Code](#claude-code). |
 | **Fichiers** | Navigation SFTP, envoi (avec progression, glisser-déposer), téléchargement, nouveau dossier, renommer/déplacer, supprimer, **éditeur texte** (≤ 2 Mo, détection de conflit), aperçu d'images. |
 | **Git** | Statut, branches (checkout, suivi, création), historique, diff, stage/unstage, commit, `pull --ff-only`, push, fetch, découverte des dépôts. |
@@ -65,7 +65,7 @@ Prérequis : **Node.js 20 ou plus** ([nodejs.org](https://nodejs.org)). Aucune c
 les dépendances sont 100 % JavaScript (`npm run check:pure` le vérifie).
 
 ```bash
-git clone <ce dépôt> corvus && cd corvus
+git clone https://github.com/spp4tme/Corvus-.git corvus && cd corvus
 npm ci            # ou npm install
 npm start
 ```
@@ -84,66 +84,94 @@ Ouvrez <http://127.0.0.1:7680>, collez le token, puis ajoutez un hôte (IP `100.
 `machine.tailnet.ts.net`, utilisateur, mot de passe ou clé). Pour réafficher le token :
 `npm run token`.
 
+> **Chaque installation génère son propre token** et garde ses secrets dans son dossier `data/`
+> (ignoré par git) : le dépôt ne contient aucune clé, aucun token ni aucun identifiant.
+
 > Pour l'utiliser depuis le téléphone, exposez Corvus sur le tailnet :
 > [voir `tailscale serve`](#exposer-corvus-sur-le-tailnet-tailscale-serve).
 
 ---
 
-## Où l'héberger : PC ou Raspberry Pi ?
+## Où l'héberger : PC, serveur ou Raspberry Pi ?
 
-Corvus doit tourner sur une machine **membre du tailnet**. Deux options :
+Corvus doit tourner sur une machine **membre du tailnet**, ou joignable par un tunnel SSH. Deux
+familles d'hébergement :
 
-| | **(a) Sur le PC** | **(b) Sur un Raspberry Pi toujours allumé** ⭐ |
+| | **(a) Sur un PC** | **(b) Sur un serveur Linux ou un Raspberry Pi toujours allumé** ⭐ |
 |---|---|---|
-| Mise en place | La plus simple : `npm start` | Script d'installation ou Docker |
+| Mise en place | La plus simple : `npm start` ou le script Windows | Script d'installation Linux ou Docker |
 | Disponibilité | ❌ PC éteint ou en veille = Corvus inaccessible depuis le téléphone | ✅ Accessible en permanence, de partout via Tailscale |
 | Sessions tmux | Elles vivent sur les hôtes cibles, mais vous ne pouvez pas les rouvrir si le PC dort | ✅ Rouvrables à tout moment depuis le téléphone |
 | Notifications push | Seulement quand le PC tourne | ✅ En continu |
-| Consommation | PC allumé | ~3–5 W |
-| Matériel | Rien de plus | Pi 3B+/4/5 avec **Raspberry Pi OS 64 bits**, ~100 Mo de RAM pour Corvus |
+| Consommation | PC allumé | ~3–5 W (Pi) ; ~100 Mo de RAM pour Corvus |
+| Matériel | Rien de plus | Tout Linux avec systemd (x86_64 ou arm64) : VPS, mini-PC, NAS, Pi 3B+/4/5 en **Raspberry Pi OS 64 bits** |
 
-**Recommandation : (b) le Raspberry Pi**, avec Tailscale installé dessus. Corvus devient votre
-« bastion » personnel, joignable depuis le téléphone à tout moment. Le PC reste utile pour
-essayer Corvus ou s'en servir ponctuellement.
+**Recommandation : (b)**, avec Tailscale installé dessus. Corvus devient votre « bastion »
+personnel, joignable depuis le téléphone à tout moment. Le PC reste utile pour essayer Corvus ou
+s'en servir ponctuellement.
 
 ---
 
-## Installation sur Raspberry Pi (recommandé)
+## Installation sur Linux : serveur, PC, Raspberry Pi (recommandé)
 
-Sur un **Raspberry Pi OS 64 bits** (Bookworm ou plus récent) :
+**Un seul script** pour toutes les distributions avec systemd — Debian, Ubuntu, Raspberry Pi OS,
+Fedora, RHEL/Rocky/Alma, openSUSE, Arch — en **x86_64 ou arm64** :
 
 ```bash
-# 1. Tailscale (si ce n'est pas déjà fait)
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
+# 1. Corvus (git : sudo apt install -y git  /  sudo dnf install -y git)
+git clone https://github.com/spp4tme/Corvus-.git ~/corvus && cd ~/corvus
+sudo ./deploy/install-linux.sh
 
-# 2. Corvus
-sudo apt install -y git
-git clone <ce dépôt> ~/corvus && cd ~/corvus
-sudo ./deploy/install-pi.sh
-
-# 3. HTTPS sur le tailnet uniquement
-sudo tailscale serve --bg --https=443 http://127.0.0.1:7680
+# 2. Y accéder depuis votre téléphone ou votre PC : voir « Accéder à Corvus » ci-dessous
 ```
 
 Le script :
-- installe Node.js depuis **nodejs.org**, avec vérification SHA256 et sans `curl | bash` ;
+- installe Node.js 20+ depuis **nodejs.org**, avec vérification SHA256 et sans `curl | bash`
+  (seulement si votre système n'en a pas déjà un assez récent) ;
 - crée l'utilisateur système `corvus` ;
 - copie le code dans `/opt/corvus` et les données dans `/var/lib/corvus` (700) ;
 - crée la configuration dans `/etc/corvus/corvus.env` (640) ;
 - installe l'unité **systemd durcie** `corvus.service` ([deploy/corvus.service](deploy/corvus.service)) et l'active ;
-- affiche le token.
+- installe la commande d'administration **`corvus`** ;
+- affiche le token d'accès.
 
-Relancé plus tard, il fait office de **mise à jour** : `git pull && sudo ./deploy/install-pi.sh`.
+Corvus n'écoute qu'en **127.0.0.1:7680** : rien n'est exposé sur le réseau tant que vous ne le
+décidez pas.
 
-Commandes utiles :
+### Accéder à Corvus
+
+| Méthode | Commande | Quand l'utiliser |
+|---|---|---|
+| **Tailscale** (recommandé) | `curl -fsSL https://tailscale.com/install.sh \| sh && sudo tailscale up`<br>`sudo tailscale serve --bg --https=443 http://127.0.0.1:7680` | HTTPS valide, téléphone, PWA, notifications push |
+| **Tunnel SSH** (rien à installer) | `ssh -L 7680:127.0.0.1:7680 utilisateur@serveur`, puis <http://127.0.0.1:7680> | Test rapide depuis un PC ; pas de HTTPS, donc pas de push ni de PWA iOS |
+
+### Administration
 
 ```bash
-sudo systemctl status corvus
-journalctl -u corvus -f
-sudo -u corvus env CORVUS_DATA=/var/lib/corvus node /opt/corvus/server/cli.js token
-sudo nano /etc/corvus/corvus.env && sudo systemctl restart corvus
+sudo corvus token            # afficher le token d'accès
+sudo corvus rotate-token     # nouveau token, re-chiffrement des secrets, sessions révoquées
+sudo corvus status           # état du service
+sudo corvus logs 200         # 200 dernières lignes du journal
+sudo corvus restart
+sudo nano /etc/corvus/corvus.env && sudo corvus restart    # configuration
 ```
+
+### Mise à jour, options, désinstallation
+
+```bash
+cd ~/corvus && git pull && sudo ./deploy/install-linux.sh      # mise à jour (données conservées)
+sudo ./deploy/install-linux.sh --no-service                    # copie + dépendances, sans systemd
+sudo NODE_MAJOR=22 ./deploy/install-linux.sh                   # version de Node.js installée si absente
+sudo ./deploy/install-linux.sh --uninstall                     # retire service et code, garde les données
+sudo ./deploy/install-linux.sh --uninstall --purge             # … et supprime aussi les données
+```
+
+`deploy/install-pi.sh` est conservé comme alias de `install-linux.sh`. Sans systemd (Alpine,
+conteneur), utilisez `--no-service` ou [Docker](#installation-avec-docker).
+
+**Recommandé** : définissez `CORVUS_MASTER_PASSPHRASE` dans `/etc/corvus/corvus.env`. Sans
+passphrase, les secrets sont chiffrés avec une clé dérivée du token, stocké dans le même
+dossier : voler `/var/lib/corvus` donnerait accès aux secrets.
 
 Pour la reprise de session, installez **tmux** sur chaque machine cible (`sudo apt install tmux`),
 puis cochez « tmux » dans la fiche de l'hôte.
@@ -177,23 +205,31 @@ docker buildx build --platform linux/amd64,linux/arm64 -t corvus:latest .
 
 ---
 
-## Installation sur le PC
+## Installation sur un PC Windows ou macOS
 
-**Windows** (sans droits administrateur) :
+**Windows 10/11** (sans droits administrateur) — un script fait tout :
 
 ```powershell
+git clone https://github.com/spp4tme/Corvus-.git C:\Corvus
 cd C:\Corvus
-npm ci
-npm start
-# ou : powershell -ExecutionPolicy Bypass -File deploy\windows\start-corvus.ps1
+powershell -ExecutionPolicy Bypass -File deploy\windows\install-windows.ps1
 ```
 
-Démarrage automatique : Planificateur de tâches → *Créer une tâche* → déclencheur
-« À l'ouverture de session » → action `powershell.exe`, arguments
-`-WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Corvus\deploy\windows\start-corvus.ps1`.
+Il vérifie Node.js 20+ (et l'installe avec `winget` s'il manque), installe les dépendances,
+crée une **tâche planifiée « Corvus »** (démarrage à l'ouverture de session, fenêtre masquée,
+redémarrage automatique, journal dans `data\corvus.log`), démarre Corvus et affiche le token.
+Options : `-Port 7681`, `-NoAutostart` (pas de tâche planifiée), `-Uninstall` (retire la tâche et
+arrête Corvus ; `data\` est conservé).
 
-**Linux / macOS** : `npm ci && npm start`. Sur un PC Linux, l'unité systemd et le script
-`deploy/install-pi.sh` fonctionnent aussi (Debian/Ubuntu x64).
+Sans script : `npm ci` puis `npm start`, ou
+`powershell -ExecutionPolicy Bypass -File deploy\windows\start-corvus.ps1`.
+
+**macOS** : installez Node.js 20+ (`brew install node`), puis `npm ci && npm start`. Pour un
+démarrage automatique, créez un agent `launchd` (`~/Library/LaunchAgents/corvus.plist`) qui lance
+`node /chemin/vers/corvus/server/index.js` avec `RunAtLoad` et `KeepAlive`.
+
+**PC Linux** : utilisez le [script Linux](#installation-sur-linux--serveur-pc-raspberry-pi-recommandé)
+ci-dessus, ou `npm ci && npm start` pour un essai sans service.
 
 Ensuite, exposez Corvus sur le tailnet ([section suivante](#exposer-corvus-sur-le-tailnet-tailscale-serve)).
 Rappel : **PC éteint = Corvus inaccessible**.
@@ -251,7 +287,7 @@ directement.
 | `PORT` | `7680` | Port HTTP |
 | `BIND` | `127.0.0.1` | Adresse d'écoute (IP publique refusée) |
 | `CORVUS_DATA` | `./data` | Dossier des données (token, hôtes, secrets chiffrés, journal) |
-| `CORVUS_MASTER_PASSPHRASE` | — | Passphrase de chiffrement des secrets (sinon : dérivée du token). Migration automatique. |
+| `CORVUS_MASTER_PASSPHRASE` | — | Passphrase de chiffrement des secrets (**recommandée** : sinon la clé est dérivée du token, stocké dans le même dossier). Migration automatique. |
 | `CORVUS_ALLOWED_ORIGINS` | — | Origines supplémentaires autorisées (séparées par des virgules) |
 | `TRUST_PROXY` | `loopback` | Confiance dans `X-Forwarded-*` (valeur Express `trust proxy`) |
 | `SESSION_TTL_DAYS` | `30` | Durée des sessions navigateur |
@@ -279,7 +315,8 @@ Résumé (détails et procédures dans [docs/securite.md](docs/securite.md)) :
 - **Exposition** : 127.0.0.1 par défaut, refus d'un bind public, HTTPS via `tailscale serve`.
   **Jamais sur Internet.**
 - **Authentification** : token de 256 bits (comparaison timing-safe), cookie de session
-  `HttpOnly`/`SameSite=Strict`, limitation et délai sur les échecs.
+  `HttpOnly`/`SameSite=Strict`, limitation et délai sur les échecs (blocage par IP : un appareil
+  du tailnet ne peut pas vous enfermer dehors).
 - **Protection des requêtes** : anti-CSRF (en-tête `X-Corvus` + origine), Origin check sur le
   WebSocket, CSP stricte, aucun `innerHTML` avec des données distantes.
 - **Secrets** : chiffrés au repos (AES-256-GCM + scrypt), fichiers en 600, jamais renvoyés au
@@ -289,6 +326,17 @@ Résumé (détails et procédures dans [docs/securite.md](docs/securite.md)) :
   shell ; fichiers distants et proxy servis en bac à sable.
 
 ---
+
+## Terminal sur mobile
+
+- **Défiler l'historique** : glissez un doigt vers le bas sur le terminal pour remonter, vers le
+  haut pour redescendre. Le geste est converti en molette de souris : avec **tmux**, l'historique
+  défile et la sortie du mode copie est automatique en bas. Les sessions tmux et Claude lancées
+  par Corvus activent `mouse on` (`tmux set -g mouse on` pour une session existante). Sans tmux,
+  c'est l'historique du terminal (xterm.js) qui défile.
+- La page ne bouge pas pendant le geste (`touch-action: none` dans la zone du terminal).
+- **Sélection de texte** : avec `mouse on`, tmux gère la souris. Sur ordinateur, Maj + glisser
+  sélectionne comme avant ; la copie depuis tmux passe par OSC 52 (presse-papiers).
 
 ## Claude Code
 
@@ -335,7 +383,7 @@ Corvus n'ouvre pas de terminal : il affiche un message avec la commande d'instal
 ## Tests
 
 ```bash
-npm test          # tout : unitaires + bout en bout + interface
+npm test          # tout : unitaires + bout en bout + interface (liste explicite de fichiers : compatible Node 20 à 24)
 npm run test:e2e  # bout en bout uniquement
 npm run test:ui   # interface (Edge ou Chrome requis ; ignoré sinon)
 npm run check:pure
@@ -344,14 +392,15 @@ npm run check:pure
 - **Bout en bout** (`test/e2e.test.js`) : un vrai serveur Corvus (HTTP + WebSocket) face à un
   **sshd de test en pur JS** ([test/helpers/fake-sshd.js](test/helpers/fake-sshd.js), basé sur
   `ssh2.Server`). Ce sshd exécute les commandes via bash (Git for Windows sous Windows,
-  `/bin/bash` sous Linux), sert le SFTP sur un dossier temporaire et fournit un faux `docker`
+  `/bin/bash` sous Linux ; `tmux` et `claude` réels sont masqués quand un test les veut absents), sert le SFTP sur un dossier temporaire et fournit un faux `docker`
   qui journalise ses arguments. Couverture : auth, CSRF, hôtes, secrets, TOFU, terminal et
   reprise, SFTP, git (dont tentatives d'injection), supervision, processus, Docker, proxy, push,
   Claude Code (faux `tmux` et faux `claude` fournis par le sshd de test : numérotation, reprise,
   arrêt, dossier avec apostrophe, messages d'absence, tentatives d'injection).
 - **Unitaires** (`test/unit.test.js`) : parseurs sur de **vraies sorties Linux** (Raspberry Pi :
   `/proc`, `df`, `ps`), `git status -z`, échappement shell vérifié dans un vrai `sh`, validateurs,
-  coffre chiffré, classification d'adresses.
+  coffre chiffré, classification d'adresses, et les régressions de l'audit (proxy qui ne peut pas changer d'hôte, limiteur,
+  connexions SFTP maintenues, limite des notifications).
 - **Interface** (`test/ui.test.js`) : Edge/Chrome headless via `playwright-core` (aucun navigateur
   téléchargé), viewport **375 px** (mobile) et 1280 px. Vérifie l'absence de débordement
   horizontal, les cibles tactiles ≥ 44 px et l'absence d'erreurs JavaScript. Parcours : connexion,
@@ -377,7 +426,8 @@ public/                 PWA (vanilla JS, modules ES, sans build)
   css/tokens.css        Source unique des valeurs de thème
   js/ui/                Composants partagés (boutons, champs, dialogues, graphiques…)
   js/views/             Une vue par module
-deploy/                 install-pi.sh, corvus.service (systemd), windows/start-corvus.ps1
+deploy/                 install-linux.sh (install-pi.sh = alias), corvus.service (systemd),
+                        windows/install-windows.ps1 et start-corvus.ps1
 docs/                   securite.md, notifications.md
 test/                   unit, e2e, ui + sshd de test
 Dockerfile, docker-compose.yml
@@ -388,12 +438,13 @@ Dockerfile, docker-compose.yml
 ## Limites connues
 
 **Validation**
-- Les tests de bout en bout ont tourné face au **sshd de test pur JS** (sous Windows/MSYS2), pas
-  face à un OpenSSH Linux réel. Les formats Linux sont couverts par des tests unitaires sur de
-  vraies sorties. Un premier essai sur votre Pi reste recommandé.
-- `Dockerfile`, `docker-compose.yml` et `deploy/install-pi.sh` n'ont **pas été exécutés** dans
-  l'environnement de développement (pas de Docker ni de Linux) : seule la syntaxe du script a été
-  vérifiée.
+- Les tests de bout en bout (85 tests unitaires + e2e) passent sous **Linux (Raspberry Pi, Node 24)**
+  face au **sshd de test pur JS**, pas face à un OpenSSH réel dans la suite automatique ; Corvus a
+  aussi été utilisé en vrai sur un Raspberry Pi (terminal, tmux, Claude Code, onglet Git).
+- `deploy/install-linux.sh` a été exécuté (dossiers temporaires, `--no-service`, commande `corvus`)
+  mais **pas l'installation systemd complète sur une machine vierge**, ni sur Fedora/Arch/openSUSE.
+- `deploy/windows/install-windows.ps1`, `Dockerfile` et `docker-compose.yml` n'ont **pas été
+  exécutés** (pas de Windows ni de Docker dans l'environnement de développement).
 - Les notifications push n'ont pas été testées contre un vrai service de push. La signature VAPID
   est vérifiée par les tests, mais pas la réception sur un appareil.
 

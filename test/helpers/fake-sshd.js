@@ -12,6 +12,27 @@ const { Server, utils } = ssh2;
 const { STATUS_CODE, flagsToString } = utils.sftp;
 const isWin = process.platform === 'win32';
 
+/**
+ * PATH équivalent à celui du poste, sans les programmes `hidden` : un dossier de liens symboliques
+ * vers tous les exécutables des dossiers du PATH, sauf ceux-là (on ne peut pas retirer /usr/bin du PATH).
+ */
+function maskedPath(hidden) {
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  if (isWin) {
+    return dirs.filter((d) => !hidden.some((n) => fs.existsSync(path.join(d, n)))).join(path.delimiter);
+  }
+  const mask = fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-pathmask-'));
+  for (const d of dirs) {
+    let names;
+    try { names = fs.readdirSync(d); } catch { continue; }
+    for (const n of names) {
+      if (hidden.includes(n)) continue;
+      try { fs.symlinkSync(path.join(d, n), path.join(mask, n)); } catch { /* déjà présent : le premier du PATH gagne */ }
+    }
+  }
+  return mask;
+}
+
 export function findBash() {
   if (process.env.CORVUS_TEST_BASH) return { bash: process.env.CORVUS_TEST_BASH, extraPath: [] };
   if (!isWin) return { bash: '/bin/bash', extraPath: [] };
@@ -102,7 +123,7 @@ export async function startFakeSshd({ port = 0, hostKey, root, fakeTmux = false,
       '  kill-session) t="${2#=}"; [ -e "$D/sess-$t" ] || { echo "can\'t find session $t" >&2; exit 1; }; rm "$D/sess-$t"; exit 0 ;;',
       '  new-session)',
       '    name=""; dir=""; cmd=""',
-      '    while [ $# -gt 0 ]; do case "$1" in -A) shift ;; -s) name="$2"; shift 2 ;; -c) dir="$2"; shift 2 ;; *) cmd="$1"; shift ;; esac; done',
+      '    while [ $# -gt 0 ]; do case "$1" in -A) shift ;; -s) name="$2"; shift 2 ;; -c) dir="$2"; shift 2 ;; ";") break ;; *) cmd="$1"; shift ;; esac; done',
       '    if [ -e "$D/sess-$name" ]; then echo "[fake-tmux] rattache a $name"; exit 0; fi',
       '    printf %s "${dir:-$HOME}" > "$D/sess-$name"',
       '    echo "[fake-tmux] cree $name"',
@@ -122,11 +143,9 @@ export async function startFakeSshd({ port = 0, hostKey, root, fakeTmux = false,
       '',
     ].join('\n'), { mode: 0o755 });
   }
-  // « claude absent » : le PATH du poste de test peut contenir un vrai claude, qu'il faut masquer.
-  const hideClaude = fakeTmux && !fakeClaude;
-  const hostPath = hideClaude
-    ? (process.env.PATH || '').split(path.delimiter).filter((d) => !d || !['claude', 'claude.exe', 'claude.cmd', 'claude.bat'].some((n) => fs.existsSync(path.join(d, n)))).join(path.delimiter)
-    : process.env.PATH;
+  // « tmux / claude absents » : le PATH du poste de test peut contenir les vrais, qu'il faut masquer.
+  const hidden = [...(fakeTmux ? [] : ['tmux']), ...(fakeClaude ? [] : ['claude', 'claude.exe', 'claude.cmd', 'claude.bat'])];
+  const hostPath = hidden.length ? maskedPath(hidden) : process.env.PATH;
   const env = {
     ...process.env,
     CORVUS_FAKE_TMUX_DIR: toVirtual(tmuxDir),

@@ -234,6 +234,27 @@ describe('fichiers (SFTP)', () => {
     assert.deepEqual(list.body.entries.map((e) => e.name), ['note.txt', 'pixel.png']);
   });
 
+  test('upload interrompu : le fichier existant est conservé et aucun résidu ne reste', async () => {
+    const { Readable } = await import('node:stream');
+    const up = (name, body, extra = '') => c.raw('POST', `${base()}/upload?dir=${encodeURIComponent(dir)}&name=${name}${extra}`, {
+      body: Buffer.from(body), headers: { 'content-type': 'application/octet-stream' },
+    });
+    const read = async () => (await c.api('GET', `${base()}/read?path=${encodeURIComponent(`${dir}/garde.txt`)}`)).body.content;
+    assert.equal((await up('garde.txt', 'original')).status, 201);
+    // Coupure réseau en plein envoi, avec écrasement demandé : l'ancien contenu doit survivre.
+    const broken = new Readable({ read() { this.push(Buffer.from('partiel')); this.destroy(new Error('coupure réseau')); } });
+    await assert.rejects(env.corvus.ctx.sftp.upload(hostId, dir, 'garde.txt', broken, { overwrite: true }));
+    assert.equal(await read(), 'original');
+    const list = await c.api('GET', `${base()}/list?path=${encodeURIComponent(dir)}`);
+    assert.deepEqual(list.body.entries.map((e) => e.name), ['garde.txt', 'note.txt', 'pixel.png'], 'pas de fichier .part');
+    // Écrasement normal : remplacé d'un bloc.
+    assert.equal((await up('garde.txt', 'nouveau', '&overwrite=true')).status, 201);
+    assert.equal(await read(), 'nouveau');
+    assert.equal((await up('garde.txt', 'x')).status, 409, 'sans overwrite : refusé');
+    assert.equal(await read(), 'nouveau');
+    await c.api('POST', `${base()}/delete`, { path: `${dir}/garde.txt` });
+  });
+
   test('lire, éditer, détecter un conflit', async () => {
     const rd = await c.api('GET', `${base()}/read?path=${encodeURIComponent(`${dir}/note.txt`)}`);
     assert.equal(rd.status, 200);
@@ -430,12 +451,13 @@ describe('supervision et docker', () => {
   });
 
   test('processus : liste puis kill', async () => {
-    const spawn = await env.corvus.ctx.pool.exec(hostId, 'sleep 300 >/dev/null 2>&1 & echo $!');
+    const spawn = await env.corvus.ctx.pool.exec(hostId, '(while :; do :; done) >/dev/null 2>&1 & echo $!');
     const pid = Number(spawn.stdout.toString().trim());
     assert.ok(pid > 1);
     const list = await c.api('GET', `${M()}/monitor/processes`);
     assert.equal(list.status, 200, JSON.stringify(list.body));
-    assert.ok(list.body.processes.some((p) => p.pid === pid), 'sleep présent');
+    // La liste est limitée aux 150 premiers par CPU : un processus qui consomme du CPU y figure toujours.
+    assert.ok(list.body.processes.some((p) => p.pid === pid), 'processus présent');
     const k = await c.api('POST', `${M()}/monitor/kill`, { pid, signal: 'TERM' });
     assert.equal(k.status, 200, JSON.stringify(k.body));
     const bad = await c.api('POST', `${M()}/monitor/kill`, { pid: '1; reboot', signal: 'TERM' });
