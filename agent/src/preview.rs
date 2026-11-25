@@ -38,8 +38,7 @@ mknod -m 666 "$M/dev/null" c 1 3
 mknod -m 666 "$M/dev/zero" c 1 5
 mknod -m 666 "$M/dev/random" c 1 8
 mknod -m 666 "$M/dev/urandom" c 1 9
-mount -t tmpfs tmpfs "$M/tmp"
-chmod 1777 "$M/tmp"
+# /tmp reste celui de l'hôte (couche OverlayFS) : on peut donc prévisualiser une commande sur /tmp.
 mount -t tmpfs tmpfs "$M/run"
 DROP=-sys_admin,-sys_module,-sys_rawio,-sys_ptrace,-sys_boot,-sys_time,-mknod,-net_admin,-sys_chroot,-mac_admin,-mac_override,-sys_pacct,-sys_tty_config,-audit_control,-audit_write,-lease,-syslog,-wake_alarm,-block_suspend,-bpf,-perfmon,-checkpoint_restore
 set +e

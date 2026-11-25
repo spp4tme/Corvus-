@@ -29,7 +29,7 @@ describe('prévisualisation (agent root, OverlayFS)', { skip }, () => {
     const me = os.userInfo().username;
     const h = await api('POST', '/api/hosts', { name: 'Prev', hostname: '127.0.0.1', port: 22, username: me, authType: 'password', password: 'x' });
     hostId = h.body.host.id;
-    // Dossier de travail HORS /tmp (le bac à sable monte un /tmp vide) : dans le dossier personnel de l'utilisateur.
+    // Dossier de travail dans le dossier personnel de l'utilisateur (le /tmp, lui, est testé à part ci-dessous).
     work = fs.mkdtempSync(path.join(os.homedir(), '.corvus-preview-test-'));
     fs.writeFileSync(path.join(work, 'config.txt'), 'valeur=1\n');
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-agent-prev-'));
@@ -61,6 +61,17 @@ describe('prévisualisation (agent root, OverlayFS)', { skip }, () => {
     assert.equal(byName['cree.txt'].kind, 'created');
     assert.equal(fs.readFileSync(f, 'utf8'), 'valeur=1\n', 'le vrai fichier est intact');
     assert.ok(!fs.existsSync(path.join(work, 'cree.txt')));
+  });
+
+  test('/tmp de l\'hôte est visible : on peut prévisualiser une commande sur /tmp', async () => {
+    const t = fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-prev-tmp-'));
+    fs.writeFileSync(path.join(t, 'a.txt'), 'x\n');
+    try {
+      const r = await api('POST', `/api/hosts/${hostId}/preview`, { command: `rm -r ${t}` });
+      assert.equal(r.body.exit, 0, JSON.stringify(r.body));
+      assert.ok(r.body.entries.some((e) => e.path === t && e.kind === 'deleted'));
+      assert.ok(fs.existsSync(path.join(t, 'a.txt')), 'le vrai /tmp est intact');
+    } finally { fs.rmSync(t, { recursive: true, force: true }); }
   });
 
   test('pas de réseau dans le bac à sable', async () => {
