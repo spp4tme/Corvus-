@@ -80,7 +80,13 @@ fn disks() -> Vec<(String, f64)> {
     let mut out = Vec::new();
     for line in mounts.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
-        if f.len() < 3 || !REAL_FS.contains(&f[2]) || !seen.insert(f[0].to_string()) {
+        // « overlay » (racine d'un conteneur, d'un bac à sable) : retenu seulement pour « / »,
+        // sinon on compterait les couches de chaque conteneur Docker de l'hôte.
+        if f.len() < 3 {
+            continue;
+        }
+        let est_disque = REAL_FS.contains(&f[2]) || (f[2] == "overlay" && f[1] == "/");
+        if !est_disque || !seen.insert(f[0].to_string()) {
             continue;
         }
         let mount = f[1].replace("\\040", " "); // /proc/mounts écrit l'espace « \040 »
