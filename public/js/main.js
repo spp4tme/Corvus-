@@ -40,6 +40,8 @@ function trackViewport() {
 
 function buildShell() {
   const title = h('h1', { class: 'view-title ellipsis' });
+  // Signal discret dans l'en-tête : espace disque faible, alertes non acquittées.
+  const banner = h('a', { class: 'app-banner', href: '#/settings', hidden: true, role: 'status' });
   const main = h('main', { class: 'app-main', id: 'main' });
   const nav = h('nav', { class: 'app-nav', 'aria-label': 'Navigation principale' });
   const links = {};
@@ -53,10 +55,10 @@ function buildShell() {
     h('header', { class: 'app-header' },
       h('a', { class: 'brand', href: '#/hosts', 'aria-label': 'Corvus — accueil' }, logo(), h('span', { class: 'brand-name' }, 'Corvus')),
       h('span', { class: 'faint', 'aria-hidden': 'true' }, '·'),
-      title),
+      title, banner),
     main, nav);
   clear(root).appendChild(app);
-  return { app, main, nav, links, title, mounted: {}, current: null, cleanup: null };
+  return { app, main, nav, links, title, banner, mounted: {}, current: null, cleanup: null };
 }
 
 async function route() {
@@ -102,6 +104,20 @@ async function route() {
 let viewportTracked = false;
 let loginShown = false;
 
+let systemTimer = null;
+async function checkSystem() {
+  if (!shell) return;
+  try {
+    const st = await get('/api/system/status');
+    const parts = [];
+    if (st.storage.low) parts.push('Espace disque faible');
+    if (st.alerts.open) parts.push(`${st.alerts.open} alerte${st.alerts.open > 1 ? 's' : ''}`);
+    shell.banner.textContent = parts.length ? `⚠ ${parts.join(' · ')}` : '';
+    shell.banner.hidden = !parts.length;
+    shell.banner.href = st.storage.low ? '#/settings' : '#/journal';
+  } catch { /* hors ligne : on réessaiera */ }
+}
+
 async function startApp() {
   loginShown = false;
   shell = buildShell();
@@ -110,6 +126,9 @@ async function startApp() {
   window.removeEventListener('hashchange', route);
   window.addEventListener('hashchange', route);
   await route();
+  checkSystem();
+  clearInterval(systemTimer);
+  systemTimer = setInterval(checkSystem, 5 * 60_000);
 }
 
 function showLogin(opts) {

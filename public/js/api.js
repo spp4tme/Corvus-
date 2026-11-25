@@ -45,12 +45,13 @@ export const put = (url, body) => api('PUT', url, body);
 export const del = (url, body) => api('DELETE', url, body);
 
 /** Upload avec progression (fetch ne fournit pas de progression d'envoi). */
-export function upload(url, file, onProgress) {
+export function upload(url, file, onProgress, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
     xhr.setRequestHeader('X-Corvus', '1');
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    for (const [k, val] of Object.entries(extraHeaders)) xhr.setRequestHeader(k, val);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
     xhr.onload = () => {
       let data = null;

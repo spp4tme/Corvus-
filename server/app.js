@@ -18,6 +18,9 @@ import { Db } from './db/index.js';
 import { migrateLegacy } from './db/migrate-json.js';
 import { resolveStorage, StorageMonitor } from './lib/storage.js';
 import { Alerts } from './lib/alerts.js';
+import { BlobStore } from './lib/blobs.js';
+import { BackupService, applyPendingRestore } from './lib/backup.js';
+import { Retention } from './lib/retention.js';
 import { HttpError } from './lib/validate.js';
 import { logger, setLogLevel } from './lib/log.js';
 import { authRoutes, hostRoutes } from './routes/core.js';
@@ -60,8 +63,10 @@ export function createCorvus(overrides = {}) {
   setLogLevel(config.logLevel);
   ensureDir(config.dataDir);
 
-  const { token, created } = loadToken(config.dataDir);
   const storage = resolveStorage(config);
+  // Restauration préparée depuis l'interface : appliquée avant d'ouvrir la base et de lire le token.
+  const restoredFrom = applyPendingRestore(storage, config.dataDir);
+  const { token, created } = loadToken(config.dataDir);
   const db = new Db(storage.dbFile);
   let vault;
   try {
@@ -79,6 +84,10 @@ export function createCorvus(overrides = {}) {
   const ctx = { config, storage, db, auth, vault, hosts, knownHosts, journal, pool, version: pkg.version, token, tokenCreated: created };
   ctx.alerts = new Alerts({ db, journal, notify: (n) => ctx.push?.notify(n).catch(() => {}) });
   ctx.storageMonitor = new StorageMonitor({ storage, config, alerts: ctx.alerts });
+  ctx.restoredFrom = restoredFrom;
+  ctx.blobs = new BlobStore({ db, vault, dir: storage.blobDir });
+  ctx.backups = new BackupService({ db, storage, config, journal });
+  ctx.retention = new Retention({ db, blobs: ctx.blobs, config });
   ctx.claude = new ClaudeService({ pool, hosts, journal });
   ctx.terminals = new TerminalManager({
     pool, hosts, journal, config, claude: ctx.claude,
@@ -238,6 +247,7 @@ export function createCorvus(overrides = {}) {
       server.listen(port, host, resolve);
     });
     ctx.storageMonitor.start();
+    ctx.retention.start();
     return server.address();
   }
 
@@ -249,6 +259,7 @@ export function createCorvus(overrides = {}) {
     await new Promise((r) => server.close(r));
     ctx.onClose?.();
     ctx.storageMonitor.stop();
+    ctx.retention.stop();
     for (const t of ctx.timers || []) clearInterval(t);
     db.close();
   }

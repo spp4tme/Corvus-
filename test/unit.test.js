@@ -557,3 +557,71 @@ describe('étape 0 : base SQLite, migration, stockage', () => {
     assert.equal(j.verify().brokenAt, 3);
   });
 });
+
+describe('étape 0.3 : blobs, rétention, sauvegarde', () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-03-'));
+
+  test('blobs : compressés, chiffrés, dédupliqués, libérés', async () => {
+    const { BlobStore } = await import('../server/lib/blobs.js');
+    const db = new Db(':memory:');
+    const vault = new Vault(db, { token: 'cv_token_blobs_0123456789' });
+    const dir = tmp();
+    const blobs = new BlobStore({ db, vault, dir });
+    const content = Buffer.from('ligne de log répétée\n'.repeat(2000));
+    const sha = blobs.put(content, 'test');
+    assert.equal(blobs.put(content, 'test'), sha);
+    const onDisk = fs.readFileSync(blobs.file(sha));
+    assert.ok(onDisk.length < content.length / 10, 'compressé');
+    assert.ok(!onDisk.includes(Buffer.from('ligne de log')), 'chiffré');
+    assert.deepEqual(blobs.get(sha), content);
+    blobs.release(sha);
+    assert.ok(fs.existsSync(blobs.file(sha)), 'encore une référence');
+    blobs.release(sha);
+    assert.ok(!fs.existsSync(blobs.file(sha)));
+    assert.equal(blobs.stats().count, 0);
+  });
+
+  test('rétention : agrégation horaire puis purge des points bruts', async () => {
+    const { Retention } = await import('../server/lib/retention.js');
+    const db = new Db(':memory:');
+    const H = 3600_000;
+    const now = 100 * 24 * H;
+    for (let i = 0; i < 6; i++) db.run('INSERT INTO metrics_raw (host_id, metric, ts, value) VALUES (?, ?, ?, ?)', 'h', 'cpu', now - 10 * 24 * H + i * 600_000, i * 10);
+    db.run('INSERT INTO metrics_raw (host_id, metric, ts, value) VALUES (?, ?, ?, ?)', 'h', 'cpu', now - H / 2, 5);
+    const ret = new Retention({ db, blobs: { release() {} }, config: { retention: { metricsRawDays: 7, metricsHourlyDays: 365, recordingsDays: 90, undoDays: 30 } } });
+    const out = ret.run(now);
+    assert.equal(out.metricsRaw, 6);
+    // Heure en cours (now + 1 min) : pas encore agrégée.
+    db.run('INSERT INTO metrics_raw (host_id, metric, ts, value) VALUES (?, ?, ?, ?)', 'h', 'cpu', now + 60_000, 7);
+    ret.run(now + 120_000);
+    const hourly = db.all('SELECT * FROM metrics_hourly ORDER BY hour');
+    assert.equal(hourly.length, 2);
+    assert.equal(hourly[1].avg, 5);
+    assert.deepEqual([hourly[0].min, hourly[0].max, hourly[0].avg, hourly[0].n], [0, 50, 25, 6]);
+  });
+
+  test('sauvegarde chiffrée → restauration au redémarrage', async () => {
+    const { createCorvus } = await import('../server/app.js');
+    const dataDir = tmp();
+    const a = createCorvus({ dataDir, logLevel: 'error' });
+    a.ctx.hosts.create({ name: 'Avant', hostname: '100.64.0.9', username: 'pi', password: 'secret-restaure' });
+    const sha = a.ctx.blobs.put(Buffer.from('enregistrement'), 'rec');
+    const backup = await a.ctx.backups.create('mot de passe long', null);
+    assert.ok(backup.size > 100);
+    const file = path.join(a.ctx.storage.backupDir, backup.name);
+    assert.ok(!fs.readFileSync(file).includes(Buffer.from('secret-restaure')));
+    await assert.rejects(a.ctx.backups.stage(file, 'mauvais mot de passe', null), (e) => e.code === 'BAD_PASSWORD');
+    // Modification après la sauvegarde : doit disparaître après restauration.
+    a.ctx.hosts.create({ name: 'Après', hostname: '100.64.0.10', username: 'pi' });
+    await a.ctx.backups.stage(file, 'mot de passe long', null);
+    await a.close();
+
+    const b = createCorvus({ dataDir, logLevel: 'error' });
+    assert.ok(b.ctx.restoredFrom, 'restauration appliquée');
+    assert.deepEqual(b.ctx.hosts.hosts.map((h) => h.name), ['Avant']);
+    const id = b.ctx.hosts.hosts[0].id;
+    assert.equal(b.ctx.vault.get(id).password, 'secret-restaure');
+    assert.equal(b.ctx.blobs.get(sha).toString(), 'enregistrement');
+    await b.close();
+  });
+});

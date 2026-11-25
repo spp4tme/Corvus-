@@ -28,6 +28,8 @@ export default {
     get('/api/auth/status').then((s) => { version.textContent = `Corvus ${s.version}`; }).catch(() => {});
 
     const notifSlot = h('div');
+    const storageSlot = h('div');
+    import('./storage-settings.js').then((m) => m.renderStorageSettings(storageSlot)).catch(() => {});
     import('../push.js').then((m) => m.renderPushSettings?.(notifSlot)).catch(() => {});
 
     el.append(
@@ -39,6 +41,7 @@ export default {
         field({ label: 'Langue de la dictée', control: lang }),
         h('div', { class: 'span-2' }, tmux)),
       notifSlot,
+      storageSlot,
       h('h2', { class: 'section-title' }, 'Session'),
       h('div', { class: 'card card-pad stack' },
         h('p', { class: 'dim' }, 'Les secrets SSH sont chiffrés sur le serveur (AES-256-GCM) et ne transitent jamais vers ce navigateur. Les empreintes des hôtes sont vérifiées (TOFU).'),

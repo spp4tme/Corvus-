@@ -394,3 +394,7 @@ dialog.dlg::backdrop { background: var(--c-overlay); }
 .term-stage .xterm { -webkit-text-size-adjust: 100%; }
 /* Le glisser du doigt appartient au terminal (défilement de l'historique) : jamais à la page. */
 .term-stage, .term-pane, .term-pane * { touch-action: none; overscroll-behavior: none; }
+
+/* Signal d'état dans l'en-tête (espace disque, alertes) */
+.app-banner { margin-left: auto; padding: var(--s-1) var(--s-3); border-radius: 999px; background: var(--c-warn-soft); color: var(--c-warn); font-size: var(--fs-sm); text-decoration: none; white-space: nowrap; }
+.app-banner[hidden] { display: none; }

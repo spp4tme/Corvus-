@@ -330,6 +330,25 @@ sudo ./deploy/install-linux.sh   # autorise l'écriture sur le SSD (ReadWritePat
 Corvus surveille l'espace libre (toutes les 10 min) et prévient par un bandeau, une notification
 push et le journal quand il passe sous `CORVUS_MIN_FREE_MB`.
 
+**Rétention** (tâche horaire) : métriques détaillées 7 jours puis agrégées par heure (min / moy /
+max) pendant 1 an, enregistrements de session 90 jours, sauvegardes « annulables » 30 jours.
+Le journal d'audit n'est **jamais** purgé. Durées réglables (voir le tableau ci-dessus).
+
+**Gros contenus** (enregistrements de session, copies de fichiers) : `<stockage>/blobs/`,
+compressés (brotli) puis chiffrés (AES-256-GCM, clé du coffre), dédupliqués par empreinte.
+
+### Sauvegarde et restauration
+
+*Réglages → Stockage et sauvegardes* :
+
+- **Créer une sauvegarde** : un fichier `.cvbk` (base, enregistrements, token d'amorçage) chiffré
+  par un mot de passe choisi à ce moment-là (10 caractères min.), dans `<stockage>/backups/`.
+  Téléchargeable pour la garder ailleurs.
+- **Restaurer** (depuis la liste ou un fichier) : le fichier est déchiffré et vérifié
+  (`integrity_check`), puis appliqué **au prochain démarrage**. L'état remplacé est conservé dans
+  `<stockage>/pre-restore-<date>/`. Le bouton « Redémarrer » fonctionne sous systemd et Docker.
+- Si une passphrase maître est utilisée, elle reste nécessaire après restauration.
+
 ---
 
 ## Sécurité

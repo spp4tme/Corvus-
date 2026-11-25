@@ -10,6 +10,7 @@ import { gitRoutes } from './git.js';
 import { monitorRoutes } from './monitor.js';
 import { serviceRoutes } from './services.js';
 import { claudeRoutes } from './claude.js';
+import { systemRoutes } from './system.js';
 
 /** Services instanciés avant le montage des routes (le proxy est monté hors /api). */
 export function createServices(ctx) {
@@ -31,5 +32,6 @@ export function extraRoutes(ctx) {
   r.use(monitorRoutes(ctx));
   r.use(serviceRoutes(ctx));
   r.use(claudeRoutes(ctx));
+  r.use(systemRoutes(ctx));
   return r;
 }
