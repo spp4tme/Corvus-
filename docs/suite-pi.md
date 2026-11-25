@@ -138,7 +138,14 @@ automatique à l'expiration).
 **Résultat partiel (2026-11-25, le Pi lui-même, par l'API)** : le marquage `0x80000` (confirmé par `ip rule`) et `tailscale0`
 laissent passer Tailscale (ping de l'iPhone OK pendant l'isolement, connexion directe) ; internet et DNS sont coupés ; la
 levée manuelle remet tout en place. Pas encore essayé : le bouton de l'écran Radiographie, l'expiration automatique,
-un lien relayé (DERP), un hôte distant. Ensuite seulement : démo `deploy/demo/fake-ransomware.sh` et restauration par Rembobiner.
+un lien relayé (DERP), un hôte distant.
+
+**Démo du faux ransomware (2026-11-25, le Pi, par l'API, agent root avec les réglages par défaut : seuil 20 en 30 s,
+balayage 3 s)** : ✅ fichier piège détecté 7 s après le début de l'attaque, ✅ rafale « 20 fichiers chiffrés en 30 s »
+détectée, ✅ 4 alertes critiques et le journal (`canary`, `suspect`), ✅ Rembobiner : 67 différences toutes restaurables,
+67/67 restaurées, les 30 documents identiques aux originaux, aucun `.locked` restant, propriétaire conservé. Aucune
+réaction automatique (gel et isolement désactivés par défaut). Pas encore essayé : les boutons de l'interface
+(Rembobiner), un hôte distant, les réactions automatiques activées.
 
 ## Après la validation (à décider avec le propriétaire)
 
