@@ -1,6 +1,6 @@
 // Vue Terminal : onglets multiples (xterm.js), reconnexion WebSocket automatique avec reprise
 // à l'octet près, barre de touches mobile, OSC52, thèmes, taille de police.
-import { get, del } from '../api.js';
+import { get, post, del } from '../api.js';
 import { h, clear, replace, prefs } from '../ui/dom.js';
 import { icon } from '../ui/icons.js';
 import { button, openDialog, emptyState, toast, badge } from '../ui/components.js';
@@ -30,8 +30,9 @@ export const termSettings = {
 };
 
 class Tab {
-  constructor({ hostId, sessionId = null, title, claude = null, isClaude = false }) {
+  constructor({ hostId, sessionId = null, title, claude = null, isClaude = false, guest = null }) {
     this.hostId = hostId;
+    this.guest = guest; // 'view' | 'control' : terminal d'un autre compte, partagé avec moi
     this.claude = claude; // { session?, dir? } : premier lancement d'une session Claude Code
     this.isClaude = isClaude || !!claude;
     this.sessionId = sessionId;
@@ -53,6 +54,7 @@ class Tab {
       allowProposedApi: true,
       macOptionIsMeta: true,
       rightClickSelectsWord: true,
+      disableStdin: guest === 'view', // spectateur : aucune frappe envoyée
     });
     this.fit = new window.FitAddon.FitAddon();
     this.term.loadAddon(this.fit);
@@ -135,6 +137,8 @@ class Tab {
         this.attempts = 0;
         this.setStatus('ok');
         this.fitSoon(true);
+      } else if (msg.t === 'guest') {
+        toast(`${msg.user} ${msg.mode === 'control' ? 'co-pilote' : 'regarde'} ce terminal`, 'info', 5000);
       } else if (msg.t === 'exit') {
         this.markExited('Session terminée');
       } else if (msg.t === 'error') {
@@ -262,9 +266,9 @@ function applyModifiers(d) {
   return out;
 }
 
-function openTab(hostId, sessionId, focus = true, { title, claude, isClaude } = {}) {
+function openTab(hostId, sessionId, focus = true, { title, claude, isClaude, guest } = {}) {
   const host = state.host(hostId);
-  const tab = new Tab({ hostId, sessionId, title: title || `${host?.name || 'Terminal'}${claude ? ' · Claude' : ''}`, claude, isClaude });
+  const tab = new Tab({ hostId, sessionId, title: title || `${host?.name || 'Terminal'}${claude ? ' · Claude' : ''}`, claude, isClaude, guest });
   tabs.push(tab);
   activate(tab, focus);
   return tab;
@@ -282,10 +286,46 @@ function activate(tab, focus = true) {
   }
 }
 
+/** Partage en direct : le propriétaire choisit un compte et un mode, et peut retirer l'accès. */
+async function shareDialog(tab) {
+  const body = h('div', { class: 'stack' }, h('p', { class: 'dim' }, 'Chargement…'));
+  const d = openDialog({ title: `Partager « ${tab.title} »`, body, wide: true });
+  const render = async () => {
+    try {
+      const [{ users }, { terminals }] = await Promise.all([
+        get(`/api/terminals/${tab.sessionId}/share/candidates`), get('/api/terminals'),
+      ]);
+      const mine = terminals.find((x) => x.id === tab.sessionId);
+      const shares = mine?.shares || [];
+      replace(body,
+        h('p', { class: 'dim' }, 'Spectateur : voit l\'écran en direct, sans pouvoir taper. Co-pilote : tape aussi dans ce shell (avec votre compte SSH). Vous pouvez retirer l\'accès à tout moment.'),
+        users.length ? h('ul', { class: 'list' }, users.map((u) => {
+          const cur = shares.find((s) => s.userId === u.id);
+          const set = async (mode) => {
+            try {
+              if (mode) await post(`/api/terminals/${tab.sessionId}/share`, { userId: u.id, mode });
+              else await del(`/api/terminals/${tab.sessionId}/share/${u.id}`);
+              render();
+            } catch (err) { toast(err.message, 'error', 6000); }
+          };
+          return h('li', { class: 'list-item' },
+            h('span', { class: 'grow' }, h('strong', null, u.username), cur ? badge(cur.mode === 'control' ? 'co-pilote' : 'spectateur', 'ok') : null),
+            button({ label: 'Spectateur', variant: cur?.mode === 'view' ? 'primary' : 'ghost', onClick: () => set('view') }),
+            u.role !== 'viewer' ? button({ label: 'Co-pilote', variant: cur?.mode === 'control' ? 'primary' : 'ghost', onClick: () => set('control') }) : null,
+            cur ? button({ label: `Retirer l'accès de ${u.username}`, icon: 'close', iconOnly: true, variant: 'danger', onClick: () => set(null) }) : null);
+        })) : h('p', null, 'Aucun autre compte n\'a accès à cet hôte.'));
+    } catch (err) { replace(body, h('p', { class: 'dim' }, err.message)); }
+  };
+  render();
+  return d;
+}
+
 function closeTab(tab) {
   const i = tabs.indexOf(tab);
   if (i < 0) return;
   tabs.splice(i, 1);
+  // Onglet invité : on se détache seulement (le terminal reste celui de son propriétaire).
+  if (tab.guest) { tab.dispose(false); activate(tabs[Math.min(i, tabs.length - 1)] || null, false); return; }
   tab.dispose(true);
   activate(tabs[Math.min(i, tabs.length - 1)] || null, false);
 }
@@ -300,6 +340,8 @@ function renderTabs() {
       onclick: () => activate(t),
       onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(t); } },
     }, h('span', { class: dotKind, 'aria-hidden': 'true' }), h('span', { class: 'ellipsis' }, t.label),
+    t.guest ? badge(t.guest === 'control' ? 'co-pilote' : 'spectateur', 'accent') : null,
+    !t.guest && t.sessionId ? button({ label: `Partager ${t.title}`, icon: 'link', iconOnly: true, variant: 'ghost', onClick: (e) => { e.stopPropagation(); shareDialog(t); } }) : null,
     button({ label: `Fermer ${t.title}`, icon: 'close', iconOnly: true, variant: 'ghost', onClick: (e) => { e.stopPropagation(); closeTab(t); } }));
     t.tabEl = el;
     ui.tabs.appendChild(el);
@@ -324,6 +366,16 @@ function pickHost() {
         h('div', { class: 'host-addr ellipsis' }, `${x.username}@${x.hostname}`)), x.tmux ? badge('tmux', 'accent') : null)))
       : emptyState({ icon: 'server', title: 'Aucun hôte', text: 'Ajoutez d\'abord un hôte.' }),
   });
+  // Terminaux que d'autres comptes partagent avec moi.
+  get('/api/terminals/shared').then(({ terminals }) => {
+    const fresh = terminals.filter((x) => !tabs.some((t) => t.sessionId === x.id));
+    if (!fresh.length || !d.el.open) return;
+    d.body.appendChild(h('div', { class: 'stack' }, h('h3', null, 'Partagés avec moi'), h('div', { class: 'list' }, fresh.map((x) => h('button', {
+      type: 'button', class: 'list-item clickable list-button',
+      onclick: () => { d.close(); openTab(x.hostId, x.id, true, { title: `${x.title} (${x.owner})`, guest: x.mode, isClaude: !!x.claude }); },
+    }, h('span', { class: 'grow' }, h('div', { class: 'host-name ellipsis' }, x.title), h('div', { class: 'host-addr ellipsis' }, `de ${x.owner}`)),
+    badge(x.mode === 'control' ? 'co-pilote' : 'spectateur', 'accent'))))));
+  }).catch(() => {});
 }
 
 // ---------- Barre de touches mobile ----------

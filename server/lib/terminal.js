@@ -63,8 +63,8 @@ export function tmuxCommand(sessionName) {
 }
 
 export class TerminalManager {
-  constructor({ pool, hosts, journal, config, onNotify, claude, requireHost }) {
-    Object.assign(this, { pool, hosts, journal, config, onNotify, claude, requireHost });
+  constructor({ pool, hosts, journal, config, onNotify, claude, requireHost, recorder }) {
+    Object.assign(this, { pool, hosts, journal, config, onNotify, claude, requireHost, recorder });
     this.sessions = new Map();
   }
 
@@ -76,6 +76,7 @@ export class TerminalManager {
     return {
       id: s.id, hostId: s.hostId, title: s.title, tmux: s.tmux, claude: s.claude, createdAt: s.createdAt,
       ownerId: s.owner?.id ?? null, owner: s.owner?.username ?? null,
+      shares: [...s.shares.entries()].map(([userId, x]) => ({ userId, username: x.username, mode: x.mode })),
       attached: s.clients.size, exited: s.exited, cols: s.cols, rows: s.rows,
     };
   }
@@ -126,9 +127,11 @@ export class TerminalManager {
       clients: new Set(),
       exited: false,
       graceTimer: null,
+      shares: new Map(), // userId → { mode: 'view' | 'control', username }
       oscTail: '',
     };
     this.sessions.set(s.id, s);
+    this.recorder?.start(s, host);
     this.journal.add({
       type: 'terminal', event: claudeInfo ? 'claude-open' : 'open', host, user: s.owner,
       detail: claudeInfo ? `${claudeInfo.resumed ? 'reprise' : 'nouvelle'} ${name}${claudeInfo.dangerous ? ' (sans confirmation des outils)' : ''}` : useTmux ? `tmux:${name}` : 'shell',
@@ -137,6 +140,7 @@ export class TerminalManager {
 
     const onData = (chunk) => {
       s.buffer.push(chunk);
+      this.recorder?.output(s, chunk);
       let slow = false;
       for (const ws of s.clients) {
         if (ws.readyState !== 1) continue;
@@ -149,6 +153,7 @@ export class TerminalManager {
     stream.on('data', onData);
     stream.stderr?.on('data', onData);
     stream.on('close', () => {
+      this.recorder?.finish(s);
       s.exited = true;
       const dur = Math.round((Date.now() - s.createdAt) / 1000);
       this.journal.add({ type: 'terminal', event: 'close', host, user: s.owner, ip: null, detail: `durée ${dur} s` });
@@ -228,6 +233,7 @@ export class TerminalManager {
     s.cols = cols;
     s.rows = rows;
     s.stream.setWindow(rows, cols, 0, 0);
+    this.recorder?.resize(s, cols, rows);
   }
 
   close(id) {
@@ -238,7 +244,36 @@ export class TerminalManager {
     this.sessions.delete(id);
   }
 
+  /** Partage décidé par le propriétaire (son accord explicite), révocable à tout moment. */
+  share(id, owner, guest, mode) {
+    const s = this.get(id);
+    if (s.owner?.id !== owner.id) throw new HttpError(403, 'FORBIDDEN', 'Seul le propriétaire peut partager ce terminal');
+    if (guest.id === owner.id) throw new HttpError(400, 'BAD_REQUEST', 'Choisissez un autre compte');
+    s.shares.set(guest.id, { mode, username: guest.username });
+    this.journal.add({ type: 'share', event: 'invite', user: owner, host: this.hosts.find(s.hostId), detail: `${guest.username} (${mode === 'control' ? 'co-pilote' : 'spectateur'})` });
+    return this.view(s);
+  }
+
+  unshare(id, owner, guestId) {
+    const s = this.get(id);
+    if (s.owner?.id !== owner.id) throw new HttpError(403, 'FORBIDDEN', 'Seul le propriétaire peut retirer un partage');
+    const g = s.shares.get(guestId);
+    s.shares.delete(guestId);
+    for (const ws of s.clients) {
+      if (ws.userId === guestId) { sendCtl(ws, { t: 'error', code: 'UNSHARED', message: 'Le propriétaire a arrêté le partage' }); ws.close(4001, 'UNSHARED'); }
+    }
+    if (g) this.journal.add({ type: 'share', event: 'revoke', user: owner, host: this.hosts.find(s.hostId), detail: g.username });
+    return this.view(s);
+  }
+
+  /** Terminaux partagés avec ce compte. */
+  sharedWith(userId) {
+    return [...this.sessions.values()].filter((s) => s.shares.has(userId)).map((s) => ({ ...this.view(s), mode: s.shares.get(userId).mode }));
+  }
+
   closeAll() {
+    // Arrêt du serveur : les enregistrements sont sauvegardés avant la fermeture de la base.
+    for (const s of this.sessions.values()) this.recorder?.finish(s);
     for (const id of [...this.sessions.keys()]) this.close(id);
   }
 
@@ -251,8 +286,11 @@ export class TerminalManager {
       if (params.get('session')) {
         s = this.get(params.get('session'));
         // Se rattacher à un terminal : réservé à son propriétaire (le partage passe par une invitation).
-        if (user && s.owner && s.owner.id !== user.id && !this.canJoin?.(s, user)) {
-          throw new HttpError(403, 'FORBIDDEN', 'Ce terminal appartient à un autre compte');
+        if (user && s.owner && s.owner.id !== user.id) {
+          // Invité : seulement sur invitation du propriétaire (« regarder » ou « co-piloter »).
+          const share = s.shares.get(user.id);
+          if (!share) throw new HttpError(403, 'FORBIDDEN', 'Ce terminal appartient à un autre compte');
+          ws.guest = share.mode;
         }
       } else {
         const hostId = v.id(params.get('host'), 'host');
@@ -278,23 +316,29 @@ export class TerminalManager {
     }
     const sinceRaw = params.get('since');
     const since = sinceRaw !== null && /^\d{1,15}$/.test(sinceRaw) ? Number(sinceRaw) : undefined;
+    ws.userId = user?.id;
     this.attach(s, ws, since);
+    if (ws.guest) {
+      this.journal.add({ type: 'share', event: 'join', user, host: this.hosts.find(s.hostId), detail: `${ws.guest === 'control' ? 'co-pilote' : 'spectateur'} du terminal de ${s.owner?.username}` });
+      for (const c of s.clients) if (c !== ws) sendCtl(c, { t: 'guest', user: user.username, mode: ws.guest, joined: true });
+    }
+    const canType = ws.guest !== 'view';
 
     ws.on('message', (raw, isBinary) => {
       if (isBinary) {
-        this.input(s, raw);
+        if (canType) this.input(s, raw);
         return;
       }
       let msg;
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
-      if (msg.t === 'i' && typeof msg.d === 'string' && msg.d.length <= 65_536) this.input(s, msg.d);
-      else if (msg.t === 'r') {
+      if (msg.t === 'i' && typeof msg.d === 'string' && msg.d.length <= 65_536) { if (canType) this.input(s, msg.d); }
+      else if (msg.t === 'r' && !ws.guest) {
         const cols = Number(msg.c);
         const rows = Number(msg.r);
         if (Number.isInteger(cols) && Number.isInteger(rows) && cols >= 10 && cols <= 500 && rows >= 4 && rows <= 300) {
           this.resize(s, cols, rows);
         }
-      } else if (msg.t === 'close') this.close(s.id);
+      } else if (msg.t === 'close' && !ws.guest) this.close(s.id);
       else if (msg.t === 'ping') sendCtl(ws, { t: 'pong' });
     });
     ws.on('close', () => this.detach(s, ws));

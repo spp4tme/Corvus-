@@ -51,7 +51,9 @@ tiers.
 | **Git** | Statut, branches (checkout, suivi, création), historique, diff, stage/unstage, commit, `pull --ff-only`, push, fetch, découverte des dépôts. |
 | **Supervision** | CPU (global et **par cœur**), RAM, swap, disques, **E/S disque** (débit, IOPS), réseau, **TCP** (connexions établies, retransmissions), uptime, charge, température (Pi), graphiques temps réel (3 s), **historique stocké** (collecte de fond toutes les 30 s : 1 h, 24 h, 7 jours, 1 an), processus (kill), **Docker** (liste, start/stop/restart, logs). |
 | **Journal** | Journal d'audit **infalsifiable** (chaîné par SHA-256, vérifiable) : connexions, terminaux, SFTP, git, Docker, comptes, sauvegardes, avec le compte et l'IP. |
-| **Comptes** | Comptes nominatifs, **TOTP obligatoire**, rôles administrateur / opérateur / lecture seule, droits par hôte ou groupe, jetons d'API. |
+| **Enregistrements** | Chaque session de terminal est enregistrée (asciicast, **sortie seulement**, chiffrée) et se relit comme une vidéo : lecture / pause, vitesse ×0,5 à ×8, saut des pauses, barre de progression, **recherche de texte**. |
+| **Partage en direct** | Le propriétaire d'un terminal l'ouvre à un autre compte en **spectateur** (sans clavier) ou **co-pilote**, et retire l'accès quand il veut. |
+| **Comptes** | Comptes nominatifs, **TOTP obligatoire**, **passkeys** (WebAuthn) en option, rôles administrateur / opérateur / lecture seule, droits par hôte ou groupe, jetons d'API. |
 | **Stockage** | Base SQLite (option : SSD externe), rétention automatique, **sauvegarde / restauration chiffrées en un bouton**, alerte d'espace disque. |
 | **Services web** | Ouvre une interface web privée du tailnet via un proxy isolé (bac à sable). |
 | **Bonus** | Dictée vocale (Web Speech API), **notifications push** quand une commande longue se termine ([docs/notifications.md](docs/notifications.md)). |
@@ -298,6 +300,8 @@ directement.
 | `HOST_PROBE_SEC` | `60` | Intervalle de la sonde d'état des hôtes (0 = désactivée) ; les hôtes injoignables sont re-testés de plus en plus rarement (jusqu'à 15 min) |
 | `HOST_DOWN_ALERT_MIN` | `5` | Alerte (journal + push) quand un hôte reste injoignable plus longtemps |
 | `METRICS_INTERVAL_SEC` | `30` | Collecte de fond des métriques (0 = désactivée) ; un hôte injoignable est sauté |
+| `RECORD_SESSIONS` | `1` | Enregistre les sessions de terminal (sortie seulement) |
+| `RECORDING_MAX_MB` | `50` | Taille max d'un enregistrement (au-delà, il s'arrête proprement) |
 | `CORVUS_MIN_FREE_MB` | `2048` | Seuil d'alerte d'espace libre (le plus grand de ce seuil et de 5 % du disque) |
 | `RETENTION_METRICS_RAW_DAYS` | `7` | Conservation des métriques détaillées (ensuite : agrégats horaires) |
 | `RETENTION_METRICS_HOURLY_DAYS` | `365` | Conservation des agrégats horaires |
@@ -504,6 +508,10 @@ Dockerfile, docker-compose.yml
   est vérifiée par les tests, mais pas la réception sur un appareil.
 
 **Usage**
+- **Certificats SSH de courte durée** : reportés — la bibliothèque `ssh2` (1.17) ne sait pas
+  s'authentifier par certificat OpenSSH.
+- **Passkeys** : exigent HTTPS sur un nom de domaine (`https://<machine>.<tailnet>.ts.net`) ou
+  `localhost` ; l'attestation (modèle d'authentificateur) n'est pas vérifiée.
 - **QR code TOTP** : pas de QR code à l'enrôlement (aucune dépendance ajoutée) : lien
   `otpauth://` (ouvre l'application sur le téléphone) ou saisie manuelle de la clé.
 - **Terminaux** : ils survivent aux coupures du navigateur, mais pas à un redémarrage de Corvus

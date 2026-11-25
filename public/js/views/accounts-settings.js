@@ -10,7 +10,7 @@ import { state } from '../state.js';
 
 const ROLE_LABEL = { admin: 'Administrateur', operator: 'Opérateur', viewer: 'Lecture seule' };
 
-export function renderMyAccount(slot) {
+export async function renderMyAccount(slot) {
   const box = h('div', { class: 'card card-pad stack' });
   replace(slot, h('h2', { class: 'section-title' }, 'Mon compte'), box);
   const me = state.me;
@@ -64,10 +64,42 @@ export function renderMyAccount(slot) {
     },
   });
 
+  // Passkeys : connexion sans mot de passe depuis cet appareil (en plus du mot de passe + TOTP).
+  const passkeys = h('div');
+  async function loadPasskeys() {
+    try {
+      const { passkeys: list } = await get('/api/me/passkeys');
+      replace(passkeys, list.length ? h('ul', { class: 'list' }, list.map((p) => h('li', { class: 'list-item' },
+        h('span', { class: 'grow' }, h('strong', null, p.name), h('br'), h('span', { class: 'dim' }, `ajoutée le ${formatDate(p.createdAt)}${p.lastUsedAt ? ` · utilisée le ${formatDate(p.lastUsedAt)}` : ''}`)),
+        button({
+          label: `Supprimer ${p.name}`, icon: 'trash', iconOnly: true, variant: 'ghost',
+          onClick: async () => {
+            if (!await confirmDialog({ title: 'Supprimer cette passkey ?', message: p.name, confirmLabel: 'Supprimer', danger: true })) return;
+            try { await del(`/api/me/passkeys/${encodeURIComponent(p.id)}`); loadPasskeys(); } catch (err) { toastError(err); }
+          },
+        })))) : h('p', { class: 'dim' }, 'Aucune passkey.'));
+    } catch (err) { replace(passkeys, errorState(err, loadPasskeys)); }
+  }
+  const { passkeysSupported, registerPasskey } = await import('../passkey.js');
+  const addPasskey = passkeysSupported()
+    ? button({
+      label: 'Ajouter une passkey', icon: 'key',
+      onClick: async () => {
+        const name = await promptDialog({ title: 'Nouvelle passkey', label: 'Nom de l\'appareil', value: /iPhone|iPad|Android/.exec(navigator.userAgent)?.[0] || 'Cet appareil' });
+        if (!name) return;
+        try { await busy(addPasskey, () => registerPasskey(name)); toast('Passkey ajoutée', 'ok'); loadPasskeys(); } catch (err) {
+          if (err.name !== 'NotAllowedError') toastError(err);
+        }
+      },
+    })
+    : h('p', { class: 'dim' }, 'Passkeys indisponibles ici : HTTPS requis (https://<machine>.<tailnet>.ts.net).');
+  loadPasskeys();
+
   replace(box,
     me?.mustChangePassword ? h('div', { class: 'test-result ko', role: 'alert' }, 'Mot de passe provisoire : choisissez le vôtre pour continuer.') : null,
     h('p', null, h('strong', null, me?.username || '?'), ' · ', ROLE_LABEL[me?.role] || me?.role, me?.totpEnabled ? ' · double authentification active' : ''),
     h('div', { class: 'form-grid' }, fCur, fNext), h('div', null, pwBtn),
+    h('h3', null, 'Passkeys'), passkeys, h('div', null, addPasskey),
     h('h3', null, 'Jetons d\'API'), tokens, h('div', null, newToken));
   loadTokens();
 }

@@ -4,6 +4,7 @@ import { post } from '../api.js';
 import { h, clear } from '../ui/dom.js';
 import { logo } from '../ui/icons.js';
 import { button, field, input, busy, toast } from '../ui/components.js';
+import { passkeysSupported, loginWithPasskey } from '../passkey.js';
 
 function card(...children) {
   return h('form', { class: 'card login-card', novalidate: true },
@@ -18,7 +19,7 @@ function show(root, form, focus) {
   focus?.focus();
 }
 
-export function renderLogin(root, onSuccess, { offline = false, setupRequired = false } = {}) {
+export function renderLogin(root, onSuccess, { offline = false, setupRequired = false, passkeys = false } = {}) {
   if (setupRequired) return renderSetup(root, onSuccess);
   const user = input({ name: 'username', autocomplete: 'username', autocapitalize: 'none', required: true });
   const pass = input({ type: 'password', name: 'password', autocomplete: 'current-password', required: true });
@@ -27,9 +28,20 @@ export function renderLogin(root, onSuccess, { offline = false, setupRequired = 
   const fPass = field({ label: 'Mot de passe', control: pass });
   const fCode = field({ label: 'Code à 6 chiffres', control: code, hint: 'Affiché par votre application d\'authentification (Aegis, Google Authenticator, 1Password…).' });
   const submit = button({ label: 'Se connecter', variant: 'primary', type: 'submit', block: true, icon: 'lock' });
+  // Passkey : connexion sans mot de passe (empreinte, visage ou code de l'appareil).
+  const pk = passkeys && passkeysSupported()
+    ? button({
+      label: 'Se connecter avec une passkey', icon: 'key', block: true,
+      onClick: async () => {
+        try { await busy(pk, loginWithPasskey); onSuccess(); } catch (err) {
+          if (err.name !== 'NotAllowedError') fPass.setError(err.message);
+        }
+      },
+    })
+    : null;
   const form = card(
     offline ? h('div', { class: 'test-result ko', role: 'alert' }, 'Serveur injoignable. Vérifiez que Corvus tourne et que Tailscale est connecté.') : null,
-    fUser, fPass, fCode, submit);
+    fUser, fPass, fCode, submit, pk);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     for (const f of [fUser, fPass, fCode]) f.setError(null);

@@ -11,6 +11,7 @@ import { monitorRoutes } from './monitor.js';
 import { serviceRoutes } from './services.js';
 import { claudeRoutes } from './claude.js';
 import { systemRoutes } from './system.js';
+import { terminalRoutes } from './terminals.js';
 import { HostStatus } from '../lib/hoststatus.js';
 import { MetricsCollector } from '../lib/metrics.js';
 
@@ -46,5 +47,6 @@ export function extraRoutes(ctx) {
   r.use(serviceRoutes(ctx));
   r.use(claudeRoutes(ctx));
   r.use(systemRoutes(ctx));
+  r.use(terminalRoutes(ctx));
   return r;
 }

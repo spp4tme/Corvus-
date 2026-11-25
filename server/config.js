@@ -32,6 +32,8 @@ export const config = Object.freeze({
   hostProbeSec: int(env.HOST_PROBE_SEC, 60),
   hostDownAlertMin: int(env.HOST_DOWN_ALERT_MIN, 5),
   metricsIntervalSec: int(env.METRICS_INTERVAL_SEC, 30),
+  recordSessions: bool(env.RECORD_SESSIONS, true),
+  recordingMaxBytes: int(env.RECORDING_MAX_MB, 50) * 1024 * 1024,
   // Rétention (jours) : métriques détaillées, agrégats horaires, enregistrements de session.
   retention: {
     metricsRawDays: int(env.RETENTION_METRICS_RAW_DAYS, 7),

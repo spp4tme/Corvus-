@@ -406,3 +406,7 @@ dialog.dlg::backdrop { background: var(--c-overlay); }
 /* État de la connexion au serveur Corvus (en-tête) */
 .conn-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c-ok); flex: none; }
 .conn-dot.offline { background: var(--c-danger); }
+
+/* Lecteur d'enregistrements */
+.player-term { overflow: auto; max-height: 60vh; border-radius: var(--r-2, 8px); background: #000; padding: var(--s-1); }
+.player-seek { flex: 1; min-width: 120px; }

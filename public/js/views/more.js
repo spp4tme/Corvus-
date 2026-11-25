@@ -4,6 +4,7 @@ import { icon } from '../ui/icons.js';
 
 const ITEMS = [
   { href: '#/journal', icon: 'journal', title: 'Journal', text: 'Historique des connexions' },
+  { href: '#/recordings', icon: 'history', title: 'Enregistrements', text: 'Revoir les sessions de terminal' },
   { href: '#/proxy', icon: 'link', title: 'Services web', text: 'Ouvrir un service privé du tailnet' },
   { href: '#/settings', icon: 'settings', title: 'Réglages', text: 'Terminal, notifications, session' },
 ];

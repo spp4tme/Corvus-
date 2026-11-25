@@ -14,7 +14,7 @@ async function uiLogin(page) {
   await page.getByLabel('Identifiant').fill(env.admin.username);
   await page.getByLabel('Mot de passe', { exact: true }).fill(env.admin.password);
   await page.getByLabel('Code à 6 chiffres').fill(freshCode(env.corvus, env.admin));
-  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await page.getByRole('button', { name: 'Se connecter', exact: true }).click();
 }
 
 const OUT = path.resolve('test-results');

@@ -10,6 +10,18 @@ import { HttpError } from '../lib/validate.js';
 import * as v from '../lib/validate.js';
 import * as totp from '../lib/totp.js';
 import { publicUser } from '../lib/users.js';
+import { originAllowed } from '../lib/auth.js';
+import { verifyRegistration, verifyAssertion, b64u } from '../lib/webauthn.js';
+
+/** Origine et domaine (rpId) de la page qui demande l'opération WebAuthn. */
+function relyingParty(req, ctx) {
+  const origin = req.headers.origin;
+  const trustForwarded = ctx.config.trustProxy !== false && ctx.config.trustProxy !== 'false';
+  if (!origin || !originAllowed(origin, req, { allowedOrigins: ctx.config.allowedOrigins, trustForwarded })) {
+    throw new HttpError(400, 'BAD_ORIGIN', 'Origine absente ou refusée pour une passkey');
+  }
+  return { origin, rpId: new URL(origin).hostname };
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ENROLL_TTL_MS = 10 * 60_000;
@@ -104,6 +116,33 @@ export function authRoutes(ctx) {
     res.json({ ok: true });
   });
 
+  // ---------- Connexion par passkey (remplace mot de passe + TOTP : vérification exigée sur l'appareil) ----------
+  r.post('/passkey/options', (req, res) => {
+    const rp = relyingParty(req, ctx);
+    const c = ctx.webauthn.issue({ ...rp, purpose: 'login' });
+    res.json({ challengeId: c.id, publicKey: { challenge: c.challenge, rpId: rp.rpId, userVerification: 'required', timeout: 120_000, allowCredentials: [] } });
+  });
+
+  r.post('/passkey/login', async (req, res) => {
+    rateCheck(req.ip);
+    const c = ctx.webauthn.take(req.body?.challengeId);
+    const cred = req.body?.credential;
+    const row = c.purpose === 'login' && typeof cred?.id === 'string' ? ctx.db.get('SELECT * FROM webauthn_credentials WHERE id = ?', cred.id) : null;
+    if (!row) await failure(req, [req.ip], 'BAD_PASSKEY', 'Passkey inconnue de Corvus');
+    let counter;
+    try {
+      counter = verifyAssertion(cred, { alg: row.alg, jwk: JSON.parse(row.public_key), counter: row.counter }, c);
+    } catch (err) {
+      await failure(req, [req.ip], 'BAD_PASSKEY', err.message);
+    }
+    const u = users.row(row.user_id);
+    if (!u || u.disabled) await failure(req, [req.ip], 'BAD_PASSKEY', 'Compte désactivé');
+    ctx.db.run('UPDATE webauthn_credentials SET counter = ?, last_used_at = ? WHERE id = ?', counter, Date.now(), row.id);
+    auth.limiter.success(req.ip);
+    openSession(req, res, u, `passkey « ${row.name} »`);
+    res.json({ ok: true });
+  });
+
   r.post('/logout', (req, res) => {
     auth.destroySession(parseCookies(req.headers.cookie)[COOKIE]);
     res.clearCookie(COOKIE, { path: '/' });
@@ -122,6 +161,46 @@ export function accountRoutes(ctx) {
   r.post('/me/password', (req, res) => {
     users.changeOwnPassword(req.user.id, req.body?.current, req.body?.next);
     journal.add({ type: 'account', event: 'password', user: req.user, ip: req.ip });
+    res.json({ ok: true });
+  });
+
+  // ---------- Passkeys ----------
+  r.get('/me/passkeys', (req, res) => res.json({
+    passkeys: ctx.db.all('SELECT id, name, created_at AS createdAt, last_used_at AS lastUsedAt FROM webauthn_credentials WHERE user_id = ? ORDER BY created_at', req.user.id),
+  }));
+  r.post('/me/passkeys/options', (req, res) => {
+    const rp = relyingParty(req, ctx);
+    const c = ctx.webauthn.issue({ ...rp, purpose: 'register', userId: req.user.id });
+    const existing = ctx.db.all('SELECT id FROM webauthn_credentials WHERE user_id = ?', req.user.id);
+    res.json({
+      challengeId: c.id,
+      publicKey: {
+        challenge: c.challenge,
+        rp: { id: rp.rpId, name: 'Corvus' },
+        user: { id: b64u(Buffer.from(req.user.id)), name: req.user.username, displayName: req.user.username },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -8 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+        excludeCredentials: existing.map((x) => ({ type: 'public-key', id: x.id })),
+        attestation: 'none',
+        timeout: 120_000,
+      },
+    });
+  });
+  r.post('/me/passkeys', (req, res) => {
+    const c = ctx.webauthn.take(req.body?.challengeId);
+    if (c.purpose !== 'register' || c.userId !== req.user.id) throw new HttpError(400, 'BAD_PASSKEY', 'Défi invalide');
+    const name = v.str(req.body?.name ?? 'Passkey', 'nom', { min: 1, max: 60 }).trim();
+    const k = verifyRegistration(req.body?.credential, c);
+    if (ctx.db.get('SELECT id FROM webauthn_credentials WHERE id = ?', k.id)) throw new HttpError(409, 'EXISTS', 'Cette passkey est déjà enregistrée');
+    ctx.db.run('INSERT INTO webauthn_credentials (id, user_id, name, public_key, alg, counter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      k.id, req.user.id, name, JSON.stringify(k.jwk), k.alg, k.counter, Date.now());
+    journal.add({ type: 'account', event: 'passkey-add', user: req.user, detail: name });
+    res.status(201).json({ ok: true });
+  });
+  r.delete('/me/passkeys/:id', (req, res) => {
+    const id = v.str(req.params.id, 'id', { min: 8, max: 2048 });
+    if (!ctx.db.run('DELETE FROM webauthn_credentials WHERE id = ? AND user_id = ?', id, req.user.id).changes) throw new HttpError(404, 'NOT_FOUND', 'Passkey introuvable');
+    journal.add({ type: 'account', event: 'passkey-remove', user: req.user });
     res.json({ ok: true });
   });
 

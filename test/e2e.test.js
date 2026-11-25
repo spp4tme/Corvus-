@@ -786,3 +786,79 @@ describe('Claude Code', () => {
     assert.equal(anon.status, 401);
   });
 });
+
+describe('enregistrement et partage de session (étape 3b)', () => {
+  let guest;
+  let gc;
+
+  test('le propriétaire partage : spectateur sans clavier, co-pilote, révocation', async () => {
+    const { makeUser, CorvusClient } = await import('./helpers/corvus.js');
+    guest = makeUser(env.corvus, { username: 'invite', password: 'mot-de-passe-invite', role: 'operator' });
+    env.corvus.ctx.users.setGrants(guest.id, [{ scope: 'host', target: hostId, role: 'operator' }]);
+    gc = new CorvusClient(env.base, { corvus: env.corvus, user: guest });
+    await gc.login();
+
+    const t = c.terminal({ host: hostId, cols: 80, rows: 24 });
+    await t.opened;
+    const ready = await t.ready();
+    const sid = ready.session.id;
+    t.send('echo avant-partage\n');
+    await t.waitFor((x) => x.output.includes('avant-partage'));
+
+    // Sans invitation : refusé.
+    const intrus = gc.terminal({ session: sid });
+    await intrus.opened;
+    assert.equal((await intrus.ready()).code, 'FORBIDDEN');
+
+    const cand = await c.api('GET', `/api/terminals/${sid}/share/candidates`);
+    assert.ok(cand.body.users.some((u) => u.id === guest.id));
+    assert.equal((await c.api('POST', `/api/terminals/${sid}/share`, { userId: guest.id, mode: 'view' })).status, 200);
+    assert.equal((await gc.api('GET', '/api/terminals/shared')).body.terminals[0].mode, 'view');
+    const viewer = gc.terminal({ session: sid });
+    await viewer.opened;
+    await viewer.ready();
+    await viewer.waitFor((x) => x.output.includes('avant-partage'));
+    viewer.send('echo tape-par-le-spectateur\n');
+    t.send('echo visible-par-tous\n');
+    await viewer.waitFor((x) => x.output.includes('visible-par-tous'));
+    assert.ok(!t.output.includes('tape-par-le-spectateur'), 'un spectateur ne tape jamais dans le shell');
+    await t.waitFor((x) => x.ctl.some((m) => m.t === 'guest' && m.user === 'invite'));
+
+    await c.api('POST', `/api/terminals/${sid}/share`, { userId: guest.id, mode: 'control' });
+    const pilot = gc.terminal({ session: sid });
+    await pilot.opened;
+    await pilot.ready();
+    pilot.send('echo co-pilote-ok\n');
+    await t.waitFor((x) => x.output.includes('co-pilote-ok'));
+
+    assert.equal((await gc.api('POST', `/api/terminals/${sid}/share`, { userId: env.admin.id, mode: 'view' })).status, 403, 'seul le propriétaire partage');
+    await c.api('DELETE', `/api/terminals/${sid}/share/${guest.id}`);
+    await pilot.waitFor((x) => x.closed);
+    t.ws.send(JSON.stringify({ t: 'close' }));
+    await t.waitFor((x) => x.closed);
+  });
+
+  test('enregistrement asciicast : sortie seulement, chiffré, relisible par son propriétaire', async () => {
+    const t = c.terminal({ host: hostId, cols: 90, rows: 30 });
+    await t.opened;
+    const ready = await t.ready();
+    t.send('echo enregistre-moi\n');
+    await t.waitFor((x) => x.output.includes('enregistre-moi'));
+    t.ws.send(JSON.stringify({ t: 'close' }));
+    await t.waitFor((x) => x.closed);
+    await waitFor(() => env.corvus.ctx.db.get('SELECT recording_sha FROM term_sessions WHERE id = ?', ready.session.id)?.recording_sha);
+    const list = await c.api('GET', '/api/recordings');
+    assert.ok(list.body.recordings.some((r) => r.id === ready.session.id));
+    const res = await c.raw('GET', `/api/recordings/${ready.session.id}`);
+    const lines = (await res.text()).trim().split('\n');
+    const header = JSON.parse(lines[0]);
+    assert.equal(header.version, 2);
+    assert.equal(header.width, 90);
+    const events = lines.slice(1).map((l) => JSON.parse(l));
+    assert.ok(events.every((e) => typeof e[0] === 'number' && ['o', 'r'].includes(e[1])));
+    assert.ok(events.some((e) => e[2].includes('enregistre-moi')));
+    // Un autre compte ne voit pas cet enregistrement.
+    assert.equal((await gc.api('GET', `/api/recordings/${ready.session.id}`)).status, 404);
+    assert.ok(!(await gc.api('GET', '/api/recordings')).body.recordings.some((r) => r.id === ready.session.id));
+  });
+});

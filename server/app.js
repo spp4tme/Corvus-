@@ -21,6 +21,7 @@ import { Alerts } from './lib/alerts.js';
 import { BlobStore } from './lib/blobs.js';
 import { BackupService, applyPendingRestore } from './lib/backup.js';
 import { Retention } from './lib/retention.js';
+import { Recorder } from './lib/recorder.js';
 import { HttpError } from './lib/validate.js';
 import { logger, setLogLevel } from './lib/log.js';
 import { hostRoutes } from './routes/core.js';
@@ -28,6 +29,7 @@ import { authRoutes, accountRoutes } from './routes/accounts.js';
 import { accessGuard } from './lib/access.js';
 import { Users, publicUser } from './lib/users.js';
 import { requestContext } from './lib/context.js';
+import { Challenges } from './lib/webauthn.js';
 import { extraRoutes, createServices } from './routes/index.js';
 
 const log = logger('http');
@@ -83,21 +85,24 @@ export function createCorvus(overrides = {}) {
   migrateLegacy({ db, dataDir: config.dataDir, vault, hosts, token, passphrase: config.masterPassphrase });
   const auth = new Auth({ db, token, sessionTtlDays: config.sessionTtlDays });
   const users = new Users({ db, vault, hosts });
+  const webauthn = new Challenges();
   auth.users = users;
   const knownHosts = new KnownHosts(db);
   const journal = new Journal(db);
   const pool = new SshPool({ hosts, knownHosts, config });
-  const ctx = { config, storage, db, auth, users, vault, hosts, knownHosts, journal, pool, version: pkg.version, token, tokenCreated: created };
+  const ctx = { config, storage, db, auth, users, webauthn, vault, hosts, knownHosts, journal, pool, version: pkg.version, token, tokenCreated: created };
   ctx.alerts = new Alerts({ db, journal, notify: (n) => ctx.push?.notify(n).catch(() => {}) });
   ctx.storageMonitor = new StorageMonitor({ storage, config, alerts: ctx.alerts });
   ctx.restoredFrom = restoredFrom;
   ctx.blobs = new BlobStore({ db, vault, dir: storage.blobDir });
   ctx.backups = new BackupService({ db, storage, config, journal });
   ctx.retention = new Retention({ db, blobs: ctx.blobs, config });
+  ctx.recorder = new Recorder({ db, blobs: ctx.blobs, maxBytes: config.recordingMaxBytes, enabled: config.recordSessions });
   ctx.claude = new ClaudeService({ pool, hosts, journal });
   ctx.terminals = new TerminalManager({
     pool, hosts, journal, config, claude: ctx.claude,
     requireHost: (user, hostId, level) => ctx.requireHost(user, hostId, level),
+    recorder: ctx.recorder,
     onNotify: (n) => ctx.notify?.(n),
   });
   createServices(ctx);

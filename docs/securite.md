@@ -41,6 +41,17 @@ vers le port 443 de la machine Corvus).
 - Rotation du token d'amorçage : `npm run token:rotate` (ré-emballe la clé du coffre, révoque
   toutes les sessions). Tant que le serveur n'a pas redémarré, il refuse de modifier les secrets.
 
+### Passkeys, enregistrements, partage
+- **Passkeys** (WebAuthn, option) : connexion sans mot de passe, **vérification de l'utilisateur
+  exigée** sur l'appareil (empreinte, visage ou code) ; défi à usage unique (5 min), origine et
+  domaine vérifiés, compteur anti-clonage. Vérification codée sans dépendance (CBOR + node:crypto).
+- **Enregistrements** : sortie du terminal uniquement (les frappes, donc les mots de passe tapés
+  pour sudo, ne sont jamais enregistrées), stockés compressés + chiffrés, 90 jours. Un compte ne
+  relit que ses sessions (l'administrateur toutes) ; chaque relecture est journalisée.
+- **Partage en direct** : uniquement sur invitation du propriétaire, à un compte qui a accès à
+  l'hôte (co-pilote : rôle opérateur exigé) ; un spectateur ne peut ni taper, ni redimensionner,
+  ni fermer ; retrait immédiat ; tout est journalisé.
+
 ### Journal d'audit infalsifiable
 - Connexions (réussies et échouées), terminaux, transferts SFTP, git, Docker, processus, comptes,
   hôtes, sauvegardes : chaque entrée indique le compte, l'IP et l'hôte.
