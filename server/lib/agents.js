@@ -19,7 +19,7 @@ const MAX_BATCH = 500;
 export const MAX_VERSION_BYTES = 512 * 1024;
 const SHA_RE = /^[0-9a-f]{64}$/;
 /** Actions nommées que Corvus peut demander (l'agent les valide à son tour). Jamais de commande shell. */
-export const ACTIONS = new Set(['file.restore', 'file.remove']);
+export const ACTIONS = new Set(['file.restore', 'file.remove', 'preview.run', 'preview.apply']);
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const b64 = (buf) => Buffer.from(buf).toString('base64');
@@ -96,8 +96,8 @@ export class AgentService {
 
   /** Résumé pour la carte d'hôte (null = pas d'agent). */
   forHost(hostId) {
-    const a = this.db.get('SELECT id, version, last_seen_at AS lastSeenAt FROM agents WHERE host_id = ? ORDER BY enrolled_at DESC LIMIT 1', hostId);
-    return a ? { id: a.id, version: a.version, online: this.connections.has(a.id), lastSeenAt: a.lastSeenAt } : null;
+    const a = this.db.get('SELECT id, version, capabilities, last_seen_at AS lastSeenAt FROM agents WHERE host_id = ? ORDER BY enrolled_at DESC LIMIT 1', hostId);
+    return a ? { id: a.id, version: a.version, online: this.connections.has(a.id), lastSeenAt: a.lastSeenAt, capabilities: safeJson(a.capabilities) } : null;
   }
 
   /** Alerte quand un agent enrôlé reste déconnecté plus de `offlineAfterSec` (dédoublonnée par `Alerts`). */

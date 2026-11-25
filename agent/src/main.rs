@@ -10,6 +10,7 @@ mod actions;
 mod buffer;
 mod identity;
 mod metrics;
+mod preview;
 mod protocol;
 mod state;
 mod sys;
@@ -49,13 +50,14 @@ fn data_dir(args: &[String]) -> PathBuf {
     PathBuf::from(opt(args, "--dir").or_else(|| env::var("CORVUS_AGENT_DIR").ok()).unwrap_or_else(|| "/var/lib/corvus-agent".into()))
 }
 
-fn capabilities() -> Value {
+fn capabilities(allow_preview: bool) -> Value {
     // eBPF et fanotify : pas encore (étape 7) ; les fichiers sont suivis par balayage régulier.
     json!({
         "metrics": true, "files": true, "ports": true,
         "services": sys::systemd_available(),
         "packages": std::path::Path::new("/var/log/dpkg.log").exists(),
-        "actions": actions::names(),
+        "actions": actions::names(allow_preview),
+        "preview": allow_preview && preview::available(),
         "fanotify": false, "ebpf": false,
     })
 }
@@ -68,6 +70,8 @@ fn watch_roots(args: &[String]) -> Vec<PathBuf> {
 
 /// Tout ce que l'agent observe, même hors connexion : les événements vont dans le tampon SQLite.
 struct Collector {
+    agent_dir: PathBuf,
+    allow_preview: bool,
     state: state::State,
     watcher: watch::Watcher,
     scan_every: Duration,
@@ -127,7 +131,7 @@ fn enroll(args: &[String]) -> Result<(), String> {
             "publicKey": B64.encode(key.verifying_key().to_bytes()),
             "version": VERSION,
             "hostname": hostname,
-            "capabilities": capabilities(),
+            "capabilities": capabilities(false),
         }))
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => format!("enrôlement refusé ({code}) : {}", r.into_string().unwrap_or_default()),
@@ -157,6 +161,8 @@ fn run(args: &[String]) -> Result<(), String> {
     let roots = watch_roots(args);
     let now = Instant::now();
     let mut collector = Collector {
+        agent_dir: dir.clone(),
+        allow_preview: args.iter().any(|a| a == "--allow-preview"),
         state: state::State::open(&dir.join("state.db")).map_err(|e| format!("état : {e}"))?,
         watcher: watch::Watcher { roots: roots.clone(), pending_dir: dir.join("pending") },
         scan_every: Duration::from_secs(opt(args, "--scan-interval").and_then(|v| v.parse().ok()).unwrap_or(10).max(1)),
@@ -230,7 +236,7 @@ fn session(identity: &Identity, buffer: &Buffer, collector: &mut Collector, inte
     if let Some(last) = ok["body"]["lastSeq"].as_i64() { let _ = buffer.ack(last); } // déjà reçu avant la coupure
     eprintln!("connecté à Corvus (agent {})", identity.agent_id);
 
-    send(&mut ws, "hello_agent", json!({ "version": VERSION, "capabilities": capabilities() }))?;
+    send(&mut ws, "hello_agent", json!({ "version": VERSION, "capabilities": capabilities(collector.allow_preview) }))?;
 
     set_read_timeout(&ws, Duration::from_secs(1));
     let mut sampler = metrics::Sampler::default();
@@ -282,7 +288,7 @@ fn session(identity: &Identity, buffer: &Buffer, collector: &mut Collector, inte
                     // Action NOMMÉE demandée par Corvus : validée par `actions::run`, jamais exécutée comme commande.
                     let name = msg["body"]["name"].as_str().unwrap_or("");
                     collector.scan_now(buffer);
-                    let ctx = actions::Context { roots: &collector.watcher.roots };
+                    let ctx = actions::Context { roots: &collector.watcher.roots, agent_dir: &collector.agent_dir, allow_preview: collector.allow_preview };
                     let result = actions::run(&ctx, name, &msg["body"]["args"]);
                     let ts = protocol::now_ms() as i64;
                     let (ok, payload) = match &result { Ok(v) => (true, json!({ "data": v })), Err(e) => (false, json!({ "error": e })) };

@@ -505,6 +505,17 @@ La clé privée de l'agent ne quitte jamais l'hôte ; l'agent vérifie que c'est
 Corvus ne peut lui envoyer aucune commande shell. Détails : [`docs/protocole-agent.md`](docs/protocole-agent.md).
 Écrans : **Agents** (installation avec jeton affiché une fois, état, révocation) et **Rembobiner**.
 
+### Prévisualiser une commande (agent root requis, désactivé par défaut)
+Quand la barre de commande Corvus détecte une commande risquée, le bouton **Prévisualiser** l'exécute dans un
+**bac à sable OverlayFS** sur l'hôte : le système réel est en lecture seule, la commande n'a **pas de réseau**
+et ses capacités dangereuses sont retirées (`setpriv`). Corvus montre ce qui aurait changé (fichiers créés,
+modifiés, supprimés, diff, sortie, code de sortie) ; **Appliquer** rejoue ce diff seulement si les fichiers
+d'origine n'ont pas bougé entre-temps (sinon : conflit, rien n'est écrit). Activation : agent lancé avec
+`--allow-preview`, en root, et `deploy/agent/corvus-agent-preview.conf` (drop-in systemd). `root` dans la
+requête exige d'être administrateur de l'hôte. **Limites** : réseau, bases de données, services et processus
+lancés ne sont pas simulés ; la suppression d'un dossier entier est affichée mais pas appliquée ; sous
+Ubuntu 24.04 l'OverlayFS sans root est bloqué par AppArmor, d'où le passage par l'agent en root.
+
 ### Rembobiner un hôte (agent requis)
 L'agent surveille `/etc` et les crontabs (option `--watch dossier1,dossier2`) par balayage toutes les 10 s,
 ainsi que les ports en écoute, les services systemd et les paquets (journal dpkg). Chaque version de fichier

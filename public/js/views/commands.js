@@ -7,12 +7,13 @@ import {
   loadingState, emptyState, errorState, badge, checkbox,
 } from '../ui/components.js';
 import { state, sortedHosts } from '../state.js';
+import { renderDiff } from '../ui/diffview.js';
 import { prefs } from '../ui/dom.js';
 
 const LEVEL = { safe: ['sans risque', 'ok'], caution: ['prudence', 'warn'], danger: ['dangereuse', 'danger'] };
 
 /** Dialogue de confirmation d'une commande à risque (règles du serveur, aucune IA). */
-export function riskDialog(analysis, { title = 'Commande à risque', actions = [] } = {}) {
+export function riskDialog(analysis, { title = 'Commande à risque', actions = [], previewHint = 'Prévisualisation dans un bac à sable : nécessite un agent Corvus avec --allow-preview sur cet hôte.' } = {}) {
   const [label, kind] = LEVEL[analysis.level];
   const d = openDialog({
     title,
@@ -21,10 +22,42 @@ export function riskDialog(analysis, { title = 'Commande à risque', actions = [
       h('ul', null, analysis.reasons.map((r) => h('li', null, r))),
       analysis.notUndoable.length ? h('p', { class: 'dim' }, `Jamais annulable : ${analysis.notUndoable.join(', ')}.`) : null,
       analysis.undoable ? h('p', { class: 'dim' }, `Annulable : ${analysis.files.length} élément(s) seront copiés avant l'exécution.`) : null,
-      analysis.preview ? h('p', { class: 'dim' }, 'Prévisualisation dans un bac à sable : disponible avec l\'agent Corvus (à venir).') : null),
+      analysis.preview ? h('p', { class: 'dim' }, previewHint) : null),
     actions: [button({ label: 'Annuler', variant: 'ghost', onClick: () => d.close(null) }), ...actions.map((a) => button({ ...a, onClick: () => d.close(a.value) }))],
   });
   return d.closed;
+}
+
+/** Exécute la commande dans le bac à sable de l'agent et montre ce qu'elle changerait (rien n'est modifié). */
+export async function previewDialog(hostId, command, { onRun } = {}) {
+  const body = h('div', { class: 'stack' }, loadingState('Exécution dans le bac à sable (sans réseau)…'));
+  const close = () => d.close();
+  const d = openDialog({ title: 'Prévisualisation', wide: true, body, actions: [button({ label: 'Fermer', variant: 'ghost', onClick: close })] });
+  try {
+    const r = await post(`/api/hosts/${hostId}/preview`, { command });
+    const KIND = { created: ['créé', 'ok'], modified: ['modifié', 'warn'], deleted: ['supprimé', 'danger'] };
+    const apply = button({ label: 'Appliquer ces changements', icon: 'check', variant: 'danger', onClick: async () => {
+      const ok = await confirmDialog({ title: 'Appliquer ?', message: `Les ${r.entries.length} changement(s) montrés seront écrits sur l'hôte, seulement si les fichiers d'origine n'ont pas changé depuis.`, confirmLabel: 'Appliquer', danger: true });
+      if (!ok) return;
+      try {
+        const res = await post(`/api/hosts/${hostId}/preview/${r.id}/apply`, { confirm: true });
+        toast(`${res.applied} changement(s) appliqué(s)${res.skipped.length ? ` (${res.skipped.length} ignoré(s))` : ''}`, 'ok', 5000);
+        d.close();
+      } catch (err) { toastError(err); }
+    } });
+    replace(body,
+      h('div', { class: 'row' }, badge(`code de sortie ${r.exit}`, r.exit === 0 ? 'ok' : 'warn'), r.timedOut ? badge('délai dépassé', 'danger') : null, h('span', { class: 'dim' }, `${r.durationMs} ms · sans réseau · système réel intact`)),
+      r.stdout ? h('pre', { class: 'diff' }, r.stdout) : null,
+      r.stderr ? h('pre', { class: 'diff' }, r.stderr) : null,
+      r.entries.length ? h('h3', null, `${r.entries.length} changement(s)${r.truncated ? ' (liste tronquée)' : ''}`) : h('p', { class: 'dim' }, 'Cette commande ne modifie aucun fichier.'),
+      ...r.entries.map((e) => h('details', null,
+        h('summary', null, badge(KIND[e.kind][0], KIND[e.kind][1]), ' ', h('span', { class: 'mono' }, e.path), e.type === 'dir' ? ' (dossier)' : ''),
+        e.diff ? renderDiff(e.diff) : h('p', { class: 'dim' }, e.type === 'symlink' ? `lien vers ${e.target}` : 'pas d\'aperçu texte'))),
+      h('p', { class: 'dim' }, 'Limites : le réseau, les bases de données, les services et les processus lancés ne sont pas simulés.'));
+    const actions = d.foot;
+    if (r.entries.length && actions) actions.prepend(apply);
+    if (onRun) actions?.prepend(button({ label: 'Exécuter dans le terminal', variant: 'primary', onClick: () => { d.close(); onRun(); } }));
+  } catch (err) { replace(body, errorState(err)); }
 }
 
 export function snippetDialog(snippet, onSaved) {

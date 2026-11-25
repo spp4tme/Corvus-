@@ -4,7 +4,8 @@
 import { get, post } from './api.js';
 import { h, replace, debounce } from './ui/dom.js';
 import { button, toast, toastError, confirmDialog } from './ui/components.js';
-import { riskDialog, snippetDialog } from './views/commands.js';
+import { riskDialog, snippetDialog, previewDialog } from './views/commands.js';
+import { state } from './state.js';
 
 const isRelative = (p) => !p.startsWith('/') && !p.startsWith('~');
 
@@ -85,15 +86,20 @@ export function createCommandBar({ active }) {
     // Chemins relatifs sans dossier courant connu : l'annulation viserait peut-être d'autres fichiers.
     const cwdUnknown = !t.cwd && analysis.files.some(isRelative);
     const canUndo = analysis.undoable && !cwdUnknown;
+    const agent = state.host(t.hostId)?.agent;
+    const canPreview = !!(analysis.preview && agent?.online && agent.capabilities?.preview);
     const choice = await riskDialog(cwdUnknown && analysis.undoable
       ? { ...analysis, undoable: false, notUndoable: [...analysis.notUndoable, 'dossier courant inconnu (chemins relatifs) : voir « OSC 7 » dans le README'] }
       : analysis, {
+      previewHint: canPreview ? 'Vous pouvez d\'abord prévisualiser la commande dans un bac à sable (rien n\'est modifié).' : undefined,
       actions: [
+        ...(canPreview ? [{ label: 'Prévisualiser', icon: 'search', value: 'preview' }] : []),
         ...(canUndo ? [{ label: 'Exécuter avec annulation', variant: 'primary', value: 'undo' }] : []),
         { label: canUndo ? 'Exécuter sans filet' : 'Exécuter quand même', variant: 'danger', value: 'run' },
       ],
     });
     if (!choice) return;
+    if (choice === 'preview') { previewDialog(t.hostId, cmd, { onRun: () => send(t, cmd) }); return; }
     if (choice === 'undo') {
       try {
         const r = await post(`/api/hosts/${t.hostId}/undo/prepare`, { command: cmd, cwd: t.cwd || undefined });

@@ -13,10 +13,15 @@ use std::path::{Component, Path, PathBuf};
 
 pub struct Context<'a> {
     pub roots: &'a [PathBuf],
+    pub agent_dir: &'a Path,
+    /// `--allow-preview` : prévisualisation de commandes (désactivée par défaut).
+    pub allow_preview: bool,
 }
 
-pub fn names() -> Vec<&'static str> {
-    vec!["file.restore", "file.remove"]
+pub fn names(allow_preview: bool) -> Vec<&'static str> {
+    let mut v = vec!["file.restore", "file.remove"];
+    if allow_preview && crate::preview::available() { v.extend(["preview.run", "preview.apply"]); }
+    v
 }
 
 /// Chemin absolu, normalisé, sans « .. », sous une racine surveillée. Rien d'autre n'est modifiable.
@@ -39,6 +44,9 @@ pub fn run(ctx: &Context, name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "file.restore" => file_restore(ctx, args),
         "file.remove" => file_remove(ctx, args),
+        "preview.run" | "preview.apply" if !(ctx.allow_preview && crate::preview::available()) => Err("prévisualisation désactivée sur cet agent (--allow-preview, agent root)".into()),
+        "preview.run" => crate::preview::run(ctx.agent_dir, args),
+        "preview.apply" => crate::preview::apply(ctx.agent_dir, args),
         other => Err(format!("action inconnue : {other}")),
     }
 }
@@ -99,7 +107,7 @@ mod tests {
         let d = dossier();
         let f = d.join("a.conf");
         fs::write(&f, "nouveau").unwrap();
-        let ctx = Context { roots: &[d.clone()] };
+        let ctx = Context { roots: &[d.clone()], agent_dir: &d, allow_preview: false };
         run(&ctx, "file.restore", &args(&f, "ancien")).unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap(), "ancien");
         assert_eq!(fs::metadata(&f).unwrap().mode() & 0o777, 0o640);
@@ -109,7 +117,7 @@ mod tests {
     #[test]
     fn supprime_un_fichier_ordinaire_seulement() {
         let d = dossier();
-        let ctx = Context { roots: &[d.clone()] };
+        let ctx = Context { roots: &[d.clone()], agent_dir: &d, allow_preview: false };
         fs::write(d.join("x"), "x").unwrap();
         run(&ctx, "file.remove", &json!({ "path": d.join("x").to_string_lossy() })).unwrap();
         assert!(!d.join("x").exists());
@@ -120,7 +128,7 @@ mod tests {
     #[test]
     fn refuse_ce_qui_est_dangereux() {
         let d = dossier();
-        let ctx = Context { roots: &[d.clone()] };
+        let ctx = Context { roots: &[d.clone()], agent_dir: &d, allow_preview: false };
         // hors racine, « .. », relatif, secret, empreinte fausse, action inconnue
         assert!(run(&ctx, "file.restore", &args(Path::new("/etc/passwd"), "x")).is_err());
         assert!(run(&ctx, "file.restore", &args(&d.join("../x"), "x")).is_err());

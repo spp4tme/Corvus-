@@ -4,6 +4,7 @@ import { get, post } from '../api.js';
 import { h, replace, formatDate, formatBytes } from '../ui/dom.js';
 import { button, openDialog, confirmDialog, select, input, checkbox, segmented, loadingState, emptyState, errorState, badge, toast, toastError } from '../ui/components.js';
 import { state } from '../state.js';
+import { renderDiff } from '../ui/diffview.js';
 
 const TYPE_LABEL = {
   'file.baseline': 'état initial', 'file.created': 'créé', 'file.modified': 'modifié', 'file.meta': 'droits', 'file.deleted': 'supprimé',
@@ -27,15 +28,7 @@ async function showDiff(hostId, a, b, title) {
   const d = openDialog({ title, wide: true, body, actions: [button({ label: 'Fermer', variant: 'ghost', onClick: () => d.close() })] });
   try {
     const diff = await get(`/api/hosts/${hostId}/rewind/diff?${new URLSearchParams({ ...(a ? { a } : {}), ...(b ? { b } : {}) })}`);
-    if (diff.binary) return replace(body, h('p', { class: 'dim' }, 'Contenu binaire : pas de diff.'));
-    if (diff.tooBig) return replace(body, h('p', { class: 'dim' }, 'Fichiers trop différents pour un diff lisible.'));
-    if (!diff.hunks.length) return replace(body, h('p', { class: 'dim' }, 'Contenu identique.'));
-    replace(body,
-      h('p', { class: 'dim' }, `+${diff.added} −${diff.removed} lignes`),
-      h('pre', { class: 'diff' }, diff.hunks.flatMap((hk, i) => [
-        i ? h('div', { class: 'diff-sep' }, '…') : null,
-        ...hk.lines.map((l) => h('div', { class: `diff-line diff-${l.t === '+' ? 'add' : l.t === '-' ? 'del' : 'ctx'}` }, `${l.t} ${l.s}`)),
-      ])));
+    replace(body, renderDiff(diff));
   } catch (err) { replace(body, errorState(err)); }
 }
 

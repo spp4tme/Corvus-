@@ -90,6 +90,15 @@ Côté serveur : contenus chiffrés dans le `BlobStore` (table `agent_versions`)
 `RETENTION_REWIND_DAYS` (90 jours) avec les événements qui les citent. API : `GET /api/hosts/:id/rewind/{events,changes,diff,version/:sha}`,
 `POST /api/hosts/:id/rewind/restore {at, paths, confirm: true}` (**administrateur de l'hôte**, journalisé).
 
+## 5 bis. Prévisualisation (étape 5.2)
+Actions `preview.run {command, root, user, timeoutSec}` et `preview.apply {id}` ; annoncées dans
+`capabilities.actions` seulement si l'agent tourne en root avec `--allow-preview`. L'agent lance le script
+fixe de `agent/src/preview.rs` dans de nouveaux espaces de noms (`unshare --mount --pid --net`) : la commande
+et les identifiants arrivent par variables d'environnement, jamais dans le texte du script. L'identifiant
+d'une prévisualisation est un hexadécimal de 16 caractères (aucun chemin) ; les prévisualisations expirent
+après 1 h ; `apply` refuse tout chemin sous `/proc`, `/sys`, `/dev`, `/run`, au dossier de l'agent, ou non
+normalisé, et vérifie l'empreinte de chaque fichier d'origine avant d'écrire quoi que ce soit.
+
 ## 6. Limites
 - Balayage : pas de temps réel au-delà de 10 s ; fichiers > 512 Ko suivis sans contenu (non restaurables).
 - Si l'agent est hors ligne pendant qu'un fichier change deux fois, seule la dernière version est connue.
