@@ -37,7 +37,14 @@ jobs:
       - name: Tests (unitaires, e2e, interface)
         env:
           CORVUS_TEST_BROWSER: chrome
-        run: npm test
+        shell: bash
+        # Les journaux GitHub demandent une connexion ; les annotations ::error:: sont lisibles par tous.
+        run: |
+          set +e
+          npm test 2>&1 | tee test.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" != 0 ]; then grep -E "^\s*(not ok|✖)|Error|expected|actual|panicked" test.log | head -25 | while IFS= read -r l; do echo "::error::${l:0:400}"; done; fi
+          exit $code
       - name: Captures d'écran des tests d'interface
         if: always()
         uses: actions/upload-artifact@v4
@@ -90,8 +97,12 @@ jobs:
       - name: Tests et compilation
         if: steps.check.outputs.present == 'true'
         working-directory: agent
+        shell: bash
         run: |
-          cross test --target ${{ matrix.target }}
+          set +e
+          cross test --target ${{ matrix.target }} 2>&1 | tee test.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" != 0 ]; then grep -E "^error|panicked|FAILED|failed|left|right|assert" test.log | head -25 | while IFS= read -r l; do echo "::error::${l:0:400}"; done; exit $code; fi
           cross build --release --target ${{ matrix.target }}
       - if: steps.check.outputs.present == 'true'
         uses: actions/upload-artifact@v4
