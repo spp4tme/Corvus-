@@ -481,7 +481,7 @@ Corvus n'ouvre pas de terminal : il affiche un message avec la commande d'instal
 ## Tests
 
 ```bash
-npm test          # tout : unitaires + bout en bout + interface (liste explicite de fichiers : compatible Node 22.13 et plus)
+npm test          # tout : unitaires + bout en bout + comptes + passkeys + productivité + interface (liste explicite de fichiers : compatible Node 22.13 et plus)
 npm run test:e2e  # bout en bout uniquement
 npm run test:ui   # interface (Edge ou Chrome requis ; ignoré sinon)
 npm run check:pure
@@ -505,6 +505,15 @@ npm run check:pure
   ajout d'hôte, terminal, fichiers, git, supervision, Docker, services, réglages, Claude Code
   (onglet de navigation, session, reprise, arrêt). Captures dans
   `test-results/`.
+
+---
+
+### Intégration continue et tests sur un vrai OpenSSH
+
+`.github/workflows/ci.yml` lance `npm test` à chaque push sur Linux **x86_64 et ARM64**, puis
+`test/real-ssh.test.js` contre un **vrai OpenSSH** (compte de test créé sur le runner). Pour le
+lancer sur le Pi : `CORVUS_REAL_SSH=127.0.0.1:22:<utilisateur>:<mot de passe> node --test test/real-ssh.test.js`.
+Le job `agent` (Rust, x86_64 + aarch64) s'active quand `agent/Cargo.toml` existe.
 
 ---
 
