@@ -401,3 +401,43 @@ describe('contrôle vocal : parseUtterance', async () => {
     assert.deepEqual(flat('Corrige le bug.', { shell: true }), ['corrige le bug']);
   });
 });
+
+describe('audit 2 : rotation du token et limiteur', () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-audit2-'));
+
+  test('une session créée avec l\'ancien token est invalide après rotation, même réécrite par le serveur', async () => {
+    const { Auth } = await import('../server/lib/auth.js');
+    const dir = tmp();
+    const oldAuth = new Auth({ dataDir: dir, token: 'cv_ancien_token_suffisamment_long_123456', sessionTtlDays: 1 });
+    const sid = oldAuth.createSession({ ua: 'test', ip: '127.0.0.1' });
+    assert.equal(oldAuth.validSession(sid), true);
+    // Le CLI révoque, puis le serveur encore lancé réécrit sessions.json avec l'ancienne session.
+    new Auth({ dataDir: dir, token: 'cv_nouveau_token_suffisamment_long_654321', sessionTtlDays: 1 }).revokeAll();
+    oldAuth.createSession({ ua: 'test', ip: '127.0.0.1' });
+    const restarted = new Auth({ dataDir: dir, token: 'cv_nouveau_token_suffisamment_long_654321', sessionTtlDays: 1 });
+    assert.equal(restarted.validSession(sid), false);
+    assert.equal(Object.keys(restarted.sessions.data.sessions).length, 0);
+  });
+
+  test('le coffre refuse d\'écraser un fichier re-chiffré par ailleurs', () => {
+    const dir = tmp();
+    const file = path.join(dir, 'secrets.enc.json');
+    const running = new Vault(file, { token: 'cv_token_a' });
+    running.set('h1', { password: 'x' });
+    const cli = new Vault(file, { token: 'cv_token_a' });
+    cli.rekey({ token: 'cv_token_b' });
+    assert.throws(() => running.set('h2', { password: 'y' }), (e) => e.code === 'VAULT_ROTATED');
+    assert.deepEqual(new Vault(file, { token: 'cv_token_b' }).get('h1'), { password: 'x' });
+  });
+
+  test('le limiteur élague aussi lors des échecs', () => {
+    const l = new FailureLimiter({ maxPerIp: 3, windowMs: 50 });
+    for (let i = 0; i < 3; i++) l.fail('1.2.3.4');
+    assert.ok(l.blockedFor('1.2.3.4') > 0);
+    const until = Date.now() + 60;
+    while (Date.now() < until) { /* attendre la fenêtre */ }
+    l.fail('5.6.7.8');
+    assert.equal(l.byIp.has('1.2.3.4'), false);
+    assert.equal(l.global.length, 1);
+  });
+});

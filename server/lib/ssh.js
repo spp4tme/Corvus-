@@ -7,6 +7,8 @@ import { logger } from './log.js';
 
 const { Client } = ssh2;
 const log = logger('ssh');
+// Erreurs typiques d'une connexion multiplexée morte : on la recrée une fois avant d'abandonner.
+const DEAD_CONN = /not connected|channel open failure|no response|closed/i;
 
 function mapError(err, ctx) {
   if (err instanceof HttpError) return err;
@@ -51,6 +53,9 @@ export function connect(cfg, { knownHosts, readyTimeout }) {
       client.end();
       reject(mapError(err, ctx));
     };
+    if (cfg.agentMissing) {
+      return reject(new HttpError(400, 'SSH_NO_AGENT', 'Authentification par agent SSH : aucun agent sur le serveur Corvus (SSH_AUTH_SOCK non défini)'));
+    }
     if (!cfg.password && !cfg.privateKey && !cfg.agent) {
       return reject(new HttpError(400, 'SSH_NO_SECRET', 'Aucun mot de passe ni clé enregistré pour cet hôte'));
     }
@@ -190,7 +195,7 @@ export class SshPool {
         return await runExec(conn.client, command, opts);
       } catch (err) {
         if (err instanceof HttpError) throw err;
-        if (attempt === 0 && /not connected|channel open failure|no response|closed/i.test(err.message)) {
+        if (attempt === 0 && DEAD_CONN.test(err.message)) {
           this.drop(hostId);
           continue;
         }
@@ -220,7 +225,7 @@ export class SshPool {
   }
 
   /** Session SFTP partagée par hôte. */
-  async sftp(hostId) {
+  async sftp(hostId, retry = true) {
     const conn = await this.get(hostId);
     conn.lastUsed = Date.now();
     if (!conn.sftpP) {
@@ -228,25 +233,47 @@ export class SshPool {
         conn.client.sftp((err, sftp) => {
           if (err) {
             conn.sftpP = null;
-            return reject(new HttpError(502, 'SFTP_UNAVAILABLE', `SFTP indisponible : ${err.message}`));
+            return reject(err);
           }
           sftp.on('close', () => { conn.sftpP = null; });
           resolve(sftp);
         });
       });
     }
-    return conn.sftpP;
+    try {
+      return await conn.sftpP;
+    } catch (err) {
+      if (retry && DEAD_CONN.test(err?.message || '')) {
+        this.drop(hostId);
+        return this.sftp(hostId, false);
+      }
+      throw new HttpError(502, 'SFTP_UNAVAILABLE', `SFTP indisponible : ${err?.message || err}`);
+    }
   }
 
   /** Ouvre un canal interactif avec PTY (shell, ou commande si fournie). */
   async openPty(hostId, { cols, rows, command }) {
-    const conn = await this.get(hostId);
     const pty = { term: 'xterm-256color', cols, rows };
-    const stream = await new Promise((resolve, reject) => {
-      const cb = (err, s) => (err ? reject(mapError(err, {})) : resolve(s));
-      if (command) conn.client.exec(command, { pty }, cb);
-      else conn.client.shell(pty, cb);
-    });
+    let conn;
+    let stream;
+    // Comme exec() : une connexion morte (réseau coupé, veille) est recréée une fois.
+    for (let attempt = 0; ; attempt++) {
+      conn = await this.get(hostId);
+      try {
+        stream = await new Promise((resolve, reject) => {
+          const cb = (err, s) => (err ? reject(err) : resolve(s));
+          if (command) conn.client.exec(command, { pty }, cb);
+          else conn.client.shell(pty, cb);
+        });
+        break;
+      } catch (err) {
+        if (attempt === 0 && DEAD_CONN.test(err?.message || '')) {
+          this.drop(hostId);
+          continue;
+        }
+        throw mapError(err, {});
+      }
+    }
     conn.channels++;
     stream.on('close', () => {
       conn.channels--;

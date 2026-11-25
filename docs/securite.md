@@ -30,6 +30,9 @@ vers le port 443 de la machine Corvus).
   après 10 échecs **par IP**. Le volume global d'échecs n'alourdit que le délai (4 s minimum) et ne
   bloque jamais un autre appareil : personne ne peut vous enfermer dehors.
 - Rotation : `npm run token:rotate` (re-chiffre les secrets, révoque toutes les sessions).
+  Chaque session est liée à l'empreinte du token qui l'a créée : la révocation tient même si le
+  serveur encore lancé réécrit `sessions.json` avant son redémarrage. Tant qu'il n'a pas redémarré,
+  le serveur refuse de modifier les secrets (le coffre a été re-chiffré) plutôt que de les écraser.
 
 ### API et WebSocket
 - Toutes les routes `/api/*` (sauf `health`, `auth/status`, `auth/login`) et `/ws/*` exigent

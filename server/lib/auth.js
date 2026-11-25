@@ -61,6 +61,8 @@ export class FailureLimiter {
   /** Enregistre un échec et retourne le délai de pénalité à appliquer (ms). */
   fail(ip) {
     const now = Date.now();
+    // Élagage ici aussi : les échecs Bearer (API, WebSocket) ne passent pas par blockedFor().
+    this._prune(now);
     const rec = this.byIp.get(ip) || { times: [] };
     rec.times.push(now);
     this.byIp.set(ip, rec);
@@ -76,6 +78,10 @@ export class FailureLimiter {
 export class Auth {
   constructor({ dataDir, token, sessionTtlDays }) {
     this.token = token;
+    // Empreinte du token : une session n'est valide que pour le token qui l'a créée. Ainsi
+    // `rotate-token` révoque vraiment tout, même si le serveur encore lancé réécrit sessions.json
+    // avant son redémarrage.
+    this.tokenTag = sha256(`session-tag:${token}`).toString('hex').slice(0, 16);
     this.ttlMs = sessionTtlDays * 86_400_000;
     this.sessions = new JsonStore(path.join(dataDir, 'sessions.json'), { sessions: {} });
     this.limiter = new FailureLimiter();
@@ -86,7 +92,8 @@ export class Auth {
     const now = Date.now();
     let changed = false;
     for (const [k, s] of Object.entries(this.sessions.data.sessions)) {
-      if (s.expires < now) { delete this.sessions.data.sessions[k]; changed = true; }
+      if (!s.tk) { s.tk = this.tokenTag; changed = true; } // sessions antérieures à l'empreinte
+      if (s.expires < now || s.tk !== this.tokenTag) { delete this.sessions.data.sessions[k]; changed = true; }
     }
     if (changed) this.sessions.save();
   }
@@ -97,6 +104,7 @@ export class Auth {
     this.sessions.data.sessions[key] = {
       created: Date.now(),
       expires: Date.now() + this.ttlMs,
+      tk: this.tokenTag,
       ua: String(meta.ua || '').slice(0, 160),
       ip: meta.ip,
     };
@@ -107,7 +115,7 @@ export class Auth {
   validSession(sid) {
     if (typeof sid !== 'string' || sid.length < 20 || sid.length > 100) return false;
     const s = this.sessions.data.sessions[sha256(sid).toString('hex')];
-    return !!s && s.expires > Date.now();
+    return !!s && s.expires > Date.now() && s.tk === this.tokenTag;
   }
 
   destroySession(sid) {

@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { readJson, writeJson } from './store.js';
+import { HttpError } from './validate.js';
 
 const AAD = Buffer.from('corvus-secrets-v1');
 const KDF = { N: 2 ** 15, r: 8, p: 1 };
@@ -65,7 +66,8 @@ export class Vault {
       this.salt = crypto.randomBytes(16);
     }
     this.key = deriveKey(material, this.salt);
-    if (existing.kdf.src !== this.source) this.save();
+    this.diskSalt = existing.kdf.salt;
+    if (existing.kdf.src !== this.source) this.save({ force: true });
   }
 
   /** Re-chiffre tout avec un nouveau matériau (rotation du token). */
@@ -73,15 +75,25 @@ export class Vault {
     this.source = passphrase ? 'passphrase' : 'token';
     this.salt = crypto.randomBytes(16);
     this.key = deriveKey(passphrase || token, this.salt);
-    this.save();
+    this.save({ force: true });
   }
 
-  save() {
+  save({ force = false } = {}) {
+    // Si le fichier a été re-chiffré par ailleurs (`npm run token:rotate` pendant que le serveur
+    // tourne), l'écraser avec l'ancienne clé rendrait tous les secrets indéchiffrables au redémarrage.
+    if (!force && this.diskSalt) {
+      const onDisk = readJson(this.file, null);
+      if (onDisk?.kdf?.salt && onDisk.kdf.salt !== this.diskSalt) {
+        throw new HttpError(409, 'VAULT_ROTATED', 'Le token ou la passphrase a été renouvelé : redémarrez Corvus avant de modifier des secrets.');
+      }
+    }
+    const salt = this.salt.toString('base64');
     writeJson(this.file, {
       v: 1,
-      kdf: { alg: 'scrypt', src: this.source, salt: this.salt.toString('base64'), ...KDF },
+      kdf: { alg: 'scrypt', src: this.source, salt, ...KDF },
       box: encrypt(this.key, this.secrets),
     });
+    this.diskSalt = salt;
   }
 
   get(id) {

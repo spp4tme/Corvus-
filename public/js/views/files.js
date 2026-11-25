@@ -17,6 +17,7 @@ export default {
   mount(el) {
     let hostId = state.activeHostId;
     let current = null; // { path, home, entries }
+    let loadSeq = 0;
     let showHidden = prefs.get('fsHidden', false);
 
     const crumbs = h('nav', { class: 'crumbs', 'aria-label': 'Chemin' });
@@ -26,7 +27,8 @@ export default {
     const hiddenToggle = checkbox('Fichiers cachés', { checked: showHidden });
     hiddenToggle.input.addEventListener('change', () => { showHidden = hiddenToggle.input.checked; prefs.set('fsHidden', showHidden); renderList(); });
 
-    const picker = hostPicker((id) => { hostId = id; load(prefs.get(`fsPath.${id}`, '~')); });
+    // `current` est remis à zéro : un envoi ne doit jamais viser le dossier de l'hôte précédent.
+    const picker = hostPicker((id) => { hostId = id; current = null; load(prefs.get(`fsPath.${id}`, '~')); });
     const actions = h('div', { class: 'toolbar' },
       button({ label: 'Envoyer', icon: 'upload', variant: 'primary', onClick: () => fileInput.click() }),
       button({ label: 'Nouveau dossier', icon: 'folderPlus', onClick: newFolder }),
@@ -60,12 +62,18 @@ export default {
       el.querySelector('.fs-empty')?.remove();
       body.hidden = false;
       replace(list, loadingState('Lecture du dossier…'));
+      // Navigation rapide (ou changement d'hôte) : seule la dernière réponse est affichée.
+      const mine = ++loadSeq;
+      const forHost = hostId;
       try {
-        current = await get(url('list', { path }));
-        prefs.set(`fsPath.${hostId}`, current.path);
+        const data = await get(url('list', { path }));
+        if (mine !== loadSeq) return;
+        current = data;
+        prefs.set(`fsPath.${forHost}`, current.path);
         renderCrumbs();
         renderList();
       } catch (err) {
+        if (mine !== loadSeq) return;
         if (err.status === 404 && path !== '~') { toast(`${path} introuvable — retour au dossier personnel`, 'warn'); return load('~'); }
         replace(list, errorState(err, () => load(path)));
       }
@@ -167,8 +175,14 @@ export default {
       const area = textarea({ class: 'textarea editor', 'aria-label': `Contenu de ${p}`, wrap: 'off' });
       const status = h('span', { class: 'dim' });
       const saveBtn = button({ label: 'Enregistrer', icon: 'save', variant: 'primary', disabled: true });
+      let dirty = false;
       const d = openDialog({
         title: p.split('/').pop(), wide: true,
+        beforeClose: () => !dirty || confirmDialog({
+          title: 'Modifications non enregistrées',
+          message: `Fermer « ${p.split('/').pop()} » sans enregistrer ? Vos modifications seront perdues.`,
+          confirmLabel: 'Fermer sans enregistrer', danger: true,
+        }),
         body: h('div', { class: 'editor-wrap' }, loadingState('Ouverture…')),
         actions: [status, h('span', { class: 'grow' }), button({ label: 'Télécharger', icon: 'download', onClick: () => download(p) }), saveBtn],
       });
@@ -182,7 +196,6 @@ export default {
       area.value = file.content;
       replace(d.body, h('div', { class: 'editor-wrap' }, area));
       status.textContent = `${formatBytes(file.size)} · enregistré`;
-      let dirty = false;
       area.addEventListener('input', () => {
         if (!dirty) { dirty = true; saveBtn.disabled = false; status.textContent = 'Modifications non enregistrées'; }
       });
@@ -246,11 +259,12 @@ export default {
     async function sendFiles(files) {
       if (!current) return;
       const dir = current.path;
+      const hid = hostId; // figé : changer d'hôte pendant l'envoi ne doit pas rediriger les fichiers restants
       for (const f of files) {
         const bar = h('progress', { max: '1', value: '0', 'aria-label': `Envoi de ${f.name}` });
         const line = h('div', { class: 'upload-line' }, h('span', { class: 'ellipsis grow' }, f.name), bar);
         progress.appendChild(line);
-        const send = (overwrite) => upload(url('upload', { dir, name: f.name, overwrite: overwrite ? 1 : undefined }), f, (x) => { bar.value = x; });
+        const send = (overwrite) => upload(`/api/hosts/${hid}/fs/upload?${qs({ dir, name: f.name, overwrite: overwrite ? 1 : undefined })}`, f, (x) => { bar.value = x; });
         try {
           try {
             await send(false);
@@ -267,10 +281,10 @@ export default {
           line.remove();
         }
       }
-      if (current?.path === dir) load(dir);
+      if (hostId === hid && current?.path === dir) load(dir);
     }
 
     load(hostId ? prefs.get(`fsPath.${hostId}`, '~') : undefined);
-    return () => picker.destroy();
+    return () => { loadSeq++; picker.destroy(); };
   },
 };

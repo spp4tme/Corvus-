@@ -134,6 +134,7 @@ export class HostRegistry {
       if (s.password) cfg.password = s.password;
     } else if (h.authType === 'agent') {
       cfg.agent = process.env.SSH_AUTH_SOCK;
+      if (!cfg.agent) cfg.agentMissing = true;
     } else {
       cfg.password = s.password;
       cfg.tryKeyboard = true;

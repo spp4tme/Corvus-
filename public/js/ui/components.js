@@ -82,7 +82,7 @@ export function segmented(items, value, onChange, { label } = {}) {
  * Ouvre un <dialog> modal natif.
  * @returns {{el: HTMLDialogElement, close: Function, closed: Promise<any>, body: HTMLElement, foot: HTMLElement}}
  */
-export function openDialog({ title, body, actions = [], wide = false, onClose }) {
+export function openDialog({ title, body, actions = [], wide = false, onClose, beforeClose }) {
   let resolveClosed;
   const closed = new Promise((r) => { resolveClosed = r; });
   const bodyEl = h('div', { class: 'dlg-body' }, body);
@@ -91,11 +91,22 @@ export function openDialog({ title, body, actions = [], wide = false, onClose })
   const dlg = h('dialog', { class: `dlg${wide ? ' dlg-wide' : ''}`, 'aria-labelledby': titleId },
     h('div', { class: 'dlg-head' },
       h('h2', { id: titleId, class: 'ellipsis' }, title),
-      button({ label: 'Fermer', icon: 'close', iconOnly: true, variant: 'ghost', onClick: () => close() })),
+      button({ label: 'Fermer', icon: 'close', iconOnly: true, variant: 'ghost', onClick: () => dismiss() })),
     bodyEl,
     actions.length ? foot : null);
   let result;
   const close = (value) => { result = value; if (dlg.open) dlg.close(); };
+  // Fermeture à l'initiative de l'utilisateur (bouton ×, Échap) : `beforeClose` peut la refuser
+  // (ex. modifications non enregistrées).
+  const dismiss = async () => {
+    if (beforeClose && !(await beforeClose())) return;
+    close();
+  };
+  dlg.addEventListener('cancel', (e) => {
+    if (!beforeClose) return;
+    e.preventDefault();
+    dismiss();
+  });
   dlg.addEventListener('close', () => {
     dlg.remove();
     onClose?.(result);

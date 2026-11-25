@@ -219,9 +219,10 @@ export function editHost(host) {
       f.setError(empty ? msg : null);
       if (empty) ok = false;
     }
-    const port = Number(fPort.querySelector('input').value || 22);
-    fPort.setError(Number.isInteger(port) && port > 0 && port < 65536 ? null : 'Port entre 1 et 65535');
-    return ok && !fPort.dataset.invalid;
+    const port = Number(fPort.querySelector('input').value.trim() || 22);
+    const portOk = Number.isInteger(port) && port > 0 && port < 65536;
+    fPort.setError(portOk ? null : 'Port entre 1 et 65535');
+    return ok && portOk;
   };
 
   const testBtn = button({
@@ -315,7 +316,9 @@ async function importTailscale() {
     const username = user.value.trim();
     if (!username) { fUser.setError('Indiquez l\'utilisateur SSH'); return; }
     prefs.set('importUser', username);
+    fUser.setError(null);
     const chosen = rows.filter((r) => r.cb.checked && !r.cb.disabled);
+    if (!chosen.length) { toast('Cochez au moins une machine à importer.', 'warn'); return; }
     try {
       await busy(importBtn, async () => {
         for (const r of chosen) {
@@ -328,6 +331,10 @@ async function importTailscale() {
       await state.refreshHosts();
       toast(`${chosen.length} hôte(s) importé(s) — ajoutez leurs secrets avant de vous connecter.`, 'ok', 6000);
       d.close();
-    } catch (err) { toastError(err); }
+    } catch (err) {
+      // Les hôtes importés avant l'erreur sont bien enregistrés : on les affiche.
+      state.refreshHosts().catch(() => {});
+      toastError(err);
+    }
   });
 }

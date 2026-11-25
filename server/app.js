@@ -95,6 +95,11 @@ export function createCorvus(overrides = {}) {
     const kind = auth.identify(req);
     if (!kind) {
       if (req.headers.authorization) {
+        const wait = auth.limiter.blockedFor(req.ip);
+        if (wait > 0) {
+          res.set('Retry-After', String(Math.ceil(wait / 1000)));
+          return next(new HttpError(429, 'RATE_LIMITED', 'Trop de tentatives d\'authentification'));
+        }
         const penalty = auth.limiter.fail(req.ip);
         return setTimeout(() => next(new HttpError(401, 'UNAUTHENTICATED', 'Authentification requise')), penalty);
       }
@@ -180,7 +185,10 @@ export function createCorvus(overrides = {}) {
 
     const kind = auth.identify(req);
     if (!kind) {
-      if (req.headers.authorization) auth.limiter.fail(ip);
+      if (req.headers.authorization) {
+        if (auth.limiter.blockedFor(ip) > 0) return reject(429, 'Too Many Requests');
+        auth.limiter.fail(ip);
+      }
       return reject(401, 'Unauthorized');
     }
     // Origin check : obligatoire pour un navigateur (cookie). Un client Bearer peut ne pas en envoyer.

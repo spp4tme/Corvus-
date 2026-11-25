@@ -99,18 +99,33 @@ async function route() {
   }
 }
 
+let viewportTracked = false;
+let loginShown = false;
+
 async function startApp() {
+  loginShown = false;
   shell = buildShell();
-  trackViewport();
+  if (!viewportTracked) { trackViewport(); viewportTracked = true; }
   try { await state.refreshHosts(); } catch { /* la vue affichera l'erreur */ }
+  window.removeEventListener('hashchange', route);
   window.addEventListener('hashchange', route);
   await route();
 }
 
+function showLogin(opts) {
+  loginShown = true;
+  renderLogin(root, boot, opts);
+}
+
 async function boot() {
   setUnauthorizedHandler(() => {
+    // Plusieurs requêtes peuvent échouer en même temps (ou une vue continuer à interroger l'API) :
+    // l'écran de connexion n'est affiché qu'une fois, sinon la saisie en cours serait effacée.
+    if (loginShown) return;
+    if (shell?.cleanup) { try { shell.cleanup(); } catch (e) { console.error(e); } }
     shell = null;
-    renderLogin(root, boot);
+    window.removeEventListener('hashchange', route);
+    showLogin();
   });
   let status;
   try {
@@ -119,7 +134,7 @@ async function boot() {
     status = { authenticated: false, offline: true };
   }
   if (!status.authenticated) {
-    renderLogin(root, boot, { offline: status.offline });
+    showLogin({ offline: status.offline });
     return;
   }
   await startApp();

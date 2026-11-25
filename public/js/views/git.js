@@ -37,6 +37,7 @@ export default {
   mount(el) {
     let hostId = state.activeHostId;
     let repo = null;
+    let seq = 0; // seule la réponse la plus récente est affichée (changement d'hôte/dépôt/onglet rapide)
     let tab = prefs.get('gitTab', 'status');
     const repoSlot = h('div', { class: 'row grow' });
     const tabs = segmented([
@@ -50,6 +51,7 @@ export default {
     const api = (action) => `/api/hosts/${hostId}/git/${action}`;
 
     function renderRepos() {
+      seq++;
       clear(repoSlot);
       if (!hostId) {
         tabs.hidden = true;
@@ -127,11 +129,13 @@ export default {
 
     // ---------- Statut ----------
     async function renderStatus(prefetched) {
+      const mine = ++seq;
       if (!prefetched) replace(content, loadingState('git status…'));
       let st;
       try {
         st = prefetched || await get(`${api('status')}?${qs({ repo })}`);
-      } catch (err) { return replace(content, errorState(err, renderStatus)); }
+      } catch (err) { return mine === seq && replace(content, errorState(err, () => renderStatus())); }
+      if (mine !== seq) return;
 
       const remoteBtn = (op, label, ic) => {
         const b = button({ label, icon: ic, onClick: async () => {
@@ -219,7 +223,9 @@ export default {
     async function renderBranches() {
       replace(content, loadingState('Branches…'));
       let br;
-      try { br = await get(`${api('branches')}?${qs({ repo })}`); } catch (err) { return replace(content, errorState(err, renderBranches)); }
+      const mine = ++seq;
+      try { br = await get(`${api('branches')}?${qs({ repo })}`); } catch (err) { return mine === seq && replace(content, errorState(err, renderBranches)); }
+      if (mine !== seq) return;
       const localNames = new Set(br.local.map((b) => b.name));
       const row = (b, remote) => h('li', null, h('div', { class: 'list-item' },
         icon('branch', { size: 20 }),
@@ -260,6 +266,7 @@ export default {
 
     // ---------- Historique ----------
     async function renderLog() {
+      const mine = ++seq;
       replace(content, loadingState('git log…'));
       const ul = h('ul', { class: 'list' });
       let skip = 0;
@@ -280,10 +287,11 @@ export default {
       };
       try {
         const first = await loadPage();
+        if (mine !== seq) return;
         if (!first.commits.length) return replace(content, emptyState({ icon: 'history', title: 'Aucun commit' }));
         replace(content, ul, more);
         more.addEventListener('click', () => busy(more, loadPage).catch(toastError));
-      } catch (err) { replace(content, errorState(err, renderLog)); }
+      } catch (err) { if (mine === seq) replace(content, errorState(err, renderLog)); }
     }
 
     async function showCommit(cm) {
@@ -296,6 +304,6 @@ export default {
     }
 
     renderRepos();
-    return () => picker.destroy();
+    return () => { seq++; picker.destroy(); };
   },
 };

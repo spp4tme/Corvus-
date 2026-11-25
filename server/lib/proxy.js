@@ -90,6 +90,8 @@ export class ProxyService {
   async open(id) {
     const svc = this.get(id);
     await this.checkTarget(svc.url);
+    const now = Date.now();
+    for (const [k, c] of this.caps) if (c.expires < now) this.caps.delete(k); // liens expirés jamais rouverts
     const cap = crypto.randomBytes(18).toString('base64url');
     this.caps.set(cap, { serviceId: id, expires: Date.now() + CAP_TTL_MS });
     this.journal.add({ type: 'proxy', event: 'open', detail: `${svc.name} (${svc.url})` });

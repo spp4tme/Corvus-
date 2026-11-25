@@ -12,6 +12,7 @@ const tabs = [];
 let active = null;
 let ui = null;
 const mods = { ctrl: false, alt: false };
+let globalsBound = false;
 
 export const termSettings = {
   get fontSize() { return prefs.get('termFontSize', window.matchMedia('(max-width: 599px)').matches ? 13 : 14); },
@@ -151,6 +152,9 @@ class Tab {
 
   scheduleRetry() {
     this.attempts++;
+    // Un refus d'authentification (session expirée) ressemble à une coupure réseau côté WebSocket :
+    // une requête API de temps en temps fait apparaître l'écran de connexion si besoin.
+    if (this.attempts % 4 === 0) get('/api/terminals').catch(() => {});
     const delay = Math.min(500 * 2 ** (this.attempts - 1), 8000);
     this.setStatus('reconnexion', `Reconnexion dans ${Math.round(delay / 1000) || 1} s…`);
     this.retryTimer = setTimeout(() => this.connect(), delay);
@@ -484,6 +488,13 @@ export default {
       el.appendChild(emptyState({ icon: 'warning', title: 'xterm.js non chargé', text: 'Rechargez la page.' }));
       return;
     }
+    // Remontage après une reconnexion (session expirée) : l'ancien DOM a disparu. Les sessions
+    // serveur restent vivantes et sont rattachées ci-dessous.
+    voice?.stop();
+    for (const t of tabs.splice(0)) t.dispose(false);
+    active = null;
+    for (const k of Object.keys(modButtons)) delete modButtons[k];
+    claudeKeys.length = 0;
     const tabsEl = h('div', { class: 'term-tabs', role: 'tablist', 'aria-label': 'Terminaux ouverts' });
     const stage = h('div', { class: 'term-stage' });
     const empty = emptyState({
@@ -504,11 +515,14 @@ export default {
     renderEmpty();
 
     new ResizeObserver(() => active?.fitSoon()).observe(stage);
-    window.addEventListener('corvus:viewport', () => active?.fitSoon());
-    window.addEventListener('online', () => tabs.forEach((t) => t.nudge()));
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') tabs.forEach((t) => t.nudge());
-    });
+    if (!globalsBound) {
+      globalsBound = true;
+      window.addEventListener('corvus:viewport', () => active?.fitSoon());
+      window.addEventListener('online', () => tabs.forEach((t) => t.nudge()));
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') tabs.forEach((t) => t.nudge());
+      });
+    }
 
     // Restaurer les sessions encore vivantes côté serveur (rechargement de page).
     get('/api/terminals').then(({ terminals }) => {
