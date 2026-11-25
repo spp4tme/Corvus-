@@ -19,7 +19,7 @@ pub struct Context<'a> {
 }
 
 pub fn names(allow_preview: bool) -> Vec<&'static str> {
-    let mut v = vec!["file.restore", "file.remove"];
+    let mut v = vec!["file.restore", "file.remove", "xray.live", "proc.freeze", "proc.thaw", "proc.kill"];
     if allow_preview && crate::preview::available() { v.extend(["preview.run", "preview.apply"]); }
     v
 }
@@ -44,6 +44,13 @@ pub fn run(ctx: &Context, name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "file.restore" => file_restore(ctx, args),
         "file.remove" => file_remove(ctx, args),
+        "xray.live" => Ok(xray_live()),
+        "proc.freeze" | "proc.thaw" | "proc.kill" => {
+            let pid = args["pid"].as_u64().ok_or("pid manquant")? as u32;
+            let start = args["start"].as_u64().ok_or("start manquant (identifiant du processus)")?;
+            let sig = match name { "proc.freeze" => libc::SIGSTOP, "proc.thaw" => libc::SIGCONT, _ => libc::SIGKILL };
+            crate::xray::signal(pid, start, sig)
+        }
         "preview.run" | "preview.apply" if !(ctx.allow_preview && crate::preview::available()) => Err("prévisualisation désactivée sur cet agent (--allow-preview, agent root)".into()),
         "preview.run" => crate::preview::run(ctx.agent_dir, args),
         "preview.apply" => crate::preview::apply(ctx.agent_dir, args),
@@ -52,6 +59,26 @@ pub fn run(ctx: &Context, name: &str, args: &Value) -> Result<Value, String> {
 }
 
 /// Supprime un fichier créé après l'instant visé (ne touche ni aux dossiers ni aux liens).
+/// Instantané des processus (avec lignée) et des connexions, pour l'écran Radiographie.
+fn xray_live() -> Value {
+    use crate::xray::*;
+    let all = read_all();
+    let conns = read_conns();
+    let inodes = conns.iter().map(|c| c.inode).collect();
+    let owners = socket_owners(&all, &inodes);
+    let mut procs: Vec<&Proc> = all.values().filter(|p| !p.exe.is_empty()).collect();
+    procs.sort_by_key(|p| p.pid);
+    let list: Vec<Value> = procs.iter().take(800).map(|p| json!({
+        "pid": p.pid, "ppid": p.ppid, "uid": p.uid, "start": p.start, "comm": p.comm, "exe": p.exe, "cmd": p.cmd,
+        "ssh": ssh_session(&all, p.pid).map(|(u, _)| u),
+    })).collect();
+    let cs: Vec<Value> = conns.iter().take(500).map(|c| {
+        let o = owners.get(&c.inode).and_then(|pid| all.get(pid));
+        json!({ "local": c.local, "remote": c.remote, "uid": c.uid, "pid": o.map(|p| p.pid), "exe": o.map(|p| p.exe.clone()) })
+    }).collect();
+    json!({ "processes": list, "connections": cs })
+}
+
 fn file_remove(ctx: &Context, a: &Value) -> Result<Value, String> {
     let target = check_path(ctx, a["path"].as_str().ok_or("path manquant")?)?;
     let md = fs::symlink_metadata(&target).map_err(|_| "le fichier n'existe déjà plus".to_string())?;

@@ -17,6 +17,7 @@ const ROUTES = {
   admin: { title: 'Admin', icon: 'settings', load: () => import('./views/admin.js'), secondary: true },
   agents: { title: 'Agents', icon: 'server', load: () => import('./views/agents.js'), secondary: true },
   rewind: { title: 'Rembobiner', icon: 'history', load: () => import('./views/rewind.js'), secondary: true },
+  xray: { title: 'Radiographie', icon: 'activity', load: () => import('./views/xray.js'), secondary: true },
   recordings: { title: 'Enregistrements', icon: 'history', load: () => import('./views/recordings.js'), secondary: true },
   proxy: { title: 'Services web', icon: 'link', load: () => import('./views/proxy.js'), secondary: true },
   settings: { title: 'Réglages', icon: 'settings', load: () => import('./views/settings.js'), secondary: true },

@@ -15,6 +15,7 @@ import { terminalRoutes } from './terminals.js';
 import { agentRoutes } from './agents.js';
 import { rewindRoutes } from './rewind.js';
 import { previewRoutes } from './preview.js';
+import { xrayRoutes } from './xray.js';
 import { Rewind } from '../lib/rewind.js';
 import { productivityRoutes } from './productivity.js';
 import { hostAdminRoutes } from './hostadmin.js';
@@ -62,6 +63,7 @@ export function extraRoutes(ctx) {
   ctx.rewind = new Rewind(ctx);
   r.use(rewindRoutes(ctx));
   r.use(previewRoutes(ctx));
+  r.use(xrayRoutes(ctx));
   r.use(productivityRoutes(ctx));
   r.use(hostAdminRoutes(ctx));
   return r;

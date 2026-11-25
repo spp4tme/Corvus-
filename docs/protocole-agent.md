@@ -99,6 +99,17 @@ d'une prévisualisation est un hexadécimal de 16 caractères (aucun chemin) ; l
 après 1 h ; `apply` refuse tout chemin sous `/proc`, `/sys`, `/dev`, `/run`, au dossier de l'agent, ou non
 normalisé, et vérifie l'empreinte de chaque fichier d'origine avant d'écrire quoi que ce soit.
 
+## 5 ter. Radiographie (étape 7.1)
+Lecture de /proc toutes les 2 s (processus) et 6 s (connexions TCP établies non locales). Événements :
+`proc.snapshot` (premier passage), `proc.start {pid, ppid, uid, start, exe, comm, cmd, lineage, via}`,
+`proc.exit`, `proc.burst`, `conn.snapshot|open|close`. `lineage` = ancêtres (jusqu'à 8), `via` = session SSH
+d'origine (« sshd: utilisateur@pts/0 » parmi les ancêtres). `(pid, start)` — `start` = « starttime » de
+/proc — identifie un processus sans ambiguïté malgré la réutilisation des pids.
+Actions : `xray.live` (lecture), `proc.freeze` (SIGSTOP), `proc.thaw` (SIGCONT), `proc.kill` (SIGKILL).
+L'agent refuse : pid ≤ 1, un `start` qui ne correspond plus (pid réutilisé), un thread noyau, les processus
+protégés (`systemd`, `sshd`, `tailscaled`, `corvus-agent`…) et l'agent lui-même ou ses ancêtres.
+**Limite** : sondage, pas eBPF — un processus vivant moins de 2 s n'est pas vu.
+
 ## 6. Limites
 - Balayage : pas de temps réel au-delà de 10 s ; fichiers > 512 Ko suivis sans contenu (non restaurables).
 - Si l'agent est hors ligne pendant qu'un fichier change deux fois, seule la dernière version est connue.

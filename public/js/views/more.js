@@ -7,6 +7,7 @@ const ITEMS = [
   { href: '#/admin', icon: 'settings', title: 'Admin', text: 'Services, journal système, pare-feu, mises à jour' },
   { href: '#/agents', icon: 'server', title: 'Agents', text: 'Installer et surveiller les agents Corvus' },
   { href: '#/rewind', icon: 'history', title: 'Rembobiner', text: 'Revenir à un état antérieur des fichiers (agent requis)' },
+  { href: '#/xray', icon: 'activity', title: 'Radiographie', text: 'Processus, connexions, lignée des commandes (agent requis)' },
   { href: '#/journal', icon: 'journal', title: 'Journal', text: 'Historique des connexions' },
   { href: '#/recordings', icon: 'history', title: 'Enregistrements', text: 'Revoir les sessions de terminal' },
   { href: '#/proxy', icon: 'link', title: 'Services web', text: 'Ouvrir un service privé du tailnet' },

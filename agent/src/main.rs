@@ -15,6 +15,7 @@ mod protocol;
 mod state;
 mod sys;
 mod watch;
+mod xray;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use buffer::Buffer;
@@ -73,12 +74,15 @@ struct Collector {
     agent_dir: PathBuf,
     allow_preview: bool,
     state: state::State,
+    xray: xray::Xray,
     watcher: watch::Watcher,
     scan_every: Duration,
     next_scan: Instant,
     next_ports: Instant,
     next_services: Instant,
     next_pkgs: Instant,
+    next_xray: Instant,
+    next_conns: Instant,
 }
 
 impl Collector {
@@ -103,6 +107,15 @@ impl Collector {
             }
         }
         let push = |events: Vec<sys::Event>| { for e in events { let _ = buffer.push(ts, e.kind, &e.body); } };
+        if now >= self.next_xray {
+            self.next_xray = now + Duration::from_secs(2);
+            let all = xray::read_all();
+            for e in self.xray.sample_procs(&all) { let _ = buffer.push(ts, e.kind, &e.body); }
+            if now >= self.next_conns {
+                self.next_conns = now + Duration::from_secs(6);
+                for e in self.xray.sample_conns(&all) { let _ = buffer.push(ts, e.kind, &e.body); }
+            }
+        }
         if now >= self.next_ports { self.next_ports = now + Duration::from_secs(10); push(sys::check_ports(&self.state)); }
         if now >= self.next_services { self.next_services = now + Duration::from_secs(60); push(sys::check_services(&self.state)); }
         if now >= self.next_pkgs { self.next_pkgs = now + Duration::from_secs(30); push(sys::check_packages(&self.state)); }
@@ -164,9 +177,10 @@ fn run(args: &[String]) -> Result<(), String> {
         agent_dir: dir.clone(),
         allow_preview: args.iter().any(|a| a == "--allow-preview"),
         state: state::State::open(&dir.join("state.db")).map_err(|e| format!("état : {e}"))?,
+        xray: xray::Xray::default(),
         watcher: watch::Watcher { roots: roots.clone(), pending_dir: dir.join("pending") },
         scan_every: Duration::from_secs(opt(args, "--scan-interval").and_then(|v| v.parse().ok()).unwrap_or(10).max(1)),
-        next_scan: now, next_ports: now, next_services: now, next_pkgs: now,
+        next_scan: now, next_ports: now, next_services: now, next_pkgs: now, next_xray: now, next_conns: now,
     };
     buffer.push(protocol::now_ms() as i64, "agent.start", &json!({ "version": VERSION, "watch": roots })).map_err(|e| e.to_string())?;
     eprintln!("surveillance : {roots:?}");
