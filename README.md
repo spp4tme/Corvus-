@@ -53,6 +53,9 @@ tiers.
 | **Journal** | Journal d'audit **infalsifiable** (chaîné par SHA-256, vérifiable) : connexions, terminaux, SFTP, git, Docker, comptes, sauvegardes, avec le compte et l'IP. |
 | **Enregistrements** | Chaque session de terminal est enregistrée (asciicast, **sortie seulement**, chiffrée) et se relit comme une vidéo : lecture / pause, vitesse ×0,5 à ×8, saut des pauses, barre de progression, **recherche de texte**. |
 | **Partage en direct** | Le propriétaire d'un terminal l'ouvre à un autre compte en **spectateur** (sans clavier) ou **co-pilote**, et retire l'accès quand il veut. |
+| **Commandes** | **Snippets** (par hôte ou globaux), **exécution sur plusieurs hôtes** avec résultats côte à côte, **routines** détectées dans l'historique → bouton en un clic. |
+| **Barre de commande** | Sous le terminal : suggestions **sans IA** (historique fréquence × récence, chemins via SFTP, commande suivante par n-grammes), **analyse des commandes risquées** avant envoi, mode **« annulable »** (Ctrl+Z du terminal : fichiers sauvegardés avant, restaurés en un bouton). |
+| **Admin** | Façon Cockpit, par hôte : services systemd (état, démarrer / arrêter / redémarrer), **journal en direct** filtrable, pare-feu (ufw en lecture/écriture, nftables en lecture), utilisateurs, **mises à jour en attente**, règle **sudoers limitée** générée. |
 | **Comptes** | Comptes nominatifs, **TOTP obligatoire**, **passkeys** (WebAuthn) en option, rôles administrateur / opérateur / lecture seule, droits par hôte ou groupe, jetons d'API. |
 | **Stockage** | Base SQLite (option : SSD externe), rétention automatique, **sauvegarde / restauration chiffrées en un bouton**, alerte d'espace disque. |
 | **Services web** | Ouvre une interface web privée du tailnet via un proxy isolé (bac à sable). |
@@ -395,6 +398,43 @@ Résumé (détails et procédures dans [docs/securite.md](docs/securite.md)) :
 - La page ne bouge pas pendant le geste (`touch-action: none` dans la zone du terminal).
 - **Sélection de texte** : avec `mouse on`, tmux gère la souris. Sur ordinateur, Maj + glisser
   sélectionne comme avant ; la copie depuis tmux passe par OSC 52 (presse-papiers).
+
+## Barre de commande, Ctrl+Z du terminal et administration
+
+**Barre de commande** (sous le terminal, désactivable dans les Réglages) : tapez la commande, elle
+est **analysée par des règles** avant d'être envoyée au shell. Commande sans risque : envoyée
+directement. Commande à risque (`rm`, `mv`, `sed -i`, `chmod -R`, `> fichier`, écritures dans
+`/etc`, `systemctl stop`, `git push --force`, `curl | sh`…) : les raisons s'affichent, puis :
+
+- **Exécuter avec annulation** : les fichiers visés sont copiés (chiffrés) avant ; le bouton
+  **« Annuler : … »** les remet exactement en place (contenu, droits, date) et retire ceux que la
+  commande a créés. Conservation : 30 jours.
+- **Exécuter quand même** / **Annuler**.
+
+Limites, affichées à chaque fois : seuls les fichiers **déductibles des arguments** sont
+sauvegardés (pas ceux modifiés par un script) ; pas de `sudo` (fichiers root) ni de `$( … )` ;
+200 Mo / 2 000 fichiers au plus ; réseau, services, paquets, bases de données et processus ne
+s'annulent jamais. La **prévisualisation** en bac à sable (OverlayFS) arrivera avec l'agent.
+
+Pour les chemins relatifs, Corvus doit connaître le dossier courant du shell : il le lit dans la
+séquence **OSC 7** (émise par zsh/fish avec la plupart des thèmes). Pour bash, ajoutez à `~/.bashrc` :
+
+```bash
+PROMPT_COMMAND='printf "\033]7;file://%s%s\033\\" "$HOSTNAME" "$PWD"'${PROMPT_COMMAND:+;$PROMPT_COMMAND}
+```
+
+Sans OSC 7, le mode annulable n'est proposé que pour des chemins absolus ou en `~/`.
+
+**Suggestions** (sans IA) : historique de l'hôte classé par fréquence × récence, complétion de
+chemins par SFTP, et « commande suivante » apprise sur vos propres enchaînements (n-grammes).
+*Commandes → Routines* importe `~/.bash_history` / `~/.zsh_history` et repère les suites de
+commandes répétées pour en faire un bouton.
+
+**Admin** : les actions root passent par `sudo -n` (jamais de mot de passe stocké). L'onglet
+*Sudo* génère une règle **limitée** aux actions de Corvus (pas de shell, pas de `journalctl`/`less`
+qui permettraient d'en sortir), à installer avec `sudo visudo -cf` après relecture. Garde-fous :
+Corvus refuse de bloquer son propre port SSH ou de verrouiller le compte SSH qu'il utilise. Les
+mises à jour s'installent **dans un terminal** (commande tapée, jamais validée à votre place).
 
 ## Claude Code
 

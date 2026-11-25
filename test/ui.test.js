@@ -387,3 +387,38 @@ test('mobile 375px : page Claude Code (navigation, session tmux, reprise, arrêt
     await sshd2.close();
   }
 });
+
+test('mobile 375px : barre de commande (règles de risque) et vues Commandes / Admin', async (t) => {
+  if (!browser) return t.skip('aucun navigateur disponible');
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(env.base);
+  await uiLogin(page);
+  await page.getByRole('heading', { name: 'Pi du salon' }).waitFor();
+  await page.goto(`${env.base}/#/terminal`);
+  await page.waitForFunction(() => document.querySelectorAll('.term-tab').length >= 1);
+  const bar = page.getByLabel('Barre de commande');
+  await bar.fill('rm -rf dossier-ui');
+  await bar.press('Enter');
+  await page.getByRole('heading', { name: 'Commande à risque' }).waitFor();
+  await page.getByText('dangereuse').waitFor();
+  await auditLayout(page, 'barre de commande');
+  await page.screenshot({ path: path.join(OUT, 'mobile-11-risque.png') });
+  await page.getByRole('button', { name: 'Annuler', exact: true }).click();
+  await page.goto(`${env.base}/#/commands`);
+  await page.getByRole('tab', { name: 'Multi-hôtes' }).click();
+  await page.getByLabel('Commande', { exact: true }).fill('echo depuis-ui');
+  await page.locator('.card label.check', { hasText: 'Pi du salon' }).click();
+  await page.getByRole('button', { name: 'Exécuter' }).click();
+  await page.locator('.exec-out', { hasText: 'depuis-ui' }).waitFor();
+  await auditLayout(page, 'multi-hôtes');
+  await page.goto(`${env.base}/#/admin`);
+  await page.getByLabel('Hôte').selectOption({ label: 'Pi du salon' });
+  await page.getByRole('tab', { name: 'Sudo' }).click();
+  await page.getByText(/sudo -n|Aucun outil/).first().waitFor();
+  await auditLayout(page, 'admin');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});

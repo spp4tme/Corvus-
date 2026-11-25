@@ -7,6 +7,7 @@ import { button, openDialog, emptyState, toast, badge } from '../ui/components.j
 import { state, sortedHosts } from '../state.js';
 import { terminalTheme } from '../terminal-themes.js';
 import { parseUtterance, createVoice, voiceSupported } from '../voice.js';
+import { createCommandBar } from '../cmdbar.js';
 
 const tabs = [];
 let active = null;
@@ -78,6 +79,12 @@ class Tab {
       } catch { /* données invalides */ }
       return true;
     });
+    // OSC 7 : le shell annonce son dossier courant (file://hôte/chemin) → historique par dossier
+    // et mode « annulable » fiable pour les chemins relatifs.
+    this.term.parser.registerOscHandler(7, (data) => {
+      try { this.cwd = decodeURIComponent(new URL(data).pathname) || null; } catch { /* URL invalide */ }
+      return true;
+    });
     this.term.onData((d) => this.sendInput(applyModifiers(d)));
     this.term.onBinary((d) => this.sendBinary(d));
     this.term.onTitleChange((t) => { if (t) { this.remoteTitle = t.slice(0, 60); renderTabs(); } });
@@ -137,6 +144,12 @@ class Tab {
         this.attempts = 0;
         this.setStatus('ok');
         this.fitSoon(true);
+        // Commande proposée par une autre vue (ex. mises à jour) : tapée, JAMAIS validée.
+        if (this.pendingType) {
+          const text = this.pendingType;
+          this.pendingType = null;
+          setTimeout(() => this.sendInput(text), 400);
+        }
       } else if (msg.t === 'guest') {
         toast(`${msg.user} ${msg.mode === 'control' ? 'co-pilote' : 'regarde'} ce terminal`, 'info', 5000);
       } else if (msg.t === 'exit') {
@@ -561,7 +574,11 @@ export default {
     voicePill.addEventListener('click', () => voice?.stop());
     stage.appendChild(voicePill);
     ui = { tabs: tabsEl, stage, keybar, empty };
-    el.append(h('div', { class: 'term-view' }, tabsEl, stage, keybar));
+    // Barre de commande (analyse des commandes risquées, suggestions, annulation) : repliable.
+    const bar = createCommandBar({ active: () => active });
+    bar.el.hidden = !prefs.get('termCmdbar', true);
+    ui.cmdbar = bar.el;
+    el.append(h('div', { class: 'term-view' }, tabsEl, stage, bar.el, keybar));
     termSettings.apply();
     renderTabs();
     renderEmpty();
@@ -593,7 +610,10 @@ export default {
         if (params.get('claudeSession')) claude.session = params.get('claudeSession');
         if (params.has('claudeDir')) claude.dir = params.get('claudeDir');
         openTab(hostId, null, true, { claude });
-      } else openTab(hostId);
+      } else {
+        const tab = openTab(hostId);
+        if (params.get('type')) tab.pendingType = params.get('type').slice(0, 500);
+      }
     } else {
       active?.fitSoon(true);
       if (active && !matchMedia('(pointer: coarse)').matches) active.term.focus();

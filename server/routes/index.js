@@ -12,6 +12,10 @@ import { serviceRoutes } from './services.js';
 import { claudeRoutes } from './claude.js';
 import { systemRoutes } from './system.js';
 import { terminalRoutes } from './terminals.js';
+import { productivityRoutes } from './productivity.js';
+import { hostAdminRoutes } from './hostadmin.js';
+import { HostAdmin } from '../lib/hostadmin.js';
+import { UndoService } from '../lib/undo.js';
 import { HostStatus } from '../lib/hoststatus.js';
 import { MetricsCollector } from '../lib/metrics.js';
 
@@ -20,6 +24,8 @@ export function createServices(ctx) {
   ctx.sftp = new SftpService(ctx);
   ctx.git = new GitService(ctx);
   ctx.monitor = new MonitorService(ctx);
+  ctx.hostAdmin = new HostAdmin({ pool: ctx.pool, hosts: ctx.hosts, journal: ctx.journal });
+  ctx.undo = new UndoService({ db: ctx.db, pool: ctx.pool, blobs: ctx.blobs, journal: ctx.journal, hosts: ctx.hosts });
   ctx.hostStatus = new HostStatus({ db: ctx.db, hosts: ctx.hosts, pool: ctx.pool, alerts: ctx.alerts, intervalSec: ctx.config.hostProbeSec || 60, downAlertMin: ctx.config.hostDownAlertMin });
   ctx.metrics = new MetricsCollector({ db: ctx.db, hosts: ctx.hosts, monitor: ctx.monitor, hostStatus: ctx.hostStatus, intervalSec: ctx.config.metricsIntervalSec || 30 });
   ctx.proxy = new ProxyService({ db: ctx.db, journal: ctx.journal, config: ctx.config });
@@ -48,5 +54,7 @@ export function extraRoutes(ctx) {
   r.use(claudeRoutes(ctx));
   r.use(systemRoutes(ctx));
   r.use(terminalRoutes(ctx));
+  r.use(productivityRoutes(ctx));
+  r.use(hostAdminRoutes(ctx));
   return r;
 }

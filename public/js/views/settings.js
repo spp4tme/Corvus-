@@ -19,6 +19,8 @@ export default {
     ], { value: termSettings.keybar });
     keybar.addEventListener('change', () => { prefs.set('termKeybar', keybar.value); termSettings.apply(); });
 
+    const cmdbar = checkbox('Barre de commande sous le terminal (analyse des commandes risquées, suggestions)', { checked: prefs.get('termCmdbar', true) });
+    cmdbar.input.addEventListener('change', () => { prefs.set('termCmdbar', cmdbar.input.checked); const b = document.querySelector('.cmdbar'); if (b) b.hidden = !cmdbar.input.checked; });
     const tmux = checkbox('Activer tmux par défaut pour les nouveaux hôtes', { checked: prefs.get('defaultTmux', false) });
     tmux.input.addEventListener('change', () => prefs.set('defaultTmux', tmux.input.checked));
 
@@ -45,6 +47,7 @@ export default {
         field({ label: 'Thème', control: theme }),
         field({ label: 'Barre de touches', control: keybar }),
         field({ label: 'Langue de la dictée', control: lang }),
+        h('div', { class: 'span-2' }, cmdbar),
         h('div', { class: 'span-2' }, tmux)),
       notifSlot,
       storageSlot,

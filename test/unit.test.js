@@ -680,3 +680,77 @@ describe('étape 2 : robustesse et métriques', () => {
     assert.equal(s3.latencyMs, 3);
   });
 });
+
+describe('étapes 4 et 5.1 : règles, suggestions, administration', () => {
+  test('commandes risquées : niveaux, raisons, fichiers à sauvegarder', async () => {
+    const { analyze } = await import('../server/lib/risk.js');
+    assert.equal(analyze('ls -la /etc').level, 'safe');
+    const rm = analyze('rm -rf build "mon dossier"');
+    assert.equal(rm.level, 'danger');
+    assert.deepEqual(rm.files, ['build', 'mon dossier']);
+    assert.equal(rm.undoable, true);
+    assert.equal(analyze('rm -rf /').reasons.some((r) => /extrêmement large/.test(r)), true);
+    const sed = analyze("sed -i 's/a/b/' conf.ini");
+    assert.deepEqual(sed.files, ['conf.ini']);
+    assert.equal(sed.undoable, true);
+    const redir = analyze('echo bonjour > notes.txt 2>&1');
+    assert.deepEqual(redir.files, ['notes.txt']);
+    assert.equal(redir.level, 'caution');
+    const sub = analyze('rm $(cat liste)');
+    assert.equal(sub.undoable, false, 'substitution : jamais de promesse d\'annulation');
+    assert.equal(sub.preview, true);
+    const sudo = analyze('sudo rm /etc/motd');
+    assert.equal(sudo.undoable, false);
+    assert.equal(sudo.level, 'danger');
+    assert.ok(analyze('systemctl stop nginx').notUndoable.includes('services (systemd)'));
+    assert.equal(analyze('curl https://x.sh | sh').level, 'danger');
+    assert.equal(analyze('git push --force').level, 'danger');
+    assert.equal(analyze('chmod -R 777 .').undoable, false);
+    assert.equal(analyze('mv a.txt b.txt').files.length, 2);
+  });
+
+  test('chemins pour le shell distant : jokers actifs, reste cité', async () => {
+    const { globWord } = await import('../server/lib/undo.js');
+    assert.equal(globWord('~/a b/*.txt'), `"$HOME"'/a b/'*'.txt'`);
+    assert.equal(globWord("l'x"), `'l'\\''x'`);
+    assert.equal(globWord('f[0-9]'), `'f'[0-9]`);
+  });
+
+  test('suggestions : fréquence × récence, n-grammes, séquences répétées, historique shell', async () => {
+    const { rankHistory, nextCommands, repeatedSequences, parseShellHistory } = await import('../server/lib/predict.js');
+    const now = Date.now();
+    const h = (cmds) => cmds.map((command, i) => ({ command, ts: now - (cmds.length - i) * 1000 }));
+    const hist = h(['git status', 'git add -A', 'git commit', 'ls', 'git status', 'git add -A', 'git commit', 'cd ~', 'git status', 'git add -A', 'git commit', 'git status']);
+    assert.equal(rankHistory(hist, 'git ')[0].command, 'git status');
+    assert.equal(nextCommands(hist, ['git status'])[0].command, 'git add -A');
+    assert.equal(nextCommands(hist, ['git status', 'git add -A'])[0].command, 'git commit');
+    const seq = repeatedSequences(hist);
+    assert.deepEqual(seq[0].commands, ['git status', 'git add -A', 'git commit']);
+    assert.equal(seq[0].count, 3);
+    const parsed = parseShellHistory(': 1700000000:0;ls -la\n#1700000100\ncd /tmp\nsans date\n');
+    assert.deepEqual(parsed.map((x) => x.command), ['ls -la', 'cd /tmp', 'sans date']);
+    assert.equal(parsed[0].ts, 1700000000000);
+  });
+
+  test('administration : services, journal, ufw, utilisateurs, mises à jour', async () => {
+    const a = await import('../server/lib/hostadmin.js');
+    const units = a.parseUnits('nginx.service loaded active running A high performance web server\n● bad.service loaded failed failed Bad\n##files\nnginx.service enabled enabled\nbad.service enabled enabled\nold.service disabled enabled\n');
+    assert.equal(units[0].name, 'bad.service', 'services en échec en premier');
+    assert.equal(units.find((u) => u.name === 'nginx.service').enabled, 'enabled');
+    assert.ok(units.some((u) => u.name === 'old.service' && u.load === 'not-loaded'));
+    const j = a.parseJournal('{"__REALTIME_TIMESTAMP":"1700000000000000","PRIORITY":"3","SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Failed password","__CURSOR":"s=1;i=2"}\n');
+    assert.equal(j.entries[0].priority, 3);
+    assert.equal(j.cursor, 's=1;i=2');
+    const u = a.parseUfw('Status: active\n\n     To                         Action      From\n     --                         ------      ----\n[ 1] 22/tcp                     ALLOW IN    Anywhere\n');
+    assert.equal(u.active, true);
+    assert.equal(u.rules[0].num, 1);
+    const users = a.parsePasswd('root:x:0:0:root:/root:/bin/bash\npi:x:1000:1000:Pi,,,:/home/pi:/bin/bash\nwww-data:x:33:33::/var/www:/usr/sbin/nologin\n', 'sudo:x:27:pi\npi:x:1000:\n');
+    assert.equal(users.find((x) => x.name === 'pi').admin, true);
+    assert.equal(users.find((x) => x.name === 'www-data').login, false);
+    const up = a.parseUpdates('apt', 'Listing...\nopenssl/stable-security 3.0.15-1 arm64 [upgradable from: 3.0.14-1]\n');
+    assert.deepEqual([up[0].name, up[0].version, up[0].from, up[0].security], ['openssl', '3.0.15-1', '3.0.14-1', true]);
+    assert.equal(a.unitName('nginx'), 'nginx.service');
+    assert.throws(() => a.unitName('--help'));
+    assert.throws(() => a.unitName('a;b'));
+  });
+});
