@@ -15,6 +15,7 @@ const ROUTES = {
   journal: { title: 'Journal', icon: 'journal', load: () => import('./views/journal.js'), secondary: true },
   commands: { title: 'Commandes', icon: 'terminal', load: () => import('./views/commands.js'), secondary: true },
   admin: { title: 'Admin', icon: 'settings', load: () => import('./views/admin.js'), secondary: true },
+  agents: { title: 'Agents', icon: 'server', load: () => import('./views/agents.js'), secondary: true },
   recordings: { title: 'Enregistrements', icon: 'history', load: () => import('./views/recordings.js'), secondary: true },
   proxy: { title: 'Services web', icon: 'link', load: () => import('./views/proxy.js'), secondary: true },
   settings: { title: 'Réglages', icon: 'settings', load: () => import('./views/settings.js'), secondary: true },

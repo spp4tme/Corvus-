@@ -63,8 +63,44 @@ impl Sampler {
                 out.insert("temp".into(), milli / 1000.0);
             }
         }
+        for (mount, pct) in disks() {
+            out.insert(format!("df:{mount}"), pct);
+        }
         out
     }
+}
+
+/// Systèmes de fichiers « réels » (disques), pour ne pas compter /proc, /sys, tmpfs, etc.
+const REAL_FS: [&str; 7] = ["ext4", "ext3", "xfs", "btrfs", "f2fs", "vfat", "zfs"];
+
+/// (point de montage, % utilisé) pour chaque disque, en lisant /proc/mounts puis statvfs.
+fn disks() -> Vec<(String, f64)> {
+    let mounts = read("/proc/mounts").unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for line in mounts.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 3 || !REAL_FS.contains(&f[2]) || !seen.insert(f[0].to_string()) {
+            continue;
+        }
+        let mount = f[1].replace("\\040", " "); // /proc/mounts écrit l'espace « \040 »
+        if let Some(p) = used_percent(&mount) {
+            out.push((mount, p));
+        }
+    }
+    out
+}
+
+fn used_percent(path: &str) -> Option<f64> {
+    let c = std::ffi::CString::new(path).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY : `c` est une chaîne C valide, `st` une structure vide que statvfs remplit.
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 || st.f_blocks == 0 {
+        return None;
+    }
+    let total = st.f_blocks as f64;
+    let avail = st.f_bavail as f64;
+    Some(((total - avail) / total * 1000.0).round() / 10.0)
 }
 
 #[cfg(test)]
@@ -89,5 +125,6 @@ mod tests {
             assert!((0.0..=100.0).contains(c));
         }
         assert!(v.contains_key("mem"));
+        assert!(v.keys().any(|k| k == "df:/"), "le disque racine doit être relevé : {v:?}");
     }
 }

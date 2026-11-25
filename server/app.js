@@ -300,7 +300,7 @@ export function createCorvus(overrides = {}) {
     });
     ctx.storageMonitor.start();
     ctx.retention.start();
-    if (config.hostProbeSec > 0) ctx.hostStatus.start();
+    if (config.hostProbeSec > 0) { ctx.hostStatus.start(); ctx.agents.start(); }
     if (config.metricsIntervalSec > 0) ctx.metrics.start();
     return server.address();
   }
@@ -316,6 +316,7 @@ export function createCorvus(overrides = {}) {
     ctx.storageMonitor.stop();
     ctx.retention.stop();
     ctx.hostStatus.stop();
+    ctx.agents.stop();
     ctx.metrics.stop();
     for (const t of ctx.timers || []) clearInterval(t);
     db.close();

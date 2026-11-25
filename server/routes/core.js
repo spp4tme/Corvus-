@@ -15,7 +15,7 @@ export function hostRoutes(ctx) {
     res.json({
       hosts: hosts.list().filter((h) => !allowed || allowed.includes(h.id)).map((h) => ({
         ...h, connection: pool.status(h.id), knownHost: knownHosts.get(h.hostname, h.port),
-        status: ctx.hostStatus?.get(h.id) || null, role: ctx.users.hostRole(req.user, h),
+        status: ctx.hostStatus?.get(h.id) || null, agent: ctx.agents.forHost(h.id), role: ctx.users.hostRole(req.user, h),
       })),
     });
   });

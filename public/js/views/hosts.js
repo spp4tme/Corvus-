@@ -65,7 +65,7 @@ export default {
             h('div', { class: 'host-addr ellipsis' }, `${host.username}@${host.hostname}${host.port !== 22 ? `:${host.port}` : ''}`)),
           state.isAdmin ? button({ label: host.pinned ? 'Désépingler' : 'Épingler', icon: 'pin', iconOnly: true, variant: 'ghost', pressed: host.pinned, onClick: () => togglePin(host) }) : null,
           state.isAdmin ? button({ label: 'Modifier', icon: 'edit', iconOnly: true, variant: 'ghost', onClick: () => editHost(host) }) : null),
-        (status || missing || host.tmux) ? h('div', { class: 'row' }, status, missing, host.tmux ? badge(`tmux · ${host.tmuxSession}`, 'accent') : null) : null,
+        (status || missing || host.tmux || host.agent) ? h('div', { class: 'row' }, status, missing, host.agent ? badge(host.agent.online ? 'agent' : 'agent hors ligne', host.agent.online ? 'accent' : 'warn') : null, host.tmux ? badge(`tmux · ${host.tmuxSession}`, 'accent') : null) : null,
         result,
         host.role === 'viewer' ? h('div', null, badge('lecture seule')) : null,
         h('div', { class: 'host-actions' },

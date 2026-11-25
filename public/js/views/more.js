@@ -5,6 +5,7 @@ import { icon } from '../ui/icons.js';
 const ITEMS = [
   { href: '#/commands', icon: 'terminal', title: 'Commandes', text: 'Snippets, multi-hôtes, routines' },
   { href: '#/admin', icon: 'settings', title: 'Admin', text: 'Services, journal système, pare-feu, mises à jour' },
+  { href: '#/agents', icon: 'server', title: 'Agents', text: 'Installer et surveiller les agents Corvus' },
   { href: '#/journal', icon: 'journal', title: 'Journal', text: 'Historique des connexions' },
   { href: '#/recordings', icon: 'history', title: 'Enregistrements', text: 'Revoir les sessions de terminal' },
   { href: '#/proxy', icon: 'link', title: 'Services web', text: 'Ouvrir un service privé du tailnet' },

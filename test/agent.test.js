@@ -246,3 +246,27 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
     }
   });
 });
+
+describe('état visible et alerte hors ligne', () => {
+  test('la liste des hôtes indique l\'agent ; un agent muet déclenche une alerte unique', async () => {
+    const e = await enrollAgent();
+    const a = connect(e.body.agentId, e.key);
+    await a.handshake();
+    await a.next('auth_ok');
+    let hosts = (await (await fetch(`${env.base}/api/hosts`, { headers: auth() })).json()).hosts;
+    assert.equal(hosts.find((x) => x.id === hostId).agent.online, true);
+
+    a.ws.close();
+    await waitFor(() => !env.corvus.ctx.agents.connections.has(e.body.agentId), 5000);
+    hosts = (await (await fetch(`${env.base}/api/hosts`, { headers: auth() })).json()).hosts;
+    assert.equal(hosts.find((x) => x.id === hostId).agent.online, false);
+
+    const { db, agents } = env.corvus.ctx;
+    db.run('UPDATE agents SET last_seen_at = ? WHERE id = ?', Date.now() - 10 * 60_000, e.body.agentId);
+    agents.checkOffline();
+    agents.checkOffline(); // dédoublonnée
+    const alerts = db.all("SELECT message FROM alerts WHERE kind = 'agent.offline' AND message LIKE '%Hôte agent%'");
+    assert.ok(alerts.length >= 1);
+    assert.match(alerts[0].message, /hors ligne depuis (9|10) min/);
+  });
+});

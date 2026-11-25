@@ -31,8 +31,9 @@ export function publicKeyFromRaw(rawB64) {
 export const signedText = (role, challengeB64) => Buffer.from(`corvus-agent-v${PROTOCOL}|${role}|${challengeB64}`);
 
 export class AgentService {
-  constructor({ db, vault, journal, hosts, alerts }) {
-    Object.assign(this, { db, vault, journal, hosts, alerts });
+  constructor({ db, vault, journal, hosts, alerts, offlineAfterSec = 120 }) {
+    Object.assign(this, { db, vault, journal, hosts, alerts, offlineAfterSec });
+    this.timer = null;
     this.connections = new Map(); // agentId → ws
     this.#loadServerKey();
   }
@@ -87,6 +88,26 @@ export class AgentService {
     return this.db.all('SELECT id, host_id AS hostId, version, capabilities, enrolled_at AS enrolledAt, last_seen_at AS lastSeenAt FROM agents ORDER BY enrolled_at')
       .map((a) => ({ ...a, capabilities: safeJson(a.capabilities), online: this.connections.has(a.id) }));
   }
+
+  /** Résumé pour la carte d'hôte (null = pas d'agent). */
+  forHost(hostId) {
+    const a = this.db.get('SELECT id, version, last_seen_at AS lastSeenAt FROM agents WHERE host_id = ? ORDER BY enrolled_at DESC LIMIT 1', hostId);
+    return a ? { id: a.id, version: a.version, online: this.connections.has(a.id), lastSeenAt: a.lastSeenAt } : null;
+  }
+
+  /** Alerte quand un agent enrôlé reste déconnecté plus de `offlineAfterSec` (dédoublonnée par `Alerts`). */
+  checkOffline() {
+    const limit = Date.now() - this.offlineAfterSec * 1000;
+    for (const a of this.db.all('SELECT id, host_id, last_seen_at FROM agents WHERE last_seen_at IS NOT NULL AND last_seen_at < ?', limit)) {
+      if (this.connections.has(a.id)) continue;
+      const host = this.hosts.find(a.host_id);
+      const min = Math.round((Date.now() - a.last_seen_at) / 60_000);
+      this.alerts?.raise({ kind: 'agent.offline', severity: 'warn', hostId: a.host_id || undefined, message: `Agent de ${host?.name || 'un hôte'} hors ligne depuis ${min} min` });
+    }
+  }
+
+  start(everySec = 30) { if (!this.timer) { this.timer = setInterval(() => this.checkOffline(), everySec * 1000); this.timer.unref(); } }
+  stop() { clearInterval(this.timer); this.timer = null; }
 
   revoke(id) {
     const row = this.db.get('SELECT id, host_id FROM agents WHERE id = ?', id);
