@@ -97,9 +97,11 @@ describe('hôtes', () => {
     assert.equal(r.body.host.password, undefined);
     const list = await c.api('GET', '/api/hosts');
     assert.ok(!JSON.stringify(list.body).includes(sshd.password));
-    for (const f of fs.readdirSync(env.dataDir)) {
-      const content = fs.readFileSync(path.join(env.dataDir, f), 'utf8');
-      assert.ok(!content.includes(sshd.password), `secret en clair dans ${f}`);
+    env.corvus.ctx.db.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    for (const f of fs.readdirSync(env.dataDir, { recursive: true })) {
+      const full = path.join(env.dataDir, f);
+      if (!fs.statSync(full).isFile()) continue;
+      assert.ok(!fs.readFileSync(full).includes(Buffer.from(sshd.password)), `secret en clair dans ${f}`);
     }
   });
 

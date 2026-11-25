@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 // Point d'entrée : `npm start`.
-import { createCorvus } from './app.js';
 import { config } from './config.js';
 import { classifyAddress } from './lib/netcheck.js';
 import { logger } from './lib/log.js';
@@ -8,11 +7,17 @@ import { tailscalePeers } from './lib/tailscale.js';
 
 const log = logger('corvus');
 
-const major = Number(process.versions.node.split('.')[0]);
-if (major < 20) {
-  log.error(`Node.js ${process.versions.node} détecté : Corvus requiert Node.js 20 ou plus récent.`);
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 22 || (major === 22 && minor < 13)) {
+  log.error(`Node.js ${process.versions.node} détecté : Corvus requiert Node.js 22.13 ou plus récent (module SQLite intégré). Node 24 LTS recommandé.`);
   process.exit(1);
 }
+
+// Le module SQLite de Node affiche un avertissement « expérimental » à chaque démarrage : masqué.
+const emitWarning = process.emitWarning;
+process.emitWarning = (w, ...rest) => (/SQLite/i.test(String(w?.message ?? w)) ? undefined : emitWarning.call(process, w, ...rest));
+// Import dynamique : sur un Node trop ancien, le message ci-dessus s'affiche au lieu d'une erreur d'import.
+const { createCorvus } = await import('./app.js');
 
 const kind = classifyAddress(config.bind);
 if (kind === 'public' && !config.allowPublicBind) {
@@ -33,7 +38,7 @@ try {
   const addr = await corvus.listen();
   const shown = addr.family === 'IPv6' ? `[${addr.address}]` : addr.address;
   log.info(`Corvus ${corvus.ctx.version} à l'écoute sur http://${shown}:${addr.port}`);
-  log.info(`Données : ${config.dataDir} — secrets chiffrés (clé dérivée ${config.masterPassphrase ? 'de la passphrase maître' : 'du token'})`);
+  log.info(`Données : ${config.dataDir}${corvus.ctx.storage.custom ? ` · stockage : ${corvus.ctx.storage.dir}` : ''} — secrets chiffrés (clé dérivée ${config.masterPassphrase ? 'de la passphrase maître' : 'du token'})`);
   if (!config.masterPassphrase) {
     log.warn('Secrets chiffrés avec une clé dérivée du token (stocké dans le même dossier) : voler data/ donne accès aux secrets. Définissez CORVUS_MASTER_PASSPHRASE pour une vraie protection au repos.');
   }

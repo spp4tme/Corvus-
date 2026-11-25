@@ -16,10 +16,10 @@ export function createServices(ctx) {
   ctx.sftp = new SftpService(ctx);
   ctx.git = new GitService(ctx);
   ctx.monitor = new MonitorService(ctx);
-  ctx.proxy = new ProxyService({ dataDir: ctx.config.dataDir, journal: ctx.journal, config: ctx.config });
-  ctx.push = new PushService({ dataDir: ctx.config.dataDir, config: ctx.config, journal: ctx.journal });
+  ctx.proxy = new ProxyService({ db: ctx.db, journal: ctx.journal, config: ctx.config });
+  ctx.push = new PushService({ db: ctx.db, vault: ctx.vault, config: ctx.config, journal: ctx.journal });
   ctx.notify = (n) => {
-    ctx.journal.add({ type: 'terminal', event: 'notify', host: ctx.hosts.hosts.find((h) => h.id === n.hostId), detail: `${n.title} : ${n.body}` });
+    ctx.journal.add({ type: 'terminal', event: 'notify', host: n.hostId ? ctx.hosts.find(n.hostId) : undefined, detail: `${n.title} : ${n.body}` });
     ctx.push.notify(n).catch(() => {});
   };
 }

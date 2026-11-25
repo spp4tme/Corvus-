@@ -61,7 +61,7 @@ virtuel qui ne masque pas le terminal. Sur desktop : rail latéral.
 
 ## Démarrage rapide (`npm start`)
 
-Prérequis : **Node.js 20 ou plus** ([nodejs.org](https://nodejs.org)). Aucune compilation native :
+Prérequis : **Node.js 22.13 ou plus** (24 LTS recommandé) ([nodejs.org](https://nodejs.org)). Aucune compilation native :
 les dépendances sont 100 % JavaScript (`npm run check:pure` le vérifie).
 
 ```bash
@@ -126,7 +126,7 @@ sudo ./deploy/install-linux.sh
 ```
 
 Le script :
-- installe Node.js 20+ depuis **nodejs.org**, avec vérification SHA256 et sans `curl | bash`
+- installe Node.js 22.13+ depuis **nodejs.org**, avec vérification SHA256 et sans `curl | bash`
   (seulement si votre système n'en a pas déjà un assez récent) ;
 - crée l'utilisateur système `corvus` ;
 - copie le code dans `/opt/corvus` et les données dans `/var/lib/corvus` (700) ;
@@ -215,7 +215,7 @@ cd C:\Corvus
 powershell -ExecutionPolicy Bypass -File deploy\windows\install-windows.ps1
 ```
 
-Il vérifie Node.js 20+ (et l'installe avec `winget` s'il manque), installe les dépendances,
+Il vérifie Node.js 22.13+ (et l'installe avec `winget` s'il manque), installe les dépendances,
 crée une **tâche planifiée « Corvus »** (démarrage à l'ouverture de session, fenêtre masquée,
 redémarrage automatique, journal dans `data\corvus.log`), démarre Corvus et affiche le token.
 Options : `-Port 7681`, `-NoAutostart` (pas de tâche planifiée), `-Uninstall` (retire la tâche et
@@ -224,7 +224,7 @@ arrête Corvus ; `data\` est conservé).
 Sans script : `npm ci` puis `npm start`, ou
 `powershell -ExecutionPolicy Bypass -File deploy\windows\start-corvus.ps1`.
 
-**macOS** : installez Node.js 20+ (`brew install node`), puis `npm ci && npm start`. Pour un
+**macOS** : installez Node.js 22.13+ (`brew install node`), puis `npm ci && npm start`. Pour un
 démarrage automatique, créez un agent `launchd` (`~/Library/LaunchAgents/corvus.plist`) qui lance
 `node /chemin/vers/corvus/server/index.js` avec `RunAtLoad` et `KeepAlive`.
 
@@ -286,7 +286,13 @@ directement.
 |---|---|---|
 | `PORT` | `7680` | Port HTTP |
 | `BIND` | `127.0.0.1` | Adresse d'écoute (IP publique refusée) |
-| `CORVUS_DATA` | `./data` | Dossier des données (token, hôtes, secrets chiffrés, journal) |
+| `CORVUS_DATA` | `./data` | Petit dossier de configuration (token d'amorçage) ; contient aussi la base si `CORVUS_STORAGE` est vide |
+| `CORVUS_STORAGE` | — | **Données lourdes** : base SQLite, enregistrements de session, sauvegardes. Ex. `/mnt/ssd/corvus` sur un SSD externe. Le dossier doit exister : Corvus refuse de démarrer si le disque n'est pas monté |
+| `CORVUS_MIN_FREE_MB` | `2048` | Seuil d'alerte d'espace libre (le plus grand de ce seuil et de 5 % du disque) |
+| `RETENTION_METRICS_RAW_DAYS` | `7` | Conservation des métriques détaillées (ensuite : agrégats horaires) |
+| `RETENTION_METRICS_HOURLY_DAYS` | `365` | Conservation des agrégats horaires |
+| `RETENTION_RECORDINGS_DAYS` | `90` | Conservation des enregistrements de session |
+| `RETENTION_UNDO_DAYS` | `30` | Conservation des sauvegardes « annulables » |
 | `CORVUS_MASTER_PASSPHRASE` | — | Passphrase de chiffrement des secrets (**recommandée** : sinon la clé est dérivée du token, stocké dans le même dossier). Migration automatique. |
 | `CORVUS_ALLOWED_ORIGINS` | — | Origines supplémentaires autorisées (séparées par des virgules) |
 | `TRUST_PROXY` | `loopback` | Confiance dans `X-Forwarded-*` (valeur Express `trust proxy`) |
@@ -305,6 +311,24 @@ directement.
 
 Commandes : `npm run token` (afficher le token), `npm run token:rotate` (nouveau token,
 re-chiffrement, révocation des sessions).
+
+### Stockage : base SQLite et disque externe
+
+Toutes les données sont dans une base **SQLite** (`corvus.db`, mode WAL), via le module SQLite
+**intégré à Node.js** (≥ 22.13) : aucune dépendance native. Au premier démarrage, les anciens
+fichiers JSON (`hosts.json`, `journal.jsonl`, `secrets.enc.json`…) sont **migrés
+automatiquement** puis renommés en `*.migrated` (rien n'est supprimé).
+
+Sur un Raspberry Pi, placez les données lourdes sur un SSD plutôt que sur la carte SD :
+
+```bash
+sudo mkdir -p /mnt/ssd/corvus && sudo chown corvus:corvus /mnt/ssd/corvus && sudo chmod 700 /mnt/ssd/corvus
+echo 'CORVUS_STORAGE=/mnt/ssd/corvus' | sudo tee -a /etc/corvus/corvus.env
+sudo ./deploy/install-linux.sh   # autorise l'écriture sur le SSD (ReadWritePaths) et redémarre
+```
+
+Corvus surveille l'espace libre (toutes les 10 min) et prévient par un bandeau, une notification
+push et le journal quand il passe sous `CORVUS_MIN_FREE_MB`.
 
 ---
 
@@ -383,7 +407,7 @@ Corvus n'ouvre pas de terminal : il affiche un message avec la commande d'instal
 ## Tests
 
 ```bash
-npm test          # tout : unitaires + bout en bout + interface (liste explicite de fichiers : compatible Node 20 à 24)
+npm test          # tout : unitaires + bout en bout + interface (liste explicite de fichiers : compatible Node 22.13 et plus)
 npm run test:e2e  # bout en bout uniquement
 npm run test:ui   # interface (Edge ou Chrome requis ; ignoré sinon)
 npm run check:pure
@@ -420,6 +444,7 @@ server/                 Backend Node.js (Express + ws + ssh2)
   cli.js                npm run token / token:rotate
   lib/                  auth, vault (chiffrement), ssh (pool + TOFU), terminal, sftp, git,
                         monitor, proxy, push, journal, validate, shell (échappement), claude (sessions tmux)…
+  db/                   SQLite : couche d'accès unique (index.js), migrations (schema.js), import des anciens JSON
   routes/               Routes REST par module
 public/                 PWA (vanilla JS, modules ES, sans build)
   index.html, sw.js, manifest.webmanifest, icons/

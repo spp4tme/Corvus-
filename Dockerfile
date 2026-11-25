@@ -1,7 +1,7 @@
 # Corvus — image multi-architecture (linux/amd64, linux/arm64).
 # Construction multi-arch : docker buildx build --platform linux/amd64,linux/arm64 -t corvus .
 # Aucune compilation native : les dépendances sont 100 % JavaScript.
-FROM node:22-alpine
+FROM node:24-alpine
 
 ENV NODE_ENV=production \
     CORVUS_DATA=/data \

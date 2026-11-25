@@ -9,8 +9,6 @@ import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import path from 'node:path';
-import { JsonStore } from './store.js';
 import { HttpError } from './validate.js';
 import * as v from './validate.js';
 import { classifyAddress } from './netcheck.js';
@@ -22,15 +20,15 @@ const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-au
 const SANDBOX = 'sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-popups-to-escape-sandbox';
 
 export class ProxyService {
-  constructor({ dataDir, journal, config }) {
-    this.store = new JsonStore(path.join(dataDir, 'services.json'), { services: [] });
+  constructor({ db, journal, config }) {
+    this.db = db;
     this.caps = new Map();
     this.journal = journal;
     this.config = config;
   }
 
   list() {
-    return this.store.data.services;
+    return this.db.all('SELECT id, name, url, created_at AS createdAt FROM services ORDER BY name');
   }
 
   get(id) {
@@ -56,15 +54,13 @@ export class ProxyService {
       url: this.parseUrl(body?.url),
       createdAt: Date.now(),
     };
-    this.list().push(svc);
-    this.store.save();
+    this.db.run('INSERT INTO services (id, name, url, created_at) VALUES (?, ?, ?, ?)', svc.id, svc.name, svc.url, svc.createdAt);
     return svc;
   }
 
   delete(id) {
     this.get(id);
-    this.store.data.services = this.list().filter((s) => s.id !== id);
-    this.store.save();
+    this.db.run('DELETE FROM services WHERE id = ?', id);
     for (const [cap, c] of this.caps) if (c.serviceId === id) this.caps.delete(cap);
   }
 

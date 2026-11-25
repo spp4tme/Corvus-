@@ -14,6 +14,10 @@ import { Journal } from './lib/journal.js';
 import { ClaudeService } from './lib/claude.js';
 import { TerminalManager } from './lib/terminal.js';
 import { ensureDir } from './lib/store.js';
+import { Db } from './db/index.js';
+import { migrateLegacy } from './db/migrate-json.js';
+import { resolveStorage, StorageMonitor } from './lib/storage.js';
+import { Alerts } from './lib/alerts.js';
 import { HttpError } from './lib/validate.js';
 import { logger, setLogLevel } from './lib/log.js';
 import { authRoutes, hostRoutes } from './routes/core.js';
@@ -57,13 +61,24 @@ export function createCorvus(overrides = {}) {
   ensureDir(config.dataDir);
 
   const { token, created } = loadToken(config.dataDir);
-  const vault = new Vault(path.join(config.dataDir, 'secrets.enc.json'), { token, passphrase: config.masterPassphrase });
-  const auth = new Auth({ dataDir: config.dataDir, token, sessionTtlDays: config.sessionTtlDays });
-  const hosts = new HostRegistry({ dataDir: config.dataDir, vault });
-  const knownHosts = new KnownHosts(config.dataDir);
-  const journal = new Journal(config.dataDir);
+  const storage = resolveStorage(config);
+  const db = new Db(storage.dbFile);
+  let vault;
+  try {
+    vault = new Vault(db, { token, passphrase: config.masterPassphrase });
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+  const hosts = new HostRegistry({ db, vault });
+  migrateLegacy({ db, dataDir: config.dataDir, vault, hosts, token, passphrase: config.masterPassphrase });
+  const auth = new Auth({ db, token, sessionTtlDays: config.sessionTtlDays });
+  const knownHosts = new KnownHosts(db);
+  const journal = new Journal(db);
   const pool = new SshPool({ hosts, knownHosts, config });
-  const ctx = { config, auth, vault, hosts, knownHosts, journal, pool, version: pkg.version, token, tokenCreated: created };
+  const ctx = { config, storage, db, auth, vault, hosts, knownHosts, journal, pool, version: pkg.version, token, tokenCreated: created };
+  ctx.alerts = new Alerts({ db, journal, notify: (n) => ctx.push?.notify(n).catch(() => {}) });
+  ctx.storageMonitor = new StorageMonitor({ storage, config, alerts: ctx.alerts });
   ctx.claude = new ClaudeService({ pool, hosts, journal });
   ctx.terminals = new TerminalManager({
     pool, hosts, journal, config, claude: ctx.claude,
@@ -222,6 +237,7 @@ export function createCorvus(overrides = {}) {
       server.once('error', reject);
       server.listen(port, host, resolve);
     });
+    ctx.storageMonitor.start();
     return server.address();
   }
 
@@ -232,6 +248,9 @@ export function createCorvus(overrides = {}) {
     for (const ws of wss.clients) ws.terminate();
     await new Promise((r) => server.close(r));
     ctx.onClose?.();
+    ctx.storageMonitor.stop();
+    for (const t of ctx.timers || []) clearInterval(t);
+    db.close();
   }
 
   return { app, server, ctx, listen, close, config };

@@ -9,7 +9,7 @@
 #   sudo NODE_MAJOR=22 ./deploy/install-linux.sh   choisir la version de Node.js à installer si absente
 #
 # Ce script :
-#   1. installe Node.js 20+ (binaire officiel nodejs.org, SHA256 vérifié) s'il manque ;
+#   1. installe Node.js 22.13+ (binaire officiel nodejs.org, SHA256 vérifié) s'il manque ;
 #   2. crée l'utilisateur système « corvus », /opt/corvus (code) et /var/lib/corvus (données, 700) ;
 #   3. installe les dépendances (100 % JavaScript, aucune compilation) et l'unité systemd durcie ;
 #   4. démarre Corvus sur 127.0.0.1:7680 (jamais exposé) et affiche le token d'accès ;
@@ -79,7 +79,8 @@ pkg_install() {
   else die "installez manuellement : $* (gestionnaire de paquets non reconnu)"
   fi
 }
-node_ok() { command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; }
+# Node 22.13 minimum : module SQLite intégré (node:sqlite).
+node_ok() { command -v node >/dev/null && node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)'; }
 
 if node_ok; then
   say "Node.js $(node -v) déjà présent"
@@ -104,7 +105,7 @@ else
   say "Téléchargement de Node.js ${NODE_MAJOR}.x (${ARCH}) depuis nodejs.org"
   curl -fsSL "$BASE/SHASUMS256.txt" -o "$TMP/SHASUMS256.txt"
   FILE="$(grep -oE "node-v[0-9.]+-linux-${ARCH}\.tar\.xz" "$TMP/SHASUMS256.txt" | head -n1 || true)"
-  [ -n "$FILE" ] || die "pas de binaire Node ${NODE_MAJOR} pour linux-${ARCH} : installez Node.js 20+ vous-même (gestionnaire de paquets, nvm…) puis relancez"
+  [ -n "$FILE" ] || die "pas de binaire Node ${NODE_MAJOR} pour linux-${ARCH} : installez Node.js 22.13+ vous-même (gestionnaire de paquets, nvm…) puis relancez"
   curl -fsSL "$BASE/$FILE" -o "$TMP/$FILE"
   (cd "$TMP" && grep " ${FILE}\$" SHASUMS256.txt | sha256sum -c --status) || die "somme SHA256 invalide pour $FILE"
   rm -rf /opt/node && mkdir -p /opt/node
@@ -149,6 +150,8 @@ CORVUS_DATA=$DATA_DIR
 # CORVUS_ALLOWED_ORIGINS=https://mon-serveur.mon-tailnet.ts.net
 # CORVUS_WEB_PROXY=1
 # LOG_LEVEL=info
+# Données lourdes (base, enregistrements, sauvegardes) sur un SSD externe :
+# CORVUS_STORAGE=/mnt/ssd/corvus
 EOF
 fi
 chown root:corvus "$ENV_FILE"
@@ -166,6 +169,8 @@ ENV_FILE='__ENV_FILE__'
 export CORVUS_DATA='__DATA_DIR__'
 CORVUS_MASTER_PASSPHRASE="$(sed -n 's/^CORVUS_MASTER_PASSPHRASE=//p' "$ENV_FILE" 2>/dev/null | tail -n1 | sed 's/^"\(.*\)"$/\1/')"
 export CORVUS_MASTER_PASSPHRASE
+CORVUS_STORAGE="$(sed -n 's/^CORVUS_STORAGE=//p' "$ENV_FILE" 2>/dev/null | tail -n1 | sed 's/^"\(.*\)"$/\1/')"
+export CORVUS_STORAGE
 cli() {
   if command -v runuser >/dev/null; then runuser -u corvus -- '__NODE__' '__APP_DIR__/server/cli.js' "$@"
   else sudo -E -u corvus '__NODE__' '__APP_DIR__/server/cli.js' "$@"; fi
@@ -190,7 +195,15 @@ if [ "$SERVICE" -eq 0 ]; then
   exit 0
 fi
 
-sed "s|^ExecStart=.*|ExecStart=$NODE_BIN $APP_DIR/server/index.js|; s|^WorkingDirectory=.*|WorkingDirectory=$APP_DIR|; s|^ReadWritePaths=.*|ReadWritePaths=$DATA_DIR|" \
+# Stockage lourd sur un autre disque (CORVUS_STORAGE dans $ENV_FILE) : le service doit pouvoir y écrire.
+STORAGE_DIR="$(sed -n 's/^CORVUS_STORAGE=//p' "$ENV_FILE" | tail -n1 | sed 's/^"\(.*\)"$/\1/')"
+RW_PATHS="$DATA_DIR"
+if [ -n "$STORAGE_DIR" ]; then
+  [ -d "$STORAGE_DIR" ] || die "CORVUS_STORAGE=$STORAGE_DIR introuvable : montez le disque et créez le dossier (propriétaire corvus, chmod 700)"
+  chown corvus:corvus "$STORAGE_DIR" && chmod 700 "$STORAGE_DIR"
+  RW_PATHS="$DATA_DIR $STORAGE_DIR"
+fi
+sed "s|^ExecStart=.*|ExecStart=$NODE_BIN $APP_DIR/server/index.js|; s|^WorkingDirectory=.*|WorkingDirectory=$APP_DIR|; s|^ReadWritePaths=.*|ReadWritePaths=$RW_PATHS|" \
   "$SRC_DIR/deploy/corvus.service" > "$UNIT"
 chmod 644 "$UNIT"
 systemctl daemon-reload

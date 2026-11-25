@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { JsonStore, writeFileSecure } from './store.js';
+import { writeFileSecure } from './store.js';
 import { logger } from './log.js';
 
 const log = logger('auth');
@@ -76,60 +76,43 @@ export class FailureLimiter {
 }
 
 export class Auth {
-  constructor({ dataDir, token, sessionTtlDays }) {
+  constructor({ db, token, sessionTtlDays }) {
+    this.db = db;
     this.token = token;
     // Empreinte du token : une session n'est valide que pour le token qui l'a créée. Ainsi
-    // `rotate-token` révoque vraiment tout, même si le serveur encore lancé réécrit sessions.json
-    // avant son redémarrage.
+    // `rotate-token` révoque vraiment tout, même si le serveur encore lancé écrit encore.
     this.tokenTag = sha256(`session-tag:${token}`).toString('hex').slice(0, 16);
     this.ttlMs = sessionTtlDays * 86_400_000;
-    this.sessions = new JsonStore(path.join(dataDir, 'sessions.json'), { sessions: {} });
     this.limiter = new FailureLimiter();
-    this._pruneSessions();
-  }
-
-  _pruneSessions() {
-    const now = Date.now();
-    let changed = false;
-    for (const [k, s] of Object.entries(this.sessions.data.sessions)) {
-      if (!s.tk) { s.tk = this.tokenTag; changed = true; } // sessions antérieures à l'empreinte
-      if (s.expires < now || s.tk !== this.tokenTag) { delete this.sessions.data.sessions[k]; changed = true; }
-    }
-    if (changed) this.sessions.save();
+    this.db.run('DELETE FROM auth_sessions WHERE expires_at < ? OR token_tag <> ?', Date.now(), this.tokenTag);
   }
 
   createSession(meta) {
     const sid = crypto.randomBytes(32).toString('base64url');
-    const key = sha256(sid).toString('hex');
-    this.sessions.data.sessions[key] = {
-      created: Date.now(),
-      expires: Date.now() + this.ttlMs,
-      tk: this.tokenTag,
-      ua: String(meta.ua || '').slice(0, 160),
-      ip: meta.ip,
-    };
-    this.sessions.save();
+    this.db.run(`INSERT INTO auth_sessions (key, user_id, token_tag, mfa, created_at, expires_at, ua, ip)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, sha256(sid).toString('hex'), meta.userId ?? null, this.tokenTag, !!meta.mfa,
+    Date.now(), Date.now() + this.ttlMs, String(meta.ua || '').slice(0, 160), meta.ip ?? null);
     return sid;
   }
 
+  /** Session valide → sa ligne, sinon null. */
+  session(sid) {
+    if (typeof sid !== 'string' || sid.length < 20 || sid.length > 100) return null;
+    const s = this.db.get('SELECT * FROM auth_sessions WHERE key = ?', sha256(sid).toString('hex'));
+    return s && s.expires_at > Date.now() && s.token_tag === this.tokenTag ? s : null;
+  }
+
   validSession(sid) {
-    if (typeof sid !== 'string' || sid.length < 20 || sid.length > 100) return false;
-    const s = this.sessions.data.sessions[sha256(sid).toString('hex')];
-    return !!s && s.expires > Date.now() && s.tk === this.tokenTag;
+    return !!this.session(sid);
   }
 
   destroySession(sid) {
     if (typeof sid !== 'string') return;
-    const key = sha256(sid).toString('hex');
-    if (this.sessions.data.sessions[key]) {
-      delete this.sessions.data.sessions[key];
-      this.sessions.save();
-    }
+    this.db.run('DELETE FROM auth_sessions WHERE key = ?', sha256(sid).toString('hex'));
   }
 
   revokeAll() {
-    this.sessions.data.sessions = {};
-    this.sessions.save();
+    this.db.run('DELETE FROM auth_sessions');
   }
 
   /** Identifie la requête : 'bearer', 'cookie' ou null. */

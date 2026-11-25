@@ -10,6 +10,7 @@ import { parseStatus } from '../server/lib/git.js';
 import { q, qPath, shWrap } from '../server/lib/shell.js';
 import * as v from '../server/lib/validate.js';
 import { Vault } from '../server/lib/vault.js';
+import { Db } from '../server/db/index.js';
 import * as cl from '../server/lib/claude.js';
 import { classifyAddress } from '../server/lib/netcheck.js';
 import { tokenMatches, FailureLimiter, originAllowed } from '../server/lib/auth.js';
@@ -184,24 +185,28 @@ describe('validation', () => {
 
 describe('coffre chiffré', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-vault-'));
-  const file = path.join(dir, 'secrets.enc.json');
+  const file = path.join(dir, 'corvus.db');
+  const db = new Db(file);
   test('chiffrement, persistance, rien en clair', () => {
-    const v1 = new Vault(file, { token: 'cv_token_de_test_suffisamment_long_123' });
+    const v1 = new Vault(db, { token: 'cv_token_de_test_suffisamment_long_123' });
     v1.set('h1', { password: 'TrèsSecret!' });
-    assert.ok(!fs.readFileSync(file, 'utf8').includes('TrèsSecret'));
-    const v2 = new Vault(file, { token: 'cv_token_de_test_suffisamment_long_123' });
+    db.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    assert.ok(!fs.readFileSync(file).includes(Buffer.from('TrèsSecret')));
+    const v2 = new Vault(db, { token: 'cv_token_de_test_suffisamment_long_123' });
     assert.equal(v2.get('h1').password, 'TrèsSecret!');
+    const blob = v2.encryptBuffer(Buffer.from('contenu'));
+    assert.equal(v1.decryptBuffer(blob).toString(), 'contenu');
   });
   test('mauvais token → refus explicite', () => {
-    assert.throws(() => new Vault(file, { token: 'cv_autre_token_complètement_différent' }), /déchiffrer/);
+    assert.throws(() => new Vault(db, { token: 'cv_autre_token_complètement_différent' }), /déchiffrer/);
   });
   test('migration vers une passphrase maître, puis passphrase exigée', () => {
-    const v3 = new Vault(file, { token: 'cv_token_de_test_suffisamment_long_123', passphrase: 'phrase maître' });
+    const v3 = new Vault(db, { token: 'cv_token_de_test_suffisamment_long_123', passphrase: 'phrase maître' });
     assert.equal(v3.get('h1').password, 'TrèsSecret!');
-    assert.match(fs.readFileSync(file, 'utf8'), /"src": "passphrase"/);
-    assert.throws(() => new Vault(file, { token: 'cv_token_de_test_suffisamment_long_123' }), /CORVUS_MASTER_PASSPHRASE/);
-    assert.throws(() => new Vault(file, { token: 'x', passphrase: 'mauvaise' }), /incorrecte/);
-    assert.equal(new Vault(file, { token: 'x', passphrase: 'phrase maître' }).get('h1').password, 'TrèsSecret!');
+    assert.equal(db.getMeta('vault.kdf').src, 'passphrase');
+    assert.throws(() => new Vault(db, { token: 'cv_token_de_test_suffisamment_long_123' }), /CORVUS_MASTER_PASSPHRASE/);
+    assert.throws(() => new Vault(db, { token: 'x', passphrase: 'mauvaise' }), /incorrecte/);
+    assert.equal(new Vault(db, { token: 'x', passphrase: 'phrase maître' }).get('h1').password, 'TrèsSecret!');
   });
 });
 
@@ -407,27 +412,27 @@ describe('audit 2 : rotation du token et limiteur', () => {
 
   test('une session créée avec l\'ancien token est invalide après rotation, même réécrite par le serveur', async () => {
     const { Auth } = await import('../server/lib/auth.js');
-    const dir = tmp();
-    const oldAuth = new Auth({ dataDir: dir, token: 'cv_ancien_token_suffisamment_long_123456', sessionTtlDays: 1 });
+    const db = new Db(':memory:');
+    const oldAuth = new Auth({ db, token: 'cv_ancien_token_suffisamment_long_123456', sessionTtlDays: 1 });
     const sid = oldAuth.createSession({ ua: 'test', ip: '127.0.0.1' });
     assert.equal(oldAuth.validSession(sid), true);
-    // Le CLI révoque, puis le serveur encore lancé réécrit sessions.json avec l'ancienne session.
-    new Auth({ dataDir: dir, token: 'cv_nouveau_token_suffisamment_long_654321', sessionTtlDays: 1 }).revokeAll();
-    oldAuth.createSession({ ua: 'test', ip: '127.0.0.1' });
-    const restarted = new Auth({ dataDir: dir, token: 'cv_nouveau_token_suffisamment_long_654321', sessionTtlDays: 1 });
+    // Le CLI révoque, puis le serveur encore lancé crée une session avec l'ancien token.
+    new Auth({ db, token: 'cv_nouveau_token_suffisamment_long_654321', sessionTtlDays: 1 }).revokeAll();
+    const sid2 = oldAuth.createSession({ ua: 'test', ip: '127.0.0.1' });
+    const restarted = new Auth({ db, token: 'cv_nouveau_token_suffisamment_long_654321', sessionTtlDays: 1 });
     assert.equal(restarted.validSession(sid), false);
-    assert.equal(Object.keys(restarted.sessions.data.sessions).length, 0);
+    assert.equal(restarted.validSession(sid2), false);
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM auth_sessions').n, 0);
   });
 
   test('le coffre refuse d\'écraser un fichier re-chiffré par ailleurs', () => {
-    const dir = tmp();
-    const file = path.join(dir, 'secrets.enc.json');
-    const running = new Vault(file, { token: 'cv_token_a' });
+    const db = new Db(':memory:');
+    const running = new Vault(db, { token: 'cv_token_a' });
     running.set('h1', { password: 'x' });
-    const cli = new Vault(file, { token: 'cv_token_a' });
+    const cli = new Vault(db, { token: 'cv_token_a' });
     cli.rekey({ token: 'cv_token_b' });
     assert.throws(() => running.set('h2', { password: 'y' }), (e) => e.code === 'VAULT_ROTATED');
-    assert.deepEqual(new Vault(file, { token: 'cv_token_b' }).get('h1'), { password: 'x' });
+    assert.deepEqual(new Vault(db, { token: 'cv_token_b' }).get('h1'), { password: 'x' });
   });
 
   test('le limiteur élague aussi lors des échecs', () => {
@@ -439,5 +444,116 @@ describe('audit 2 : rotation du token et limiteur', () => {
     l.fail('5.6.7.8');
     assert.equal(l.byIp.has('1.2.3.4'), false);
     assert.equal(l.global.length, 1);
+  });
+});
+
+describe('étape 0 : base SQLite, migration, stockage', () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-db-'));
+
+  test('migrations versionnées, idempotentes, mode WAL', () => {
+    const file = path.join(tmp(), 'corvus.db');
+    const db = new Db(file);
+    const v = db.version;
+    assert.ok(v >= 1);
+    assert.equal(db.get('PRAGMA journal_mode').journal_mode, 'wal');
+    db.close();
+    const again = new Db(file);
+    assert.equal(again.version, v);
+    again.close();
+  });
+
+  test('transactions : annulation complète en cas d\'erreur', () => {
+    const db = new Db(':memory:');
+    assert.throws(() => db.tx(() => {
+      db.setMeta('a', 1);
+      db.tx(() => db.setMeta('b', 2));
+      throw new Error('boum');
+    }), /boum/);
+    assert.equal(db.getMeta('a'), null);
+    assert.equal(db.getMeta('b'), null);
+  });
+
+  test('migration automatique des anciens fichiers JSON (secrets, hôtes, journal chaîné)', async () => {
+    const crypto = await import('node:crypto');
+    const { createCorvus } = await import('../server/app.js');
+    const dataDir = tmp();
+    const token = 'cv_ancien_token_pour_migration_0123456789';
+    fs.writeFileSync(path.join(dataDir, 'token'), token);
+    // Ancien coffre (format v1) chiffré avec le token.
+    const salt = crypto.randomBytes(16);
+    const key = crypto.scryptSync(token, salt, 32, { N: 2 ** 15, r: 8, p: 1, maxmem: 128 * 2 ** 15 * 8 * 2 });
+    const iv = crypto.randomBytes(12);
+    const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+    c.setAAD(Buffer.from('corvus-secrets-v1'));
+    const ct = Buffer.concat([c.update(JSON.stringify({ abcdef0123456789: { password: 'pw-legacy' } })), c.final()]);
+    fs.writeFileSync(path.join(dataDir, 'secrets.enc.json'), JSON.stringify({
+      v: 1, kdf: { alg: 'scrypt', src: 'token', salt: salt.toString('base64'), N: 2 ** 15, r: 8, p: 1 },
+      box: { iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), ct: ct.toString('base64') },
+    }));
+    fs.writeFileSync(path.join(dataDir, 'hosts.json'), JSON.stringify({ hosts: [{
+      id: 'abcdef0123456789', name: 'Pi', hostname: '100.64.0.1', port: 22, username: 'pi', authType: 'password',
+      icon: 'pi', group: 'Maison', pinned: true, tmux: true, tmuxSession: 'corvus', repos: ['~/app'], tailscale: { dnsName: 'pi.ts.net', os: 'linux' },
+      createdAt: 1, updatedAt: 2,
+    }] }));
+    fs.writeFileSync(path.join(dataDir, 'known_hosts.json'), JSON.stringify({ hosts: { '100.64.0.1:22': { fingerprint: 'SHA256:abc', type: 'ssh-ed25519', addedAt: 3 } } }));
+    fs.writeFileSync(path.join(dataDir, 'journal.jsonl'), [
+      JSON.stringify({ ts: '2025-01-01T00:00:00.000Z', type: 'auth', event: 'login', ok: true, detail: 'depuis x' }),
+      JSON.stringify({ ts: '2025-01-02T00:00:00.000Z', type: 'terminal', event: 'open', ok: true, hostId: 'abcdef0123456789', host: 'Pi' }),
+    ].join('\n') + '\n');
+
+    const corvus = createCorvus({ dataDir, logLevel: 'error', port: 0 });
+    const { hosts, vault, journal, knownHosts, db } = corvus.ctx;
+    const h = hosts.get('abcdef0123456789');
+    assert.equal(h.name, 'Pi');
+    assert.equal(h.pinned, true);
+    assert.deepEqual(h.repos, ['~/app']);
+    assert.equal(h.tailscale.dnsName, 'pi.ts.net');
+    assert.equal(vault.get('abcdef0123456789').password, 'pw-legacy');
+    assert.equal(knownHosts.get('100.64.0.1', 22).fingerprint, 'SHA256:abc');
+    assert.equal(journal.list({}).length, 2);
+    assert.equal(journal.verify().ok, true);
+    assert.ok(fs.existsSync(path.join(dataDir, 'hosts.json.migrated')));
+    assert.ok(!fs.existsSync(path.join(dataDir, 'hosts.json')));
+    assert.ok(db.getMeta('legacy.migrated').summary.hosts === 1);
+    await corvus.close();
+  });
+
+  test('stockage séparé (SSD) : la base va dans CORVUS_STORAGE ; disque absent → refus clair', async () => {
+    const { createCorvus } = await import('../server/app.js');
+    const dataDir = tmp();
+    const storageDir = tmp();
+    const corvus = createCorvus({ dataDir, storageDir, logLevel: 'error', port: 0 });
+    assert.ok(fs.existsSync(path.join(storageDir, 'corvus.db')));
+    assert.ok(!fs.existsSync(path.join(dataDir, 'corvus.db')));
+    const st = corvus.ctx.storageMonitor.status();
+    assert.equal(st.length, 2);
+    assert.ok(st[0].free > 0);
+    await corvus.close();
+    assert.throws(() => createCorvus({ dataDir, storageDir: path.join(storageDir, 'pas-monte'), logLevel: 'error' }), /non monté/);
+  });
+
+  test('espace faible → une seule alerte tant que la situation dure', async () => {
+    const { StorageMonitor } = await import('../server/lib/storage.js');
+    const raised = [];
+    const m = new StorageMonitor({ storage: { dir: tmp(), custom: false }, config: { minFreeMb: 1e12 }, alerts: { raise: (a) => raised.push(a) } });
+    m.check();
+    m.check();
+    assert.equal(raised.length, 1);
+    assert.equal(raised[0].kind, 'disk-space');
+  });
+
+  test('journal chaîné : toute modification est détectée', async () => {
+    const { Journal } = await import('../server/lib/journal.js');
+    const db = new Db(':memory:');
+    const j = new Journal(db);
+    for (let i = 0; i < 5; i++) j.add({ type: 'test', event: `e${i}`, detail: `d${i}` });
+    assert.deepEqual(j.verify().ok, true);
+    db.run("UPDATE audit SET detail = 'falsifié' WHERE seq = 3");
+    const r = j.verify();
+    assert.equal(r.ok, false);
+    assert.equal(r.brokenAt, 3);
+    db.run("UPDATE audit SET detail = 'd2' WHERE seq = 3");
+    db.run('DELETE FROM audit WHERE seq = 2');
+    assert.equal(j.verify().brokenAt, 3);
   });
 });

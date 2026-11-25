@@ -5,7 +5,7 @@
 #   powershell -ExecutionPolicy Bypass -File deploy\windows\install-windows.ps1 -Uninstall
 #
 # Ce script :
-#   1. vérifie Node.js 20+ (et propose de l'installer avec winget s'il manque) ;
+#   1. vérifie Node.js 22.13+ (et propose de l'installer avec winget s'il manque) ;
 #   2. installe les dépendances (100 % JavaScript, aucune compilation) ;
 #   3. crée une tâche planifiée « Corvus » qui démarre Corvus à l'ouverture de session (fenêtre masquée,
 #      journal dans data\corvus.log, redémarrage automatique en cas d'arrêt) ;
@@ -26,8 +26,10 @@ function Find-Node {
   $cmd = Get-Command node -ErrorAction SilentlyContinue
   if (-not $cmd -and (Test-Path "$root\.tools\node\node.exe")) { $env:Path = "$root\.tools\node;$env:Path"; $cmd = Get-Command node -ErrorAction SilentlyContinue }
   if (-not $cmd) { return $null }
-  $major = [int](& $cmd.Source -p 'process.versions.node.split(".")[0]')
-  if ($major -lt 20) { return $null }
+  $v = (& $cmd.Source -p 'process.versions.node')
+  $major = [int]($v.Split('.')[0])
+  $minor = [int]($v.Split('.')[1])
+  if ($major -lt 22 -or ($major -eq 22 -and $minor -lt 13)) { return $null }
   return $cmd.Source
 }
 
@@ -49,13 +51,13 @@ if ($Uninstall) {
 $node = Find-Node
 if (-not $node) {
   if (Get-Command winget -ErrorAction SilentlyContinue) {
-    Say 'Node.js 20+ introuvable : installation via winget (OpenJS.NodeJS.LTS)…'
+    Say 'Node.js 22.13+ introuvable : installation via winget (OpenJS.NodeJS.LTS)…'
     winget install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
     # Recharge le PATH de la session courante pour voir le Node qui vient d'être installé.
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
     $node = Find-Node
   }
-  if (-not $node) { throw 'Node.js 20+ est requis : installez-le depuis https://nodejs.org (version LTS), rouvrez PowerShell, puis relancez ce script.' }
+  if (-not $node) { throw 'Node.js 22.13+ est requis : installez-le depuis https://nodejs.org (version LTS), rouvrez PowerShell, puis relancez ce script.' }
 }
 Say "Node.js $(& $node -v) : $node"
 

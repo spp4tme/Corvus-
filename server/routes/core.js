@@ -144,12 +144,13 @@ export function hostRoutes(ctx) {
     const limit = v.int(req.query.limit, 'limit', { min: 1, max: 2000, def: 200 });
     const type = req.query.type ? v.str(req.query.type, 'type', { max: 20 }) : undefined;
     const hostId = req.query.hostId ? v.id(req.query.hostId) : undefined;
-    res.json({ entries: journal.list({ limit, type, hostId }) });
+    const before = req.query.before ? v.int(req.query.before, 'before', { min: 1 }) : undefined;
+    res.json({ entries: journal.list({ limit, type, hostId, before }), head: journal.head() });
   });
 
-  r.delete('/journal', (req, res) => {
-    journal.clear();
-    res.json({ ok: true });
+  // Le journal d'audit n'est jamais vidé (chaîne infalsifiable) : vérification à la place.
+  r.get('/journal/verify', (req, res) => {
+    res.json({ ...journal.verify(), head: journal.head() });
   });
 
   return r;

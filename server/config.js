@@ -25,6 +25,16 @@ export const config = Object.freeze({
   bind: env.BIND || '127.0.0.1',
   allowPublicBind: bool(env.CORVUS_ALLOW_PUBLIC_BIND, false),
   dataDir: path.resolve(env.CORVUS_DATA || path.join(ROOT, 'data')),
+  // Données lourdes (base SQLite, blobs, sauvegardes) : ex. un SSD externe. Vide = CORVUS_DATA.
+  storageDir: env.CORVUS_STORAGE ? path.resolve(env.CORVUS_STORAGE) : '',
+  minFreeMb: int(env.CORVUS_MIN_FREE_MB, 2048),
+  // Rétention (jours) : métriques détaillées, agrégats horaires, enregistrements de session.
+  retention: {
+    metricsRawDays: int(env.RETENTION_METRICS_RAW_DAYS, 7),
+    metricsHourlyDays: int(env.RETENTION_METRICS_HOURLY_DAYS, 365),
+    recordingsDays: int(env.RETENTION_RECORDINGS_DAYS, 90),
+    undoDays: int(env.RETENTION_UNDO_DAYS, 30),
+  },
   masterPassphrase: env.CORVUS_MASTER_PASSPHRASE || '',
   allowedOrigins: list(env.CORVUS_ALLOWED_ORIGINS),
   // 'loopback' : on fait confiance à X-Forwarded-* uniquement depuis 127.0.0.1 (tailscale serve)

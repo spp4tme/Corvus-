@@ -1,22 +1,49 @@
 // Registre des hôtes. Les secrets (mot de passe, clé, passphrase) vivent dans le coffre
 // chiffré et ne sont JAMAIS renvoyés au frontend.
 import crypto from 'node:crypto';
-import path from 'node:path';
 import ssh2 from 'ssh2';
-import { JsonStore } from './store.js';
 import * as v from './validate.js';
 
 const AUTH_TYPES = ['password', 'key', 'agent'];
 export const newId = () => crypto.randomBytes(8).toString('hex');
 
+// Colonnes de la table `hosts` ↔ objet hôte utilisé partout ailleurs.
+export function rowToHost(r) {
+  const extra = JSON.parse(r.extra || '{}');
+  return {
+    id: r.id, name: r.name, hostname: r.hostname, port: r.port, username: r.username, authType: r.auth_type,
+    icon: r.icon, group: r.grp, pinned: !!r.pinned, tmux: !!r.tmux, tmuxSession: r.tmux_session,
+    claudeDir: r.claude_dir, claudeCmd: r.claude_cmd, repos: JSON.parse(r.repos || '[]'),
+    ...extra, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+const COLUMNS = new Set(['id', 'name', 'hostname', 'port', 'username', 'authType', 'icon', 'group', 'pinned', 'tmux',
+  'tmuxSession', 'claudeDir', 'claudeCmd', 'repos', 'createdAt', 'updatedAt']);
+function extraOf(host) {
+  const out = {};
+  for (const [k, val] of Object.entries(host)) if (!COLUMNS.has(k) && val !== undefined) out[k] = val;
+  return out;
+}
+
 export class HostRegistry {
-  constructor({ dataDir, vault }) {
+  constructor({ db, vault }) {
+    this.db = db;
     this.vault = vault;
-    this.store = new JsonStore(path.join(dataDir, 'hosts.json'), { hosts: [] });
   }
 
+  /** Tous les hôtes (objets « métier », lus depuis la base). */
   get hosts() {
-    return this.store.data.hosts;
+    return this.db.all('SELECT * FROM hosts ORDER BY created_at').map(rowToHost);
+  }
+
+  find(id) {
+    const row = this.db.get('SELECT * FROM hosts WHERE id = ?', id);
+    return row ? rowToHost(row) : null;
+  }
+
+  groups() {
+    return this.db.all("SELECT DISTINCT grp AS name FROM hosts WHERE grp <> '' ORDER BY grp").map((r) => r.name);
   }
 
   list() {
@@ -24,7 +51,7 @@ export class HostRegistry {
   }
 
   get(id) {
-    const h = this.hosts.find((x) => x.id === id);
+    const h = this.find(id);
     if (!h) throw new v.HttpError(404, 'NOT_FOUND', 'Hôte introuvable');
     return h;
   }
@@ -97,12 +124,29 @@ export class HostRegistry {
     return changed ? next : null;
   }
 
+  /** Écrit l'hôte (insertion ou mise à jour) et ses secrets dans une seule transaction. */
+  save(host, secrets) {
+    this.db.tx(() => {
+      if (host.group) this.db.run('INSERT OR IGNORE INTO host_groups (name, created_at) VALUES (?, ?)', host.group, Date.now());
+      this.db.run(`INSERT INTO hosts (id, name, hostname, port, username, auth_type, icon, grp, pinned, tmux, tmux_session,
+          claude_dir, claude_cmd, repos, extra, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, hostname = excluded.hostname, port = excluded.port,
+          username = excluded.username, auth_type = excluded.auth_type, icon = excluded.icon, grp = excluded.grp,
+          pinned = excluded.pinned, tmux = excluded.tmux, tmux_session = excluded.tmux_session,
+          claude_dir = excluded.claude_dir, claude_cmd = excluded.claude_cmd, repos = excluded.repos,
+          extra = excluded.extra, updated_at = excluded.updated_at`,
+      host.id, host.name, host.hostname, host.port, host.username, host.authType, host.icon, host.group || '',
+      !!host.pinned, !!host.tmux, host.tmuxSession || 'corvus', host.claudeDir || '', host.claudeCmd || 'claude',
+      JSON.stringify(host.repos || []), JSON.stringify(extraOf(host)), host.createdAt || Date.now(), host.updatedAt || Date.now());
+      if (secrets) this.vault.set(host.id, secrets);
+    });
+  }
+
   create(input) {
     const host = this.parse(input);
     const secrets = this.parseSecrets(input);
-    this.hosts.push(host);
-    this.store.save();
-    if (secrets) this.vault.set(host.id, secrets);
+    this.save(host, secrets);
     return this.publicView(host);
   }
 
@@ -110,17 +154,16 @@ export class HostRegistry {
     const current = this.get(id);
     const next = this.parse(input, current);
     const secrets = this.parseSecrets(input, this.vault.get(id) || {});
-    Object.assign(current, next);
-    this.store.save();
-    if (secrets) this.vault.set(id, secrets);
-    return this.publicView(current);
+    this.save(next, secrets);
+    return this.publicView(next);
   }
 
   delete(id) {
     this.get(id);
-    this.store.data.hosts = this.hosts.filter((h) => h.id !== id);
-    this.store.save();
-    this.vault.delete(id);
+    this.db.tx(() => {
+      this.db.run('DELETE FROM hosts WHERE id = ?', id);
+      this.vault.delete(id);
+    });
   }
 
   /** Construit la configuration ssh2 (avec secrets) — usage interne uniquement. */

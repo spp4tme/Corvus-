@@ -1,7 +1,5 @@
 // Vérification des host keys SSH en mode TOFU (Trust On First Use).
 import crypto from 'node:crypto';
-import path from 'node:path';
-import { JsonStore } from './store.js';
 
 export function fingerprint(keyBuf) {
   return 'SHA256:' + crypto.createHash('sha256').update(keyBuf).digest('base64').replace(/=+$/, '');
@@ -17,14 +15,16 @@ export function keyType(keyBuf) {
 }
 
 export class KnownHosts {
-  constructor(dataDir) {
-    this.store = new JsonStore(path.join(dataDir, 'known_hosts.json'), { hosts: {} });
+  /** @param {import('../db/index.js').Db} db */
+  constructor(db) {
+    this.db = db;
   }
   static key(hostname, port) {
     return `${hostname}:${port}`;
   }
   get(hostname, port) {
-    return this.store.data.hosts[KnownHosts.key(hostname, port)] || null;
+    const r = this.db.get('SELECT fingerprint, type, added_at FROM known_hosts WHERE host_port = ?', KnownHosts.key(hostname, port));
+    return r ? { fingerprint: r.fingerprint, type: r.type, addedAt: r.added_at } : null;
   }
   /**
    * @returns {{status: 'known'|'new'|'mismatch', fingerprint, type, expected?}}
@@ -38,11 +38,11 @@ export class KnownHosts {
     return { status: 'mismatch', fingerprint: fp, type, expected: known.fingerprint, expectedType: known.type };
   }
   remember(hostname, port, fp, type) {
-    this.store.data.hosts[KnownHosts.key(hostname, port)] = { fingerprint: fp, type, addedAt: Date.now() };
-    this.store.save();
+    this.db.run(`INSERT INTO known_hosts (host_port, fingerprint, type, added_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(host_port) DO UPDATE SET fingerprint = excluded.fingerprint, type = excluded.type, added_at = excluded.added_at`,
+    KnownHosts.key(hostname, port), fp, type, Date.now());
   }
   forget(hostname, port) {
-    delete this.store.data.hosts[KnownHosts.key(hostname, port)];
-    this.store.save();
+    this.db.run('DELETE FROM known_hosts WHERE host_port = ?', KnownHosts.key(hostname, port));
   }
 }

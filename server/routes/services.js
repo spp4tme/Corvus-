@@ -13,7 +13,7 @@ export function serviceRoutes({ proxy, push, config }) {
     res.json(await proxy.open(v.str(req.params.id, 'id', { min: 12, max: 12 })));
   });
 
-  r.get('/push/key', (req, res) => res.json({ publicKey: push.publicKey, subscriptions: push.subs.data.subscriptions.length }));
+  r.get('/push/key', (req, res) => res.json({ publicKey: push.publicKey, subscriptions: push.count() }));
   r.post('/push/subscribe', (req, res) => res.json(push.subscribe(req.body)));
   r.delete('/push/subscribe', (req, res) => { push.unsubscribe(String(req.body?.endpoint || '')); res.json({ ok: true }); });
   r.post('/push/test', async (req, res) => res.json(await push.notify({ title: 'Corvus', body: 'Notification de test ✔' })));

@@ -1,119 +1,142 @@
-// Coffre de secrets chiffré au repos : AES-256-GCM, clé dérivée par scrypt
-// d'une passphrase maître (CORVUS_MASTER_PASSPHRASE) ou, à défaut, du token d'accès.
+// Coffre de secrets chiffré au repos, stocké dans SQLite.
+//
+// Deux niveaux de clés (« enveloppe ») :
+//  - une clé de données (DEK) aléatoire chiffre les secrets ET les blobs (enregistrements,
+//    sauvegardes de fichiers) en AES-256-GCM ;
+//  - la DEK est elle-même chiffrée par une clé dérivée (scrypt) de la passphrase maître
+//    (CORVUS_MASTER_PASSPHRASE) ou, à défaut, du token d'amorçage.
+// Changer de passphrase ou de token ne ré-chiffre donc que la DEK (32 octets), pas les blobs.
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import { readJson, writeJson } from './store.js';
 import { HttpError } from './validate.js';
 
-const AAD = Buffer.from('corvus-secrets-v1');
+const AAD = Buffer.from('corvus-secrets-v2');
 const KDF = { N: 2 ** 15, r: 8, p: 1 };
 
-function deriveKey(material, salt, params = KDF) {
-  return crypto.scryptSync(material, salt, 32, { ...params, maxmem: 128 * params.N * params.r * 2 });
+export function deriveKey(material, salt, params = KDF) {
+  return crypto.scryptSync(material, salt, 32, { N: params.N, r: params.r, p: params.p, maxmem: 128 * params.N * params.r * 2 });
 }
 
-function encrypt(key, obj) {
+function seal(key, plain, aad = AAD) {
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  cipher.setAAD(AAD);
-  const ct = Buffer.concat([cipher.update(JSON.stringify(obj), 'utf8'), cipher.final()]);
-  return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), ct: ct.toString('base64') };
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+  c.setAAD(aad);
+  const ct = Buffer.concat([c.update(plain), c.final()]);
+  return { iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), ct: ct.toString('base64') };
 }
 
-function decrypt(key, box) {
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(box.iv, 'base64'));
-  decipher.setAAD(AAD);
-  decipher.setAuthTag(Buffer.from(box.tag, 'base64'));
-  const pt = Buffer.concat([decipher.update(Buffer.from(box.ct, 'base64')), decipher.final()]);
-  return JSON.parse(pt.toString('utf8'));
+function open(key, box, aad = AAD) {
+  const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(box.iv, 'base64'));
+  d.setAAD(aad);
+  d.setAuthTag(Buffer.from(box.tag, 'base64'));
+  return Buffer.concat([d.update(Buffer.from(box.ct, 'base64')), d.final()]);
+}
+
+/** Déchiffre l'ancien fichier secrets.enc.json (format v1) — utilisé par la migration. */
+export function openLegacyVault(existing, { token, passphrase }) {
+  const material = existing.kdf.src === 'passphrase' ? passphrase : token;
+  if (!material) throw new Error('Les anciens secrets sont protégés par une passphrase maître : définissez CORVUS_MASTER_PASSPHRASE.');
+  const key = deriveKey(material, Buffer.from(existing.kdf.salt, 'base64'), existing.kdf);
+  return JSON.parse(open(key, existing.box, Buffer.from('corvus-secrets-v1')).toString('utf8'));
 }
 
 export class Vault {
   /**
-   * @param {string} file chemin du fichier chiffré
+   * @param {import('../db/index.js').Db} db
    * @param {{token: string, passphrase?: string}} materials
    */
-  constructor(file, { token, passphrase }) {
-    this.file = file;
+  constructor(db, { token, passphrase }) {
+    this.db = db;
     this.source = passphrase ? 'passphrase' : 'token';
     const material = passphrase || token;
-    const existing = readJson(file, null);
+    const kdf = db.getMeta('vault.kdf');
 
-    if (!existing) {
-      this.salt = crypto.randomBytes(16);
-      this.key = deriveKey(material, this.salt);
-      this.secrets = {};
-      this.save();
-      return;
+    if (!kdf) {
+      this.dek = crypto.randomBytes(32);
+      this.wrap(material);
+    } else {
+      if (kdf.src === 'passphrase' && !passphrase) {
+        throw new Error('Les secrets sont protégés par une passphrase maître : définissez CORVUS_MASTER_PASSPHRASE.');
+      }
+      const kek = deriveKey(kdf.src === 'passphrase' ? passphrase : token, Buffer.from(kdf.salt, 'base64'), kdf);
+      try {
+        this.dek = open(kek, db.getMeta('vault.dek'));
+      } catch {
+        throw new Error(kdf.src === 'passphrase'
+          ? 'Passphrase maître incorrecte : impossible de déchiffrer les secrets.'
+          : 'Impossible de déchiffrer les secrets avec le token actuel (data/token modifié à la main ?).');
+      }
+      this.salt = kdf.salt;
+      // Une passphrase vient d'être définie (ou retirée) : on ré-emballe la DEK.
+      if (kdf.src !== this.source) this.wrap(material);
     }
-
-    this.salt = Buffer.from(existing.kdf.salt, 'base64');
-    const params = { N: existing.kdf.N, r: existing.kdf.r, p: existing.kdf.p };
-
-    if (existing.kdf.src === 'passphrase' && !passphrase) {
-      throw new Error('Les secrets sont protégés par une passphrase maître : définissez CORVUS_MASTER_PASSPHRASE.');
+    this.secrets = new Map();
+    for (const row of db.all('SELECT id, iv, tag, ct FROM secrets')) {
+      this.secrets.set(row.id, JSON.parse(open(this.dek, row).toString('utf8')));
     }
-    // Migration automatique token → passphrase si une passphrase vient d'être définie.
-    const openMaterial = existing.kdf.src === 'passphrase' ? passphrase : token;
-    try {
-      this.secrets = decrypt(deriveKey(openMaterial, this.salt, params), existing.box);
-    } catch {
-      throw new Error(existing.kdf.src === 'passphrase'
-        ? 'Passphrase maître incorrecte : impossible de déchiffrer les secrets.'
-        : 'Impossible de déchiffrer les secrets avec le token actuel (data/token modifié à la main ?).');
-    }
-    if (existing.kdf.src !== this.source) {
-      this.salt = crypto.randomBytes(16);
-    }
-    this.key = deriveKey(material, this.salt);
-    this.diskSalt = existing.kdf.salt;
-    if (existing.kdf.src !== this.source) this.save({ force: true });
   }
 
-  /** Re-chiffre tout avec un nouveau matériau (rotation du token). */
+  /** Chiffre la DEK avec une clé dérivée de `material` (nouveau sel). */
+  wrap(material) {
+    const salt = crypto.randomBytes(16).toString('base64');
+    const kek = deriveKey(material, Buffer.from(salt, 'base64'));
+    this.db.tx(() => {
+      this.db.setMeta('vault.kdf', { alg: 'scrypt', src: this.source, salt, ...KDF });
+      this.db.setMeta('vault.dek', seal(kek, this.dek));
+    });
+    this.salt = salt;
+  }
+
+  /** Rotation du token ou de la passphrase : seule la DEK est ré-emballée. */
   rekey({ token, passphrase }) {
     this.source = passphrase ? 'passphrase' : 'token';
-    this.salt = crypto.randomBytes(16);
-    this.key = deriveKey(passphrase || token, this.salt);
-    this.save({ force: true });
+    this.wrap(passphrase || token);
   }
 
-  save({ force = false } = {}) {
-    // Si le fichier a été re-chiffré par ailleurs (`npm run token:rotate` pendant que le serveur
-    // tourne), l'écraser avec l'ancienne clé rendrait tous les secrets indéchiffrables au redémarrage.
-    if (!force && this.diskSalt) {
-      const onDisk = readJson(this.file, null);
-      if (onDisk?.kdf?.salt && onDisk.kdf.salt !== this.diskSalt) {
-        throw new HttpError(409, 'VAULT_ROTATED', 'Le token ou la passphrase a été renouvelé : redémarrez Corvus avant de modifier des secrets.');
-      }
+  /**
+   * Un autre processus (`npm run token:rotate`) a ré-emballé la DEK pendant que le serveur
+   * tourne : on refuse d'écrire, le redémarrage remettra tout d'aplomb.
+   */
+  guard() {
+    const kdf = this.db.getMeta('vault.kdf');
+    if (kdf && kdf.salt !== this.salt) {
+      throw new HttpError(409, 'VAULT_ROTATED', 'Le token ou la passphrase a été renouvelé : redémarrez Corvus avant de modifier des secrets.');
     }
-    const salt = this.salt.toString('base64');
-    writeJson(this.file, {
-      v: 1,
-      kdf: { alg: 'scrypt', src: this.source, salt, ...KDF },
-      box: encrypt(this.key, this.secrets),
-    });
-    this.diskSalt = salt;
   }
 
   get(id) {
-    return this.secrets[id] ? { ...this.secrets[id] } : null;
+    const v = this.secrets.get(id);
+    return v ? structuredClone(v) : null;
   }
 
   set(id, value) {
-    if (value && Object.keys(value).length) this.secrets[id] = value;
-    else delete this.secrets[id];
-    this.save();
+    if (!value || (typeof value === 'object' && !Object.keys(value).length)) return this.delete(id);
+    this.guard();
+    const box = seal(this.dek, Buffer.from(JSON.stringify(value), 'utf8'));
+    this.db.run(`INSERT INTO secrets (id, iv, tag, ct, updated_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET iv = excluded.iv, tag = excluded.tag, ct = excluded.ct, updated_at = excluded.updated_at`,
+    id, box.iv, box.tag, box.ct, Date.now());
+    this.secrets.set(id, structuredClone(value));
   }
 
   delete(id) {
-    if (this.secrets[id]) {
-      delete this.secrets[id];
-      this.save();
-    }
+    if (!this.secrets.has(id)) return;
+    this.db.run('DELETE FROM secrets WHERE id = ?', id);
+    this.secrets.delete(id);
   }
 
-  static exists(file) {
-    return fs.existsSync(file);
+  /** Chiffrement de contenus binaires (blobs) : iv(12) | tag(16) | données. */
+  encryptBuffer(buf, label = 'blob') {
+    const iv = crypto.randomBytes(12);
+    const c = crypto.createCipheriv('aes-256-gcm', this.dek, iv);
+    c.setAAD(Buffer.from(`corvus-${label}`));
+    const ct = Buffer.concat([c.update(buf), c.final()]);
+    return Buffer.concat([iv, c.getAuthTag(), ct]);
+  }
+
+  decryptBuffer(buf, label = 'blob') {
+    const d = crypto.createDecipheriv('aes-256-gcm', this.dek, buf.subarray(0, 12));
+    d.setAAD(Buffer.from(`corvus-${label}`));
+    d.setAuthTag(buf.subarray(12, 28));
+    return Buffer.concat([d.update(buf.subarray(28)), d.final()]);
   }
 }

@@ -4,8 +4,6 @@
 // Déclencheur : la séquence OSC 777 « notify » émise dans un terminal (voir docs/notifications.md).
 import crypto from 'node:crypto';
 import https from 'node:https';
-import path from 'node:path';
-import { JsonStore, readJson, writeJson } from './store.js';
 import { HttpError } from './validate.js';
 import * as v from './validate.js';
 import { logger } from './log.js';
@@ -16,8 +14,9 @@ const PUSH_HOSTS = [/\.googleapis\.com$/, /\.push\.services\.mozilla\.com$/, /\.
 
 const b64url = (buf) => Buffer.from(buf).toString('base64url');
 
-function loadKeys(file) {
-  const existing = readJson(file, null);
+// Clés VAPID conservées dans le coffre chiffré.
+function loadKeys(vault) {
+  const existing = vault.get('push:vapid');
   if (existing?.privateJwk) return existing;
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const pub = publicKey.export({ format: 'jwk' });
@@ -25,15 +24,15 @@ function loadKeys(file) {
     privateJwk: privateKey.export({ format: 'jwk' }),
     publicKey: b64url(Buffer.concat([Buffer.from([4]), Buffer.from(pub.x, 'base64url'), Buffer.from(pub.y, 'base64url')])),
   };
-  writeJson(file, keys);
+  vault.set('push:vapid', keys);
   return keys;
 }
 
 export class PushService {
-  constructor({ dataDir, config, journal }) {
-    this.keys = loadKeys(path.join(dataDir, 'vapid.json'));
+  constructor({ db, vault, config, journal }) {
+    this.db = db;
+    this.keys = loadKeys(vault);
     this.privateKey = crypto.createPrivateKey({ key: this.keys.privateJwk, format: 'jwk' });
-    this.subs = new JsonStore(path.join(dataDir, 'push.json'), { subscriptions: [] });
     this.subject = config.vapidSubject;
     this.journal = journal;
     this.latest = null;
@@ -56,16 +55,25 @@ export class PushService {
   subscribe(body) {
     const endpoint = this.validateEndpoint(body?.endpoint);
     const label = v.str(body?.label ?? '', 'appareil', { max: 80 });
-    const list = this.subs.data.subscriptions.filter((x) => x.endpoint !== endpoint);
-    list.push({ endpoint, label, createdAt: Date.now() });
-    this.subs.data.subscriptions = list.slice(-20);
-    this.subs.save();
-    return { count: this.subs.data.subscriptions.length };
+    this.db.tx(() => {
+      this.db.run(`INSERT INTO push_subscriptions (endpoint, user_id, label, created_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(endpoint) DO UPDATE SET label = excluded.label, user_id = excluded.user_id`, endpoint, body?.userId ?? null, label, Date.now());
+      // 20 appareils au plus : les plus anciens sont oubliés.
+      this.db.run('DELETE FROM push_subscriptions WHERE endpoint NOT IN (SELECT endpoint FROM push_subscriptions ORDER BY created_at DESC LIMIT 20)');
+    });
+    return { count: this.count() };
   }
 
   unsubscribe(endpoint) {
-    this.subs.data.subscriptions = this.subs.data.subscriptions.filter((x) => x.endpoint !== endpoint);
-    this.subs.save();
+    this.db.run('DELETE FROM push_subscriptions WHERE endpoint = ?', endpoint);
+  }
+
+  count() {
+    return this.db.get('SELECT COUNT(*) AS n FROM push_subscriptions').n;
+  }
+
+  subscriptions() {
+    return this.db.all('SELECT endpoint, user_id AS userId, label FROM push_subscriptions');
   }
 
   vapidHeader(endpoint) {
@@ -95,7 +103,7 @@ export class PushService {
   /** @param {{title: string, body: string, sessionId?: string, hostId?: string}} n */
   async notify(n) {
     this.latest = { title: String(n.title || 'Corvus').slice(0, 120), body: String(n.body || '').slice(0, 400), sessionId: n.sessionId, hostId: n.hostId, ts: Date.now() };
-    const subs = [...this.subs.data.subscriptions];
+    const subs = this.subscriptions();
     if (!subs.length) return { sent: 0 };
     let sent = 0;
     const dead = [];
@@ -106,8 +114,7 @@ export class PushService {
       else log.warn(`push refusé (${code}) pour ${new URL(s.endpoint).hostname}`);
     }));
     if (dead.length) {
-      this.subs.data.subscriptions = this.subs.data.subscriptions.filter((x) => !dead.includes(x.endpoint));
-      this.subs.save();
+      for (const e of dead) this.unsubscribe(e);
     }
     return { sent };
   }
