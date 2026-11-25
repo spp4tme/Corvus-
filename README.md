@@ -527,6 +527,17 @@ déclenche une alerte push et rejoint la liste « À examiner » (**Autoriser** 
 une heure habituellement calme (< 1 % de l'activité apprise), l'alerte est critique et, si vous avez activé l'option
 pour l'hôte, le programme est **gelé** en attendant votre décision. Règles et statistiques, aucune IA.
 
+### Anti-ransomware (agent requis)
+Lancez l'agent avec `--canary /home/vous/Documents` (fichiers pièges `!corvus-leurre-*`, ajoutés à la surveillance) et
+éventuellement `--ransom-threshold 20`. Corvus alerte (critique, push) quand un fichier piège est touché ou qu'une rafale
+de fichiers « devient aléatoire » (entropie), et nomme le processus qui écrit le plus. **Options par hôte, désactivées
+par défaut** : geler cet écrivain (SIGSTOP), **isoler l'hôte du réseau** (nftables ; Tailscale et le serveur Corvus
+restent toujours joignables ; levée automatique après 15 min). La restauration se fait ensuite par **Rembobiner**.
+Essai sans risque : `bash deploy/demo/fake-ransomware.sh prepare` puis `attack` (le script refuse tout dossier autre que
+celui qu'il crée dans `/tmp`). **Limites** : sans eBPF/fanotify, l'attribution au processus est une estimation ; les fichiers
+> 512 Ko sont détectés mais pas restaurables ; l'isolement dépend du marquage `0x80000` de tailscaled et n'a pas été
+éprouvé avec un vrai tailscaled — gardez un accès console et testez d'abord sur un hôte non critique.
+
 ### Rembobiner un hôte (agent requis)
 L'agent surveille `/etc` et les crontabs (option `--watch dossier1,dossier2`) par balayage toutes les 10 s,
 ainsi que les ports en écoute, les services systemd et les paquets (journal dpkg). Chaque version de fichier

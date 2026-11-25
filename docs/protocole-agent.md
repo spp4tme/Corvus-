@@ -110,6 +110,24 @@ L'agent refuse : pid ≤ 1, un `start` qui ne correspond plus (pid réutilisé),
 protégés (`systemd`, `sshd`, `tailscaled`, `corvus-agent`…) et l'agent lui-même ou ses ancêtres.
 **Limite** : sondage, pas eBPF — un processus vivant moins de 2 s n'est pas vu.
 
+## 5 quater. Anti-ransomware (étape 7.3)
+- **Entropie** : pour chaque fichier changé, l'agent calcule l'entropie de Shannon des 64 premiers Ko (`entropy`,
+  `prevEntropy` dans les événements `file.*`). Suspect : un fichier ordinaire (< 6,5) devenu aléatoire (≥ 7,5),
+  ou un nouveau fichier ≥ 1 Ko à entropie ≥ 7,5 (copie chiffrée « .locked »). `--ransom-threshold N` (20) fichiers
+  suspects en 30 s → `ransom.suspect {count, sample, writers}` (silence de 5 min ensuite). Faux positifs possibles :
+  dépôt massif d'archives (zip, jpg) dans un dossier surveillé.
+- **Fichiers pièges** : `--canary dossiers` crée `!corvus-leurre-*.{xlsx,docx,txt}` (jamais écrasés) ; toute modification ou
+  suppression → `canary.touched {path, change, writers}`. Balayage toutes les 3 s dans ce mode (10 s sinon).
+- **Écrivains** : `writers` = les 3 processus ayant le plus écrit sur disque ces ~30 s (`write_bytes` de /proc/PID/io,
+  lisible seulement en root pour les autres utilisateurs). Un **candidat**, pas une preuve.
+- **Isolement** (`net.isolate {ttlSec}`, `net.release`, `net.status`) : table nftables `inet corvus_isolate`, priorité -300, politique
+  `drop` en entrée et sortie, sauf : `lo`, `tailscale0`, le trafic marqué `0x80000` (paquets de tailscaled, dont WireGuard direct),
+  `udp/41641`, et **les adresses du serveur Corvus**. Les connexions déjà établies sont coupées aussi. Refusé si l'adresse du
+  serveur est introuvable (l'agent s'en couperait). **Levée automatique** après `ttlSec` (60 s à 24 h, défaut 900 s), et au
+  démarrage de l'agent si le minuteur a été perdu. Root + `nft` requis. *Non testé avec un vrai tailscaled* (voir limites).
+- **Côté serveur** : alerte critique + journal ; options par hôte (désactivées par défaut) : gel de l'écrivain principal et
+  isolement automatique. Démonstration : `deploy/demo/fake-ransomware.sh` (confiné à son dossier de démo).
+
 ## 6. Limites
 - Balayage : pas de temps réel au-delà de 10 s ; fichiers > 512 Ko suivis sans contenu (non restaurables).
 - Si l'agent est hors ligne pendant qu'un fichier change deux fois, seule la dernière version est connue.

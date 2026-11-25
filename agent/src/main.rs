@@ -12,6 +12,7 @@ mod identity;
 mod metrics;
 mod preview;
 mod protocol;
+mod ransom;
 mod state;
 mod sys;
 mod watch;
@@ -59,6 +60,7 @@ fn capabilities(allow_preview: bool) -> Value {
         "packages": std::path::Path::new("/var/log/dpkg.log").exists(),
         "actions": actions::names(allow_preview),
         "preview": allow_preview && preview::available(),
+        "ransom": true, "isolation": ransom::available(), "xray": true,
         "fanotify": false, "ebpf": false,
     })
 }
@@ -75,6 +77,12 @@ struct Collector {
     allow_preview: bool,
     state: state::State,
     xray: xray::Xray,
+    io: ransom::IoTracker,
+    detector: ransom::Detector,
+    canaries: HashSet<String>,
+    server_url: String,
+    extra_allow: Vec<String>,
+    isolation_until: Option<Instant>,
     watcher: watch::Watcher,
     scan_every: Duration,
     next_scan: Instant,
@@ -86,6 +94,56 @@ struct Collector {
 }
 
 impl Collector {
+    /// Détections après chaque changement de fichier : fichier piège touché, rafale de fichiers chiffrés.
+    fn after_change(&mut self, buffer: &Buffer, ts: i64, kind: &str, body: &Value) {
+        let path = body["path"].as_str().unwrap_or("");
+        if self.canaries.contains(path) && matches!(kind, "file.modified" | "file.deleted") {
+            let writers = self.io.top(3, &xray::read_all());
+            let _ = buffer.push(ts, "canary.touched", &json!({ "path": path, "change": kind, "writers": writers }));
+        }
+        if let Some(mut ev) = self.detector.feed(Instant::now(), kind, body) {
+            ev["writers"] = json!(self.io.top(3, &xray::read_all()));
+            let _ = buffer.push(ts, "ransom.suspect", &ev);
+        }
+    }
+
+    /// Fin automatique de l'isolement (filet de sécurité : on ne reste jamais coupé du réseau indéfiniment).
+    fn check_isolation_expiry(&mut self, buffer: &Buffer) {
+        if self.isolation_until.is_some_and(|t| Instant::now() >= t) {
+            self.isolation_until = None;
+            let _ = self.state.set("isolation.until", "");
+            let r = ransom::release();
+            let _ = buffer.push(protocol::now_ms() as i64, "net.released", &json!({ "auto": true, "ok": r.is_ok(), "error": r.err() }));
+        }
+    }
+
+    /// Actions réseau (isolement). Retourne None si `name` n'en est pas une.
+    fn net_action(&mut self, name: &str, args: &Value, buffer: &Buffer) -> Option<Result<Value, String>> {
+        let ts = protocol::now_ms() as i64;
+        Some(match name {
+            "net.isolate" => (|| {
+                if !ransom::available() { return Err("isolement indisponible (agent non root ou nft absent)".to_string()); }
+                let ttl = args["ttlSec"].as_u64().unwrap_or(900).clamp(60, 86_400);
+                let allow = ransom::allowed_addresses(&self.server_url, &self.extra_allow);
+                ransom::isolate(&allow)?;
+                self.isolation_until = Some(Instant::now() + Duration::from_secs(ttl));
+                let until_ms = ts as u64 + ttl * 1000;
+                let _ = self.state.set("isolation.until", &until_ms.to_string());
+                let _ = buffer.push(ts, "net.isolated", &json!({ "ttlSec": ttl, "allow": allow.iter().map(|a| a.to_string()).collect::<Vec<_>>() }));
+                Ok(json!({ "isolated": true, "ttlSec": ttl, "allow": allow.iter().map(|a| a.to_string()).collect::<Vec<_>>() }))
+            })(),
+            "net.release" => ransom::release().map(|_| {
+                self.isolation_until = None;
+                let _ = self.state.set("isolation.until", "");
+                let _ = buffer.push(ts, "net.released", &json!({ "auto": false, "ok": true }));
+                json!({ "isolated": false })
+            }),
+            "net.status" => Ok(json!({ "available": ransom::available(), "isolated": ransom::available() && ransom::active(),
+                "remainingSec": self.isolation_until.map(|t| t.saturating_duration_since(Instant::now()).as_secs()) })),
+            _ => return None,
+        })
+    }
+
     /// Balayage immédiat (avant une action : l'état actuel d'un fichier doit être dans l'historique).
     fn scan_now(&mut self, buffer: &Buffer) {
         self.next_scan = Instant::now();
@@ -95,12 +153,16 @@ impl Collector {
     fn tick(&mut self, buffer: &Buffer) {
         let now = Instant::now();
         let ts = protocol::now_ms() as i64;
+        self.check_isolation_expiry(buffer);
         if now >= self.next_scan {
             self.next_scan = now + self.scan_every;
             let baseline = self.state.get("baseline.files").is_none();
             match self.watcher.scan(&self.state, baseline) {
                 Ok(changes) => {
-                    for c in changes { let _ = buffer.push(ts, c.kind, &c.body); }
+                    for c in changes {
+                        let _ = buffer.push(ts, c.kind, &c.body);
+                        self.after_change(buffer, ts, c.kind, &c.body);
+                    }
                     if baseline { let _ = self.state.set("baseline.files", "1"); }
                 }
                 Err(e) => eprintln!("balayage : {e}"),
@@ -110,6 +172,7 @@ impl Collector {
         if now >= self.next_xray {
             self.next_xray = now + Duration::from_secs(2);
             let all = xray::read_all();
+            self.io.record(now, &all);
             for e in self.xray.sample_procs(&all) { let _ = buffer.push(ts, e.kind, &e.body); }
             if now >= self.next_conns {
                 self.next_conns = now + Duration::from_secs(6);
@@ -171,7 +234,11 @@ fn run(args: &[String]) -> Result<(), String> {
     let identity = Identity::load(&dir.join("identity.json"))?;
     let interval = Duration::from_secs(opt(args, "--interval").and_then(|v| v.parse().ok()).unwrap_or(30).max(1));
     let buffer = Buffer::open(&dir.join("buffer.db")).map_err(|e| format!("tampon : {e}"))?;
-    let roots = watch_roots(args);
+    let mut roots = watch_roots(args);
+    // Fichiers pièges : --canary dossier1,dossier2 (ajoutés aux dossiers surveillés).
+    let canary_dirs: Vec<PathBuf> = opt(args, "--canary").map(|v| v.split(',').map(str::trim).filter(|p| p.starts_with('/') && std::path::Path::new(p).is_dir()).map(PathBuf::from).collect()).unwrap_or_default();
+    let canaries: HashSet<String> = ransom::create_canaries(&canary_dirs).into_iter().collect();
+    for d in &canary_dirs { if !roots.contains(d) { roots.push(d.clone()); } }
     let now = Instant::now();
     let mut collector = Collector {
         agent_dir: dir.clone(),
@@ -179,9 +246,25 @@ fn run(args: &[String]) -> Result<(), String> {
         state: state::State::open(&dir.join("state.db")).map_err(|e| format!("état : {e}"))?,
         xray: xray::Xray::default(),
         watcher: watch::Watcher { roots: roots.clone(), pending_dir: dir.join("pending") },
-        scan_every: Duration::from_secs(opt(args, "--scan-interval").and_then(|v| v.parse().ok()).unwrap_or(10).max(1)),
+        scan_every: Duration::from_secs(opt(args, "--scan-interval").and_then(|v| v.parse().ok()).unwrap_or(if canaries.is_empty() { 10 } else { 3 }).max(1)),
+        io: ransom::IoTracker::default(),
+        detector: ransom::Detector::new(opt(args, "--ransom-threshold").and_then(|v| v.parse().ok()).unwrap_or(20).max(2), 30),
+        canaries,
+        server_url: identity.server.clone(),
+        extra_allow: opt(args, "--isolate-allow").map(|v| v.split(',').map(|x| x.trim().to_string()).collect()).unwrap_or_default(),
+        isolation_until: None,
         next_scan: now, next_ports: now, next_services: now, next_pkgs: now, next_xray: now, next_conns: now,
     };
+    // Démarrage prudent : un isolement oublié (agent redémarré, minuteur perdu) ne doit jamais durer.
+    if ransom::available() && ransom::active() {
+        let until: u64 = collector.state.get("isolation.until").and_then(|v| v.parse().ok()).unwrap_or(0);
+        if until <= protocol::now_ms() {
+            let ok = ransom::release().is_ok();
+            let _ = buffer.push(protocol::now_ms() as i64, "net.released", &json!({ "auto": true, "atStart": true, "ok": ok }));
+        } else {
+            collector.isolation_until = Some(Instant::now() + Duration::from_millis(until - protocol::now_ms()));
+        }
+    }
     buffer.push(protocol::now_ms() as i64, "agent.start", &json!({ "version": VERSION, "watch": roots })).map_err(|e| e.to_string())?;
     eprintln!("surveillance : {roots:?}");
 
@@ -302,8 +385,13 @@ fn session(identity: &Identity, buffer: &Buffer, collector: &mut Collector, inte
                     // Action NOMMÉE demandée par Corvus : validée par `actions::run`, jamais exécutée comme commande.
                     let name = msg["body"]["name"].as_str().unwrap_or("");
                     collector.scan_now(buffer);
-                    let ctx = actions::Context { roots: &collector.watcher.roots, agent_dir: &collector.agent_dir, allow_preview: collector.allow_preview };
-                    let result = actions::run(&ctx, name, &msg["body"]["args"]);
+                    let result = match collector.net_action(name, &msg["body"]["args"], buffer) {
+                        Some(r) => r,
+                        None => {
+                            let ctx = actions::Context { roots: &collector.watcher.roots, agent_dir: &collector.agent_dir, allow_preview: collector.allow_preview };
+                            actions::run(&ctx, name, &msg["body"]["args"])
+                        }
+                    };
                     let ts = protocol::now_ms() as i64;
                     let (ok, payload) = match &result { Ok(v) => (true, json!({ "data": v })), Err(e) => (false, json!({ "error": e })) };
                     let _ = buffer.push(ts, "action.done", &json!({ "name": name, "ok": ok, "path": msg["body"]["args"]["path"] }));

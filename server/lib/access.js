@@ -42,6 +42,8 @@ export function hostLevel(method, sub, body) {
   if (sub === '/rewind/restore') return 'admin';
   // Réglages de l'empreinte du normal (apprentissage, gel automatique) : administrateur de l'hôte.
   if (sub === '/behavior/settings' || sub === '/behavior/restart') return 'admin';
+  // Isolement réseau d'un hôte : coupe presque tout le trafic, donc administrateur de l'hôte (lecture de l'état : viewer).
+  if (sub === '/isolation' && !read) return 'admin';
   return read ? 'viewer' : 'operator';
 }
 

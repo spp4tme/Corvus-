@@ -19,7 +19,7 @@ const MAX_BATCH = 500;
 export const MAX_VERSION_BYTES = 512 * 1024;
 const SHA_RE = /^[0-9a-f]{64}$/;
 /** Actions nommées que Corvus peut demander (l'agent les valide à son tour). Jamais de commande shell. */
-export const ACTIONS = new Set(['file.restore', 'file.remove', 'preview.run', 'preview.apply', 'xray.live', 'proc.freeze', 'proc.thaw', 'proc.kill']);
+export const ACTIONS = new Set(['file.restore', 'file.remove', 'preview.run', 'preview.apply', 'xray.live', 'proc.freeze', 'proc.thaw', 'proc.kill', 'net.status', 'net.isolate', 'net.release']);
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const b64 = (buf) => Buffer.from(buf).toString('base64');

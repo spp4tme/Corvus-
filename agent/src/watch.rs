@@ -52,11 +52,31 @@ fn sha256_hex(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
-fn info_of(path: &Path, md: &fs::Metadata, sha: Option<String>) -> FileInfo {
+/// Entropie de Shannon en bits par octet (0 = uniforme, 8 = aléatoire). Un fichier chiffré approche 8 ;
+/// du texte ou un document non compressé reste sous 6.
+pub fn entropy(sample: &[u8]) -> Option<f64> {
+    if sample.len() < 512 { return None; } // trop court pour être significatif
+    let mut counts = [0u32; 256];
+    for b in sample { counts[*b as usize] += 1; }
+    let n = sample.len() as f64;
+    Some(-counts.iter().filter(|c| **c > 0).map(|c| { let p = *c as f64 / n; p * p.log2() }).sum::<f64>())
+}
+
+const ENTROPY_SAMPLE: usize = 64 * 1024;
+
+fn entropy_of_file(path: &Path, data: &Option<Vec<u8>>) -> Option<f64> {
+    if let Some(d) = data { return entropy(&d[..d.len().min(ENTROPY_SAMPLE)]); }
+    use std::io::Read;
+    let mut buf = vec![0u8; ENTROPY_SAMPLE];
+    let n = fs::File::open(path).ok()?.read(&mut buf).ok()?;
+    entropy(&buf[..n])
+}
+
+fn info_of(path: &Path, md: &fs::Metadata, sha: Option<String>, entropy: Option<f64>) -> FileInfo {
     FileInfo {
         path: path.to_string_lossy().into_owned(), sha, size: md.len() as i64,
         mtime_ns: md.mtime() * 1_000_000_000 + md.mtime_nsec(), inode: md.ino() as i64,
-        mode: md.mode() & 0o7777, uid: md.uid(), gid: md.gid(),
+        mode: md.mode() & 0o7777, uid: md.uid(), gid: md.gid(), entropy,
     }
 }
 
@@ -66,6 +86,7 @@ fn body_of(f: &FileInfo, prev: Option<&FileInfo>) -> Value {
     json!({
         "path": f.path, "sha": f.sha, "prevSha": prev.and_then(|p| p.sha.clone()), "size": f.size,
         "mode": f.mode, "uid": f.uid, "gid": f.gid,
+        "entropy": f.entropy.map(|e| (e * 100.0).round() / 100.0), "prevEntropy": prev.and_then(|p| p.entropy).map(|e| (e * 100.0).round() / 100.0),
         "noContent": secret || too_big || f.sha.is_none(),
         "reason": if secret { "secret" } else if too_big { "trop-gros" } else { "" },
     })
@@ -102,7 +123,8 @@ impl Watcher {
             let sha = if md.len() <= MAX_VERSION_BYTES {
                 match fs::read(&p) { Ok(d) => { let s = sha256_hex(&d); data = Some(d); Some(s) } Err(_) => None }
             } else { None };
-            let info = info_of(&p, &md, sha.clone());
+            let ent = entropy_of_file(&p, &data);
+            let info = info_of(&p, &md, sha.clone(), ent);
             let same_content = prev.is_some_and(|k| k.sha == sha && sha.is_some());
             let kind = match prev {
                 None if baseline => "file.baseline",
@@ -217,5 +239,19 @@ mod tests {
         fs::set_permissions(racine.join("x"), fs::Permissions::from_mode(0o600)).unwrap();
         let c = w.scan(&etat, false).unwrap();
         assert_eq!(c[0].kind, "file.meta");
+    }
+}
+
+#[cfg(test)]
+mod tests_entropie {
+    use super::*;
+
+    #[test]
+    fn texte_bas_aleatoire_haut() {
+        let texte = "Bonjour, ceci est un document de test assez ordinaire. ".repeat(100);
+        assert!(entropy(texte.as_bytes()).unwrap() < 5.0);
+        let alea: Vec<u8> = (0..65536u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8 ^ (i >> 5) as u8).collect();
+        assert!(entropy(&alea).unwrap() > 7.5, "{:?}", entropy(&alea));
+        assert!(entropy(b"court").is_none());
     }
 }

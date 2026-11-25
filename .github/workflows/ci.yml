@@ -28,6 +28,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check:pure
+      # L'agent Rust est compilé AVANT les tests : sinon les tests d'interopérabilité (vrai binaire contre vrai serveur)
+      # sont ignorés. Les runners GitHub ont sudo sans mot de passe : la prévisualisation (agent root) est testée aussi.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compiler l'agent (tests d'interopérabilité)
+        working-directory: agent
+        run: cargo build
       - name: Tests (unitaires, e2e, interface)
         env:
           CORVUS_TEST_BROWSER: chrome

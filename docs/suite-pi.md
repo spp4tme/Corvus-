@@ -44,57 +44,35 @@ Ce document reprend le travail là où le PC Windows s'est arrêté. Lisez d'abo
    runners ARM64 gratuits n'existent que pour les dépôts publics).
 9. Notifications push d'alerte (hôte injoignable, espace disque) sur un vrai appareil.
 
-## Reste à faire (sur le Pi)
+## Ce qui a été fait sur le Pi (étapes 1 à 7)
 
-### Étape 1 — Agent Corvus (Rust)
-- Dossier `agent/` (crate `corvus-agent`), binaire statique musl ; le job CI `agent` s'active
-  tout seul quand `agent/Cargo.toml` existe (`cross test` + `cross build` x86_64 et aarch64).
-- **Protocole** (à documenter dans `docs/protocole-agent.md`, versionné) : WebSocket sortant
-  vers `wss://<corvus>/agent`, enveloppe JSON `{ v, id, type, ts, body }`.
-- **Enrôlement** : jeton à usage unique (15 min) créé par un admin → table `agent_enrollments`
-  (déjà créée : `token_hash`, `host_id`, `expires_at`, `used_at`). L'agent génère une paire
-  Ed25519, envoie sa clé publique → table `agents` (déjà créée). Authentification mutuelle par
-  signature d'un défi à chaque connexion (Node : `crypto.sign(null, …)` / `crypto.verify` en
-  Ed25519 natif ; Rust : crate `ed25519-dalek`).
-- **Tampon local** SQLite côté agent (`rusqlite` avec la fonctionnalité `bundled`) : événements
-  numérotés (`agent_seq`), renvoyés après coupure ; côté backend la contrainte
-  `UNIQUE (agent_id, agent_seq)` de `agent_events` rend le renvoi idempotent (`INSERT OR IGNORE`).
-- **Aucune commande shell** envoyée par le backend : seulement des actions nommées et validées,
-  journalisées des deux côtés (`journal.add({ type: 'agent', … })` côté Node).
-- Métriques de l'agent : écrire dans `metrics_raw` (mêmes noms que `server/lib/metrics.js` →
-  `flatten`) pour réutiliser les graphiques.
-- Service systemd avec `CapabilityBoundingSet` limité (voir plan §2.4), installation en une
-  commande, désinstallation propre, mise à jour sans perte (le tampon SQLite reste en place).
-- Interface : statut de l'agent sur la carte d'hôte (`hosts` → `role`/`status` déjà renvoyés),
-  bouton « Installer l'agent » (affiche la commande avec le jeton).
+| Étape | Commit | Contenu |
+|---|---|---|
+| 1.1 | `8031c8b` | Agent Rust (`agent/`), enrôlement par jeton à usage unique, authentification mutuelle Ed25519, tampon SQLite, métriques |
+| 1.2 | `279077b` | Écran Agents, badge sur la carte d'hôte, alerte « agent hors ligne », disques (statvfs) |
+| 6.1 | `325212f` | Surveillance par balayage, versions chiffrées côté serveur, restauration par l'agent |
+| 6.2 | `3d39600` | Écran Rembobiner |
+| 5.2 | `bfb0d45` | Prévisualisation dans un bac à sable OverlayFS (agent root, `--allow-preview`) |
+| 7.1 | `402a94e` | Radiographie : processus, lignée, session SSH, connexions, gel / dégel / arrêt |
+| 7.2 | `d0b526d` | Empreinte du normal, anomalies, gel automatique optionnel |
+| 7.3 | (voir `git log`) | Fichiers pièges, entropie, isolement nftables, faux ransomware de démonstration |
 
-### Étape 5.2 — Prévisualisation (OverlayFS / bubblewrap)
-- Point d'accroche existant : `server/lib/risk.js` renvoie `preview: true` ; la boîte de dialogue
-  `riskDialog` (`public/js/views/commands.js`) affiche « Prévisualisation : disponible avec
-  l'agent ». Ajouter l'action « Prévisualiser » quand l'agent de l'hôte annonce la capacité.
-- Sans réseau par défaut ; diff (créés / modifiés / supprimés + diff texte) ; « Appliquer »
-  vérifie que les fichiers d'origine n'ont pas changé (sinon conflit) ; « Jeter ».
-- Crochet shell optionnel installé par l'agent (bash `trap DEBUG` + `extdebug`, zsh `accept-line`)
-  qui consulte les mêmes règles (`risk.js` → à porter ou à appeler via l'agent).
-- Vérifier sur le Pi : `unshare -Urm` et OverlayFS non privilégié (noyau ≥ 5.11).
+Protocole complet : [`protocole-agent.md`](protocole-agent.md). Écarts assumés par rapport au plan :
+balayage régulier au lieu de fanotify/inotify ; `/proc` au lieu d'eBPF (BTF est pourtant présent sur ce noyau) ;
+l'agent ne garde pas de magasin de versions local (le serveur en est le magasin, chiffré) ; pas de zstd (brotli côté serveur).
 
-### Étape 6 — Rembobiner un serveur
-- fanotify/inotify sur `/etc` + dossiers choisis, paquets, services, utilisateurs, crontabs,
-  ports en écoute → `agent_events`.
-- Versions de fichiers : magasin adressé par contenu dans l'agent (sha256 + zstd), copie vers le
-  backend (`BlobStore` côté Node : `put(buffer, 'version')`).
-- Interface : frise + curseur, état à T, diff entre deux instants, restauration avec confirmation
-  (sauvegarder l'état courant juste avant, comme `server/lib/undo.js`).
+## Reste à faire / à vérifier
 
-### Étape 7 — Radiographie et défense
-- eBPF (Aya, Rust nightly + `bpf-linker`, sous-crate optionnel) ; repli `/proc`.
-  Vérifier d'abord : `ls /sys/kernel/btf/vmlinux` (BTF souvent absent des noyaux Raspberry Pi OS).
-- Empreinte du normal : table `behavior_profile` (déjà créée : `host_id, kind, item, count,
-  first_seen, last_seen, allowed`) ; alertes via `ctx.alerts.raise({ kind, severity, message,
-  hostId })` (notification push incluse) ; gel SIGSTOP optionnel.
-- Anti-ransomware : fichiers pièges, entropie, gel, isolement nftables qui **garde toujours
-  `tailscale0` et le backend joignables**, restauration via l'étape 6. Démo : faux ransomware qui
-  ne chiffre qu'un dossier de test créé pour l'occasion.
+1. **Sur un vrai réseau Tailscale** : l'isolement réseau (`net.isolate`) n'a été validé que par `nft -c`, dans un espace de
+   noms réseau jetable et par les tests Rust. Le marquage `0x80000` des paquets de tailscaled et `udp/41641` doivent être
+   vérifiés sur un hôte non critique AVEC un accès console de secours (la levée automatique est le filet de sécurité).
+2. **systemd** : l'unité `deploy/agent/corvus-agent.service` et le drop-in de prévisualisation n'ont pas été lancés sous systemd.
+3. **TLS** : l'agent n'a été essayé qu'en `ws://` local ; `wss://` (rustls) via `tailscale serve` reste à essayer.
+4. **CI GitHub Actions** : job Rust (`cross`) et compilation de l'agent dans le job Node jamais exécutés.
+5. **Interface** : écrans Agents, Rembobiner, Radiographie, Prévisualiser : syntaxe vérifiée, jamais ouverts dans un navigateur.
+6. **eBPF (Aya)** : non fait (Rust nightly + `bpf-linker`) ; apporterait les processus de moins de 2 s et l'attribution exacte
+   des écritures (fanotify aussi).
+7. Points 1 à 9 de la liste « pas pu être testé sur le PC » ci-dessus : toujours à faire s'ils ne l'ont pas été.
 
 ## Repères dans le code
 

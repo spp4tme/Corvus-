@@ -19,7 +19,7 @@ pub struct Context<'a> {
 }
 
 pub fn names(allow_preview: bool) -> Vec<&'static str> {
-    let mut v = vec!["file.restore", "file.remove", "xray.live", "proc.freeze", "proc.thaw", "proc.kill"];
+    let mut v = vec!["file.restore", "file.remove", "xray.live", "proc.freeze", "proc.thaw", "proc.kill", "net.status", "net.isolate", "net.release"];
     if allow_preview && crate::preview::available() { v.extend(["preview.run", "preview.apply"]); }
     v
 }

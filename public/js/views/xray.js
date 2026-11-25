@@ -51,12 +51,24 @@ export default {
         const max = Math.max(1, ...o.hours);
         const freeze = checkbox('Geler automatiquement un programme jamais vu lancé pendant une heure calme (SIGSTOP, à vous de décider ensuite)', { checked: o.autoFreeze, disabled: !admin });
         freeze.input.addEventListener('change', async () => { try { await put(`/api/hosts/${hostId}/behavior/settings`, { autoFreeze: freeze.input.checked }); toast('Réglage enregistré', 'ok', 1500); } catch (err) { toastError(err); freeze.input.checked = !freeze.input.checked; } });
+        const isolate = checkbox(`Isoler l'hôte du réseau ${Math.round(o.isolateTtl / 60)} min en cas de ransomware probable (Tailscale et Corvus restent joignables ; levée automatique)`, { checked: o.autoIsolate, disabled: !admin });
+        isolate.input.addEventListener('change', async () => { try { await put(`/api/hosts/${hostId}/behavior/settings`, { autoIsolate: isolate.input.checked }); toast('Réglage enregistré', 'ok', 1500); } catch (err) { toastError(err); isolate.input.checked = !isolate.input.checked; } });
+        const manual = admin ? h('div', { class: 'row' },
+          button({ label: 'Isoler maintenant', variant: 'danger', onClick: async () => {
+            if (!(await confirmDialog({ title: 'Isoler cet hôte du réseau ?', message: `Presque tout le trafic sera coupé pendant ${Math.round(o.isolateTtl / 60)} min (connexions établies comprises). Resteront joignables : Tailscale et le serveur Corvus. L'isolement se lève tout seul.`, confirmLabel: 'Isoler', danger: true }))) return;
+            try { await post(`/api/hosts/${hostId}/isolation`, { action: 'isolate', ttlSec: o.isolateTtl, confirm: true }); toast('Hôte isolé', 'warn', 4000); } catch (err) { toastError(err); }
+          } }),
+          button({ label: 'Lever l\'isolement', variant: 'ghost', onClick: async () => {
+            try { await post(`/api/hosts/${hostId}/isolation`, { action: 'release', confirm: true }); toast('Isolement levé', 'ok', 3000); } catch (err) { toastError(err); }
+          } })) : null;
         replace(body,
           h('p', null, o.learning ? badge('apprentissage en cours', 'warn') : badge('surveillance active', 'ok'), ' ',
             o.startedAt ? `depuis le ${formatDate(o.startedAt)} · ${o.learnDays} jours d'apprentissage${o.learning ? ` (fin le ${formatDate(o.endsAt)})` : ''}` : 'pas encore d\'événement reçu'),
           h('p', { class: 'dim' }, `Appris : ${o.counts.proc || 0} programmes, ${o.counts.conn || 0} destinations, ${o.counts.listen || 0} ports. Règles et statistiques simples, aucune IA : une anomalie est un élément jamais vu après l'apprentissage.`),
           h('div', { class: 'frise', 'aria-label': 'Activité apprise par heure' }, o.hours.map((n, i) => h('span', { class: 'frise-bar', style: `height:${Math.max(4, Math.round((n / max) * 100))}%`, title: `${i} h : ${n} démarrage(s)` }))),
-          freeze,
+          h('h3', null, 'Défense'),
+          h('p', { class: 'dim' }, 'Fichiers pièges, détection de rafales de fichiers chiffrés (entropie), écrivain principal du disque. Aucune réaction n\'est automatique tant que vous ne l\'activez pas.'),
+          freeze, isolate, manual,
           h('h3', null, `À examiner (${o.anomalies.length})`),
           o.anomalies.length ? h('ul', { class: 'list' }, o.anomalies.map((a) => h('li', { class: 'list-item' },
             h('div', { class: 'grow' }, h('div', { class: 'mono' }, a.item.replace('|', ' · ')), h('div', { class: 'dim' }, badge(KIND[a.kind] || a.kind), ` vu ${a.count}× · ${formatDate(a.firstSeen)}`)),

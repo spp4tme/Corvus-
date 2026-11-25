@@ -167,9 +167,9 @@ Proxy web isolé vers les services du tailnet, contrôle vocal, Claude Code dans
 
 Ordre de grandeur honnête : c'est un programme de plusieurs mois, environ 25 commits conséquents. Les étapes 5 à 7 contiennent l'essentiel du risque technique.
 
-**Avancement** : ✅ 6.1–6.2 (surveillance par balayage, versions chiffrées côté serveur, restauration par l'agent ; pas de fanotify), 1.2, 1.1 (agent Rust : enrôlement, authentification mutuelle, tampon, métriques — sans écran dédié), 0.1–0.3, 3a.1–3a.3, 2.1–2.2, 3b.1–3b.3, 4.1–4.3, 5.1, CI (Node + OpenSSH réel).
-⏸ 3b.4 (certificats SSH : `ssh2` ne les gère pas). ⏳ 5.2, 7.x : sur le Pi, voir
-[`suite-pi.md`](suite-pi.md).
+**Avancement** : ✅ 6.1–6.2 (surveillance par balayage, versions chiffrées côté serveur, restauration par l'agent ; pas de fanotify), 1.2, 1.1 (agent Rust : enrôlement, authentification mutuelle, tampon, métriques), 0.1–0.3, 3a.1–3a.3, 2.1–2.2, 3b.1–3b.3, 4.1–4.3, 5.1, CI (Node + OpenSSH réel).
+⏸ 3b.4 (certificats SSH : `ssh2` ne les gère pas). ✅ 5.2, 7.1 (repli /proc, pas d'eBPF), 7.2, 7.3 (sans fanotify ; isolement non éprouvé avec un vrai tailscaled). Reste : eBPF (optionnel), fanotify, vérifications
+listées dans [`suite-pi.md`](suite-pi.md).
 
 ---
 
