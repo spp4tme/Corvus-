@@ -5,6 +5,7 @@
 // Limite (documentée) : quelqu'un qui est root sur le serveur peut recalculer toute la chaîne ;
 // l'empreinte de tête (`head()`) peut donc être notée ou exportée pour comparaison ultérieure.
 import crypto from 'node:crypto';
+import { requestContext } from './context.js';
 
 export const GENESIS = '0'.repeat(64);
 const TYPE_RE = /^[a-z][a-z0-9-]{0,19}$/;
@@ -28,16 +29,20 @@ export class Journal {
    */
   add(e) {
     if (!TYPE_RE.test(String(e.type))) return null;
+    // `user: null` explicite = action système ; absent = compte de la requête en cours.
+    const store = requestContext.getStore();
+    const user = e.user !== undefined ? e.user : store?.user;
+    const ip = e.ip !== undefined ? e.ip : store?.ip;
     const row = {
       ts: Date.now(),
       type: e.type,
       event: String(e.event).slice(0, 40),
       ok: e.ok !== false,
-      user_id: e.user?.id ?? null,
-      username: e.user?.username ?? null,
+      user_id: user?.id ?? null,
+      username: user?.username ?? null,
       host_id: e.host?.id ?? null,
       host_label: e.host ? `${e.host.name} (${e.host.username ? `${e.host.username}@` : ''}${e.host.hostname})` : null,
-      ip: e.ip ? String(e.ip).slice(0, 64) : null,
+      ip: ip ? String(ip).slice(0, 64) : null,
       detail: e.detail ? String(e.detail).slice(0, 500) : null,
     };
     try {

@@ -23,7 +23,11 @@ import { BackupService, applyPendingRestore } from './lib/backup.js';
 import { Retention } from './lib/retention.js';
 import { HttpError } from './lib/validate.js';
 import { logger, setLogLevel } from './lib/log.js';
-import { authRoutes, hostRoutes } from './routes/core.js';
+import { hostRoutes } from './routes/core.js';
+import { authRoutes, accountRoutes } from './routes/accounts.js';
+import { accessGuard } from './lib/access.js';
+import { Users, publicUser } from './lib/users.js';
+import { requestContext } from './lib/context.js';
 import { extraRoutes, createServices } from './routes/index.js';
 
 const log = logger('http');
@@ -78,10 +82,12 @@ export function createCorvus(overrides = {}) {
   const hosts = new HostRegistry({ db, vault });
   migrateLegacy({ db, dataDir: config.dataDir, vault, hosts, token, passphrase: config.masterPassphrase });
   const auth = new Auth({ db, token, sessionTtlDays: config.sessionTtlDays });
+  const users = new Users({ db, vault, hosts });
+  auth.users = users;
   const knownHosts = new KnownHosts(db);
   const journal = new Journal(db);
   const pool = new SshPool({ hosts, knownHosts, config });
-  const ctx = { config, storage, db, auth, vault, hosts, knownHosts, journal, pool, version: pkg.version, token, tokenCreated: created };
+  const ctx = { config, storage, db, auth, users, vault, hosts, knownHosts, journal, pool, version: pkg.version, token, tokenCreated: created };
   ctx.alerts = new Alerts({ db, journal, notify: (n) => ctx.push?.notify(n).catch(() => {}) });
   ctx.storageMonitor = new StorageMonitor({ storage, config, alerts: ctx.alerts });
   ctx.restoredFrom = restoredFrom;
@@ -91,6 +97,7 @@ export function createCorvus(overrides = {}) {
   ctx.claude = new ClaudeService({ pool, hosts, journal });
   ctx.terminals = new TerminalManager({
     pool, hosts, journal, config, claude: ctx.claude,
+    requireHost: (user, hostId, level) => ctx.requireHost(user, hostId, level),
     onNotify: (n) => ctx.notify?.(n),
   });
   createServices(ctx);
@@ -116,8 +123,8 @@ export function createCorvus(overrides = {}) {
 
   // Tout le reste exige une authentification.
   api.use((req, res, next) => {
-    const kind = auth.identify(req);
-    if (!kind) {
+    const who = auth.identify(req);
+    if (!who) {
       if (req.headers.authorization) {
         const wait = auth.limiter.blockedFor(req.ip);
         if (wait > 0) {
@@ -130,16 +137,29 @@ export function createCorvus(overrides = {}) {
       return next(new HttpError(401, 'UNAUTHENTICATED', 'Authentification requise'));
     }
     // Protection CSRF pour les sessions cookie : en-tête personnalisé + origine identique.
-    if (kind === 'cookie' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    if (who.kind === 'cookie' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
       if (req.headers['x-corvus'] !== '1') return next(new HttpError(403, 'CSRF', 'En-tête X-Corvus manquant'));
       const origin = req.headers.origin;
       if (origin && !originAllowed(origin, req, { allowedOrigins: config.allowedOrigins, trustForwarded })) {
         return next(new HttpError(403, 'BAD_ORIGIN', 'Origine refusée'));
       }
     }
-    req.authKind = kind;
-    next();
+    req.authKind = who.kind;
+    req.user = publicUser(who.user);
+    req.sessionKey = who.sessionKey;
+    // Mot de passe provisoire (créé par un admin) : seul le changement de mot de passe est permis.
+    if (req.user.mustChangePassword && !/^\/(me|auth)(\/|$)/.test(req.path)) {
+      return next(new HttpError(403, 'PASSWORD_CHANGE_REQUIRED', 'Changez votre mot de passe provisoire (Réglages → Mon compte).'));
+    }
+    req.allowedHostIds = () => {
+      const ids = ctx.users.allowedHostIds(req.user);
+      if (ids) ids.userId = req.user.id;
+      return ids;
+    };
+    requestContext.run({ user: req.user, ip: req.ip }, next);
   });
+  api.use(accessGuard(ctx));
+  api.use(accountRoutes(ctx));
   api.use(hostRoutes(ctx));
   api.use(extraRoutes(ctx));
   api.use((req, res, next) => next(new HttpError(404, 'NOT_FOUND', 'Route inconnue')));
@@ -190,7 +210,7 @@ export function createCorvus(overrides = {}) {
   // --- Serveur HTTP + WebSocket ------------------------------------------
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-  ctx.wsRoutes = { '/ws/terminal': (ws, url) => ctx.terminals.handle(ws, url) };
+  ctx.wsRoutes = { '/ws/terminal': (ws, url, req) => ctx.terminals.handle(ws, url, req) };
 
   server.on('upgrade', (req, socket, head) => {
     const reject = (code, text) => {
@@ -207,8 +227,8 @@ export function createCorvus(overrides = {}) {
     const fwd = isLoopback(remote) && trustForwarded ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '';
     const ip = fwd || remote;
 
-    const kind = auth.identify(req);
-    if (!kind) {
+    const who = auth.identify(req);
+    if (!who) {
       if (req.headers.authorization) {
         if (auth.limiter.blockedFor(ip) > 0) return reject(429, 'Too Many Requests');
         auth.limiter.fail(ip);
@@ -217,7 +237,7 @@ export function createCorvus(overrides = {}) {
     }
     // Origin check : obligatoire pour un navigateur (cookie). Un client Bearer peut ne pas en envoyer.
     const origin = req.headers.origin;
-    if (origin ? !originAllowed(origin, req, { allowedOrigins: config.allowedOrigins, trustForwarded }) : kind !== 'bearer') {
+    if (origin ? !originAllowed(origin, req, { allowedOrigins: config.allowedOrigins, trustForwarded }) : who.kind !== 'bearer') {
       log.warn(`WebSocket refusé : origine ${origin || '(absente)'} depuis ${ip}`);
       return reject(403, 'Forbidden');
     }
@@ -225,7 +245,9 @@ export function createCorvus(overrides = {}) {
       ws.isAlive = true;
       ws.on('pong', () => { ws.isAlive = true; });
       ws.on('error', () => {});
-      Promise.resolve(handler(ws, url, req)).catch((err) => {
+      req.user = publicUser(who.user);
+      req.clientIp = ip;
+      Promise.resolve(requestContext.run({ user: req.user, ip }, () => handler(ws, url, req))).catch((err) => {
         log.error('WebSocket', err);
         ws.close(1011, 'erreur interne');
       });

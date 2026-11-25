@@ -116,13 +116,27 @@ export class Auth {
   }
 
   /** Identifie la requête : 'bearer', 'cookie' ou null. */
+  /**
+   * Identifie la requête : { kind: 'bearer' | 'cookie', user } ou null.
+   * - Bearer : jeton d'API personnel (`cvu_…`) ;
+   * - cookie : session ouverte après mot de passe + TOTP (ou passkey).
+   * Le token d'amorçage (`cv_…`) ne sert qu'à créer le premier administrateur.
+   */
   identify(req) {
+    if (!this.users) return null;
     const authz = req.headers.authorization;
     if (authz && authz.startsWith('Bearer ')) {
-      return tokenMatches(authz.slice(7).trim(), this.token) ? 'bearer' : null;
+      const u = this.users.userForToken(authz.slice(7).trim());
+      return u ? { kind: 'bearer', user: u } : null;
     }
-    const sid = parseCookies(req.headers.cookie)[COOKIE];
-    return this.validSession(sid) ? 'cookie' : null;
+    const s = this.session(parseCookies(req.headers.cookie)[COOKIE]);
+    if (!s || !s.user_id || !s.mfa) return null;
+    const u = this.users.row(s.user_id);
+    return u && !u.disabled ? { kind: 'cookie', user: u, sessionKey: s.key } : null;
+  }
+
+  bootstrapMatches(candidate) {
+    return tokenMatches(candidate, this.token);
   }
 }
 

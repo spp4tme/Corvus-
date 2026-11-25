@@ -80,9 +80,14 @@ Au premier lancement, le **token d'accès** s'affiche dans la console :
 ================================================================
 ```
 
-Ouvrez <http://127.0.0.1:7680>, collez le token, puis ajoutez un hôte (IP `100.x.y.z` ou
-`machine.tailnet.ts.net`, utilisateur, mot de passe ou clé). Pour réafficher le token :
-`npm run token`.
+Ouvrez <http://127.0.0.1:7680>, collez le token puis **créez le compte administrateur**
+(identifiant, mot de passe, puis double authentification TOTP dans votre application
+d'authentification : Aegis, Google Authenticator, 1Password…). Ajoutez ensuite un hôte (IP
+`100.x.y.z` ou `machine.tailnet.ts.net`, utilisateur, mot de passe ou clé). Le token ne sert plus
+qu'à cette première étape ; pour le réafficher : `npm run token`.
+
+Autres comptes : *Réglages → Utilisateurs* (rôle, hôtes ou groupes accordés, mot de passe
+provisoire à changer à la première connexion, TOTP enrôlé à ce moment-là).
 
 > **Chaque installation génère son propre token** et garde ses secrets dans son dossier `data/`
 > (ignoré par git) : le dépôt ne contient aucune clé, aucun token ni aucun identifiant.
@@ -271,7 +276,7 @@ Ouvrez d'abord `https://<machine>.<tailnet>.ts.net` sur l'appareil, connecté à
 | Firefox desktop | Pas d'installation PWA : utilisez Corvus dans un onglet. |
 
 La coquille de l'app reste disponible hors ligne (service worker). Sans réseau, elle indique que
-le serveur est injoignable. La connexion par token est demandée une fois par appareil
+le serveur est injoignable. La connexion (mot de passe + code TOTP) est demandée une fois par appareil
 (session de 30 jours).
 
 **Astuce clavier mobile** : la barre de touches reste au-dessus du clavier virtuel. Ctrl et Alt
@@ -357,9 +362,10 @@ Résumé (détails et procédures dans [docs/securite.md](docs/securite.md)) :
 
 - **Exposition** : 127.0.0.1 par défaut, refus d'un bind public, HTTPS via `tailscale serve`.
   **Jamais sur Internet.**
-- **Authentification** : token de 256 bits (comparaison timing-safe), cookie de session
-  `HttpOnly`/`SameSite=Strict`, limitation et délai sur les échecs (blocage par IP : un appareil
-  du tailnet ne peut pas vous enfermer dehors).
+- **Comptes** : identifiant + mot de passe + **TOTP obligatoire** ; rôles administrateur /
+  opérateur / lecture seule, droits par hôte ou par groupe ; jetons d'API personnels. Le token
+  affiché au premier lancement sert seulement à créer le premier administrateur.
+- **Journal d'audit infalsifiable** : chaîné par SHA-256, vérifiable depuis *Journal*.
 - **Protection des requêtes** : anti-CSRF (en-tête `X-Corvus` + origine), Origin check sur le
   WebSocket, CSP stricte, aucun `innerHTML` avec des données distantes.
 - **Secrets** : chiffrés au repos (AES-256-GCM + scrypt), fichiers en 600, jamais renvoyés au
@@ -493,7 +499,8 @@ Dockerfile, docker-compose.yml
   est vérifiée par les tests, mais pas la réception sur un appareil.
 
 **Usage**
-- **Mono-utilisateur** : un seul token, pas de comptes ni de rôles.
+- **QR code TOTP** : pas de QR code à l'enrôlement (aucune dépendance ajoutée) : lien
+  `otpauth://` (ouvre l'application sur le téléphone) ou saisie manuelle de la clé.
 - **Terminaux** : ils survivent aux coupures du navigateur, mais pas à un redémarrage de Corvus
   ni à une coupure SSH. Seul **tmux** permet de retrouver la session dans ces cas.
 - **SSH** : pas de rebond (ProxyJump), pas de redirection de ports, pas de 2FA/TOTP

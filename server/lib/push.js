@@ -101,9 +101,15 @@ export class PushService {
   }
 
   /** @param {{title: string, body: string, sessionId?: string, hostId?: string}} n */
-  async notify(n) {
-    this.latest = { title: String(n.title || 'Corvus').slice(0, 120), body: String(n.body || '').slice(0, 400), sessionId: n.sessionId, hostId: n.hostId, ts: Date.now() };
-    const subs = this.subscriptions();
+  /**
+   * @param {{title, body, sessionId?, hostId?}} n
+   * @param {{userIds?: string[]}} [to] destinataires ; par défaut : administrateurs et hôte concerné
+   */
+  async notify(n, to = {}) {
+    this.latest = { userIds: to.userIds, title: String(n.title || 'Corvus').slice(0, 120), body: String(n.body || '').slice(0, 400), sessionId: n.sessionId, hostId: n.hostId, ts: Date.now() };
+    let subs = this.subscriptions();
+    if (to.userIds) subs = subs.filter((s) => to.userIds.includes(s.userId));
+    else if (this.audience) subs = subs.filter((s) => this.audience(s.userId, n.hostId));
     if (!subs.length) return { sent: 0 };
     let sent = 0;
     const dead = [];
@@ -119,8 +125,12 @@ export class PushService {
     return { sent };
   }
 
-  latestNotification() {
-    if (!this.latest) throw new HttpError(404, 'NONE', 'Aucune notification');
-    return this.latest;
+  latestNotification(user) {
+    const n = this.latest;
+    if (!n || (n.userIds && !n.userIds.includes(user?.id)) || (!n.userIds && this.audience && !this.audience(user?.id, n.hostId))) {
+      throw new HttpError(404, 'NONE', 'Aucune notification');
+    }
+    const { userIds, ...rest } = n;
+    return rest;
   }
 }

@@ -1,0 +1,177 @@
+// Routes des comptes :
+//  - /api/auth/*  (sans session) : premier administrateur, connexion mot de passe + TOTP,
+//    enrôlement TOTP, déconnexion, état ;
+//  - /api/me/*    : mon compte (mot de passe, jetons d'API) ;
+//  - /api/users/* : gestion des comptes et des droits (administrateurs).
+import crypto from 'node:crypto';
+import { Router } from 'express';
+import { COOKIE, parseCookies } from '../lib/auth.js';
+import { HttpError } from '../lib/validate.js';
+import * as v from '../lib/validate.js';
+import * as totp from '../lib/totp.js';
+import { publicUser } from '../lib/users.js';
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const ENROLL_TTL_MS = 10 * 60_000;
+
+export function setSessionCookie(req, res, ctx, sid) {
+  res.cookie(COOKIE, sid, {
+    httpOnly: true,
+    sameSite: 'strict',
+    // https direct, via tailscale serve (X-Forwarded-Proto) ou origine https déclarée par le navigateur
+    secure: req.secure || String(req.headers.origin || '').startsWith('https://'),
+    path: '/',
+    maxAge: ctx.config.sessionTtlDays * 86_400_000,
+  });
+}
+
+export function authRoutes(ctx) {
+  const r = Router();
+  const { auth, users, journal } = ctx;
+  // Enrôlements TOTP en cours (après un mot de passe correct) : jeton → { userId, secret }.
+  const enrollments = new Map();
+
+  const rateCheck = (key) => {
+    const wait = auth.limiter.blockedFor(key);
+    if (wait > 0) throw new HttpError(429, 'RATE_LIMITED', `Trop de tentatives. Réessayez dans ${Math.ceil(wait / 60000)} min.`);
+  };
+  const failure = async (req, keys, code, message, username) => {
+    let penalty = 0;
+    for (const k of keys) penalty = Math.max(penalty, auth.limiter.fail(k));
+    journal.add({ type: 'auth', event: 'login', ok: false, ip: req.ip, detail: `${code}${username ? ` (${String(username).slice(0, 32)})` : ''}` });
+    await sleep(penalty);
+    throw new HttpError(401, code, message);
+  };
+  const startEnroll = (u) => {
+    const now = Date.now();
+    for (const [k, e] of enrollments) if (e.expires < now) enrollments.delete(k);
+    const token = crypto.randomBytes(24).toString('base64url');
+    const secret = totp.generateSecret();
+    enrollments.set(token, { userId: u.id, secret, expires: now + ENROLL_TTL_MS });
+    return { enrollToken: token, secret, uri: totp.otpauthUri({ secret, account: u.username }) };
+  };
+  const openSession = (req, res, u, method) => {
+    const sid = auth.createSession({ userId: u.id, mfa: true, ua: req.headers['user-agent'], ip: req.ip });
+    ctx.db.run('UPDATE users SET last_login_at = ? WHERE id = ?', Date.now(), u.id);
+    journal.add({ type: 'auth', event: 'login', user: u, ip: req.ip, detail: method });
+    setSessionCookie(req, res, ctx, sid);
+  };
+
+  r.get('/status', (req, res) => {
+    const who = auth.identify(req);
+    res.json({
+      authenticated: !!who,
+      user: who ? { ...publicUser(who.user), grants: users.grants(who.user.id) } : null,
+      setupRequired: users.count() === 0,
+      passkeys: !!ctx.webauthn,
+      version: ctx.version,
+    });
+  });
+
+  // Premier lancement : le token d'amorçage (affiché dans les logs / `npm run token`) permet de
+  // créer le premier administrateur. Ensuite il ne sert plus à se connecter.
+  r.post('/setup', async (req, res) => {
+    if (users.count() > 0) throw new HttpError(409, 'ALREADY_SETUP', 'Un administrateur existe déjà : connectez-vous.');
+    rateCheck(req.ip);
+    if (!auth.bootstrapMatches(req.body?.bootstrapToken)) await failure(req, [req.ip], 'BAD_TOKEN', 'Token d\'amorçage invalide');
+    const u = users.create({ username: req.body?.username, password: req.body?.password, role: 'admin' });
+    journal.add({ type: 'account', event: 'setup', user: u, ip: req.ip, detail: 'premier administrateur' });
+    res.status(201).json({ enroll: startEnroll(users.row(u.id)) });
+  });
+
+  r.post('/login', async (req, res) => {
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+    const keys = [req.ip, `user:${username.toLowerCase()}`];
+    for (const k of keys) rateCheck(k);
+    const u = users.checkCredentials(username, req.body?.password);
+    if (!u) await failure(req, keys, 'BAD_CREDENTIALS', 'Identifiant ou mot de passe incorrect', username);
+    // TOTP obligatoire : un compte qui n'en a pas encore doit l'enrôler maintenant.
+    if (!u.totp_enabled) return res.json({ enroll: startEnroll(u) });
+    if (!users.checkTotp(u, String(req.body?.code ?? ''))) await failure(req, keys, 'BAD_CODE', 'Code à 6 chiffres incorrect (ou déjà utilisé)', username);
+    for (const k of keys) auth.limiter.success(k);
+    openSession(req, res, u, 'mot de passe + TOTP');
+    res.json({ ok: true });
+  });
+
+  r.post('/totp/enroll', async (req, res) => {
+    const e = enrollments.get(String(req.body?.enrollToken || ''));
+    if (!e || e.expires < Date.now()) throw new HttpError(400, 'ENROLL_EXPIRED', 'Enrôlement expiré : reconnectez-vous.');
+    users.enableTotp(e.userId, e.secret, String(req.body?.code ?? ''));
+    enrollments.delete(String(req.body.enrollToken));
+    const u = users.row(e.userId);
+    journal.add({ type: 'account', event: 'totp-enabled', user: u, ip: req.ip });
+    openSession(req, res, u, 'mot de passe + TOTP (enrôlement)');
+    res.json({ ok: true });
+  });
+
+  r.post('/logout', (req, res) => {
+    auth.destroySession(parseCookies(req.headers.cookie)[COOKIE]);
+    res.clearCookie(COOKIE, { path: '/' });
+    res.json({ ok: true });
+  });
+
+  return r;
+}
+
+export function accountRoutes(ctx) {
+  const r = Router();
+  const { users, journal, hosts } = ctx;
+
+  r.get('/me', (req, res) => res.json({ user: { ...req.user, grants: users.grants(req.user.id) } }));
+
+  r.post('/me/password', (req, res) => {
+    users.changeOwnPassword(req.user.id, req.body?.current, req.body?.next);
+    journal.add({ type: 'account', event: 'password', user: req.user, ip: req.ip });
+    res.json({ ok: true });
+  });
+
+  r.get('/me/tokens', (req, res) => res.json({ tokens: users.tokens(req.user.id) }));
+  r.post('/me/tokens', (req, res) => {
+    const t = users.createToken(req.user.id, req.body?.name);
+    journal.add({ type: 'account', event: 'api-token', user: req.user, detail: `création ${t.id}` });
+    res.status(201).json(t);
+  });
+  r.delete('/me/tokens/:id', (req, res) => {
+    users.revokeToken(req.user.id, v.str(req.params.id, 'id', { min: 12, max: 12 }));
+    journal.add({ type: 'account', event: 'api-token', user: req.user, detail: `révocation ${req.params.id}` });
+    res.json({ ok: true });
+  });
+
+  // ---------- Administration (garde : routes /users réservées aux admins, voir access.js) ----------
+  const uid = (req) => v.str(req.params.id, 'id', { min: 16, max: 16 });
+  r.get('/users', (req, res) => res.json({ users: users.list(), groups: hosts.groups(), hosts: hosts.hosts.map((h) => ({ id: h.id, name: h.name, group: h.group })) }));
+  r.post('/users', (req, res) => {
+    const u = users.create({ username: req.body?.username, password: req.body?.password, role: req.body?.role ?? 'operator', mustChangePassword: true });
+    if (Array.isArray(req.body?.grants)) users.setGrants(u.id, req.body.grants);
+    journal.add({ type: 'account', event: 'create', user: req.user, detail: `${u.username} (${u.role})` });
+    res.status(201).json({ user: { ...u, grants: users.grants(u.id) } });
+  });
+  r.patch('/users/:id', (req, res) => {
+    const id = uid(req);
+    const { role, disabled, password } = req.body || {};
+    const u = users.update(id, { role, disabled, password });
+    journal.add({ type: 'account', event: 'update', user: req.user, detail: `${u.username} ${JSON.stringify({ role, disabled, password: password ? '(réinitialisé)' : undefined })}` });
+    res.json({ user: u });
+  });
+  r.put('/users/:id/grants', (req, res) => {
+    const id = uid(req);
+    const grants = users.setGrants(id, req.body?.grants);
+    journal.add({ type: 'account', event: 'grants', user: req.user, detail: `${users.get(id).username} : ${grants.map((g) => `${g.scope}:${g.target || '*'}=${g.role}`).join(', ') || 'aucun'}` });
+    res.json({ grants });
+  });
+  r.post('/users/:id/reset-totp', (req, res) => {
+    const id = uid(req);
+    users.resetTotp(id);
+    journal.add({ type: 'account', event: 'totp-reset', user: req.user, detail: users.get(id).username });
+    res.json({ ok: true });
+  });
+  r.delete('/users/:id', (req, res) => {
+    const id = uid(req);
+    if (id === req.user.id) throw new HttpError(409, 'SELF', 'Vous ne pouvez pas supprimer votre propre compte');
+    const name = users.get(id).username;
+    users.remove(id);
+    journal.add({ type: 'account', event: 'delete', user: req.user, detail: name });
+    res.json({ ok: true });
+  });
+  return r;
+}

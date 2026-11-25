@@ -14,9 +14,9 @@ export function serviceRoutes({ proxy, push, config }) {
   });
 
   r.get('/push/key', (req, res) => res.json({ publicKey: push.publicKey, subscriptions: push.count() }));
-  r.post('/push/subscribe', (req, res) => res.json(push.subscribe(req.body)));
+  r.post('/push/subscribe', (req, res) => res.json(push.subscribe({ ...req.body, userId: req.user.id })));
   r.delete('/push/subscribe', (req, res) => { push.unsubscribe(String(req.body?.endpoint || '')); res.json({ ok: true }); });
-  r.post('/push/test', async (req, res) => res.json(await push.notify({ title: 'Corvus', body: 'Notification de test ✔' })));
-  r.get('/push/latest', (req, res) => res.json({ notification: push.latestNotification() }));
+  r.post('/push/test', async (req, res) => res.json(await push.notify({ title: 'Corvus', body: 'Notification de test ✔' }, { userIds: [req.user.id] })));
+  r.get('/push/latest', (req, res) => res.json({ notification: push.latestNotification(req.user) }));
   return r;
 }

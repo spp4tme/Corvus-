@@ -33,6 +33,7 @@ export async function api(method, url, body, { signal, raw } = {}) {
   if (!res.ok) {
     const e = data?.error || {};
     if (res.status === 401 && e.code === 'UNAUTHENTICATED') onUnauthorized();
+    if (res.status === 403 && e.code === 'PASSWORD_CHANGE_REQUIRED' && location.hash !== '#/settings') location.hash = '#/settings';
     throw new ApiError(res.status, e.code || 'HTTP', e.message || `Erreur HTTP ${res.status}`, e.details);
   }
   return data;

@@ -63,8 +63,8 @@ export function tmuxCommand(sessionName) {
 }
 
 export class TerminalManager {
-  constructor({ pool, hosts, journal, config, onNotify, claude }) {
-    Object.assign(this, { pool, hosts, journal, config, onNotify, claude });
+  constructor({ pool, hosts, journal, config, onNotify, claude, requireHost }) {
+    Object.assign(this, { pool, hosts, journal, config, onNotify, claude, requireHost });
     this.sessions = new Map();
   }
 
@@ -75,6 +75,7 @@ export class TerminalManager {
   view(s) {
     return {
       id: s.id, hostId: s.hostId, title: s.title, tmux: s.tmux, claude: s.claude, createdAt: s.createdAt,
+      ownerId: s.owner?.id ?? null, owner: s.owner?.username ?? null,
       attached: s.clients.size, exited: s.exited, cols: s.cols, rows: s.rows,
     };
   }
@@ -89,8 +90,10 @@ export class TerminalManager {
    * `claude` : { session?, dir? } → ouvre Claude Code dans une session tmux dédiée (voir claude.js).
    * La commande est construite côté serveur ; le client ne fournit que le nom de session et le dossier.
    */
-  async create(hostId, { cols = 80, rows = 24, tmux, tmuxSession, claude } = {}) {
+  async create(hostId, { cols = 80, rows = 24, tmux, tmuxSession, claude, user = null } = {}) {
     if (this.sessions.size >= MAX_SESSIONS) throw new HttpError(429, 'TOO_MANY', 'Trop de terminaux ouverts');
+    // Ouvrir un shell exige le rôle « operator » sur l'hôte.
+    if (this.requireHost && user) this.requireHost(user, hostId, 'operator');
     const host = this.hosts.get(hostId);
     let useTmux = tmux ?? host.tmux;
     let name = v.tmuxName(tmuxSession ?? host.tmuxSession);
@@ -106,7 +109,7 @@ export class TerminalManager {
       }
       stream = await this.pool.openPty(hostId, { cols, rows, command });
     } catch (err) {
-      this.journal.add({ type: 'terminal', event: 'open', ok: false, host, detail: err.message });
+      this.journal.add({ type: 'terminal', event: 'open', ok: false, host, user, detail: err.message });
       throw err;
     }
     const s = {
@@ -116,6 +119,7 @@ export class TerminalManager {
       tmux: useTmux ? name : null,
       claude: claudeInfo ? name : null,
       createdAt: Date.now(),
+      owner: user ? { id: user.id, username: user.username } : null,
       cols, rows,
       stream,
       buffer: new RingBuffer(this.config.termBufferBytes),
@@ -126,7 +130,7 @@ export class TerminalManager {
     };
     this.sessions.set(s.id, s);
     this.journal.add({
-      type: 'terminal', event: claudeInfo ? 'claude-open' : 'open', host,
+      type: 'terminal', event: claudeInfo ? 'claude-open' : 'open', host, user: s.owner,
       detail: claudeInfo ? `${claudeInfo.resumed ? 'reprise' : 'nouvelle'} ${name}${claudeInfo.dangerous ? ' (sans confirmation des outils)' : ''}` : useTmux ? `tmux:${name}` : 'shell',
     });
     log.info(`Terminal ${s.id} ouvert sur ${host.name}${claudeInfo ? ` (Claude, tmux ${name})` : useTmux ? ` (tmux ${name})` : ''}`);
@@ -147,7 +151,7 @@ export class TerminalManager {
     stream.on('close', () => {
       s.exited = true;
       const dur = Math.round((Date.now() - s.createdAt) / 1000);
-      this.journal.add({ type: 'terminal', event: 'close', host, detail: `durée ${dur} s` });
+      this.journal.add({ type: 'terminal', event: 'close', host, user: s.owner, ip: null, detail: `durée ${dur} s` });
       for (const ws of s.clients) {
         sendCtl(ws, { t: 'exit' });
         ws.close(4000, 'session terminée');
@@ -170,7 +174,7 @@ export class TerminalManager {
       const now = Date.now();
       if (now - (s.lastNotify || 0) < NOTIFY_MIN_INTERVAL_MS) continue;
       s.lastNotify = now;
-      this.onNotify({ sessionId: s.id, hostId: s.hostId, title: m[1] || s.title, body: m[2] });
+      this.onNotify({ sessionId: s.id, hostId: s.hostId, owner: s.owner, title: m[1] || s.title, body: m[2] });
     }
     s.oscTail = text.slice(Math.max(lastEnd, text.length - 600));
   }
@@ -239,12 +243,17 @@ export class TerminalManager {
   }
 
   /** Gestion d'une connexion WebSocket /ws/terminal (déjà authentifiée). */
-  async handle(ws, url) {
+  async handle(ws, url, req = {}) {
     const params = url.searchParams;
+    const user = req.user || null;
     let s;
     try {
       if (params.get('session')) {
         s = this.get(params.get('session'));
+        // Se rattacher à un terminal : réservé à son propriétaire (le partage passe par une invitation).
+        if (user && s.owner && s.owner.id !== user.id && !this.canJoin?.(s, user)) {
+          throw new HttpError(403, 'FORBIDDEN', 'Ce terminal appartient à un autre compte');
+        }
       } else {
         const hostId = v.id(params.get('host'), 'host');
         s = await this.create(hostId, {
@@ -255,6 +264,7 @@ export class TerminalManager {
           claude: params.get('claude') === '1'
             ? { session: params.get('claudeSession') || undefined, dir: params.get('claudeDir') ?? undefined }
             : undefined,
+          user,
         });
       }
     } catch (err) {

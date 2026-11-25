@@ -7,7 +7,15 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright-core';
 import { startFakeSshd } from './helpers/fake-sshd.js';
-import { startCorvus } from './helpers/corvus.js';
+import { startCorvus, freshCode } from './helpers/corvus.js';
+
+/** Connexion par l'écran réel : identifiant, mot de passe, code TOTP. */
+async function uiLogin(page) {
+  await page.getByLabel('Identifiant').fill(env.admin.username);
+  await page.getByLabel('Mot de passe', { exact: true }).fill(env.admin.password);
+  await page.getByLabel('Code à 6 chiffres').fill(freshCode(env.corvus, env.admin));
+  await page.getByRole('button', { name: 'Se connecter' }).click();
+}
 
 const OUT = path.resolve('test-results');
 let sshd;
@@ -68,8 +76,7 @@ test('mobile 375px : connexion, ajout d\'hôte, terminal', async (t) => {
   page.on('console', (m) => { if (m.type() === 'error' && !/favicon|manifest|apple-touch|sw\.js/.test(m.text())) errors.push(m.text()); });
 
   await page.goto(env.base);
-  await page.getByLabel('Token d\'accès').fill(env.token);
-  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await uiLogin(page);
   await page.getByText('Aucun hôte').waitFor();
   await auditLayout(page, 'hôtes vides');
   await page.screenshot({ path: path.join(OUT, 'mobile-1-hotes-vide.png') });
@@ -133,8 +140,7 @@ test('mobile 375px : fichiers (dossier, envoi, édition)', async (t) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(env.base);
-  await page.getByLabel('Token d\'accès').fill(env.token);
-  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await uiLogin(page);
   await page.getByRole('heading', { name: 'Pi du salon' }).waitFor();
   await page.getByRole('button', { name: 'Fichiers' }).first().click();
   await page.getByRole('button', { name: 'Nouveau dossier' }).waitFor();
@@ -185,8 +191,7 @@ test('mobile 375px : git (découverte, diff, commit, historique)', async (t) => 
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${env.base}/#/git`);
-  await page.getByLabel('Token d\'accès').fill(env.token);
-  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await uiLogin(page);
   await page.getByText('Choisissez un hôte').first().waitFor();
   await page.getByLabel('Hôte').selectOption({ label: 'Pi du salon' });
   await page.getByRole('button', { name: 'Découvrir', exact: true }).click();
@@ -218,8 +223,7 @@ test('mobile 375px : supervision (tuiles, graphiques, processus, docker)', async
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${env.base}/#/monitor`);
-  await page.getByLabel('Token d\'accès').fill(env.token);
-  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await uiLogin(page);
   await page.getByLabel('Hôte').selectOption({ label: 'Pi du salon' });
   await page.locator('.tile').first().waitFor();
   // 3 relevés : le CPU devient un nombre et les courbes ont des points
@@ -254,8 +258,7 @@ test('mobile 375px : services web et réglages', async (t) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${env.base}/#/proxy`);
-  await page.getByLabel('Token d\'accès').fill(env.token);
-  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await uiLogin(page);
   await page.getByText('Aucun service').waitFor();
   await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
   await page.getByLabel('Nom').fill('Tableau de bord');
@@ -279,8 +282,7 @@ test('desktop 1280px : rail latéral et reprise des onglets après rechargement'
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   await page.goto(env.base);
-  await page.getByLabel('Token d\'accès').fill(env.token);
-  await page.getByRole('button', { name: 'Se connecter' }).click();
+  await uiLogin(page);
   await page.getByRole('heading', { name: 'Pi du salon' }).waitFor();
   const nav = await page.locator('.app-nav').boundingBox();
   assert.ok(nav.height > nav.width, 'la navigation doit être un rail vertical sur desktop');
@@ -319,8 +321,7 @@ test('mobile 375px : page Claude Code (navigation, session tmux, reprise, arrêt
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => { if (m.type() === 'error' && !/favicon|manifest|apple-touch|sw\.js/.test(m.text())) errors.push(m.text()); });
     await page.goto(env.base);
-    await page.getByLabel('Token d\'accès').fill(env.token);
-    await page.getByRole('button', { name: 'Se connecter' }).click();
+    await uiLogin(page);
     const card = page.locator('article.host-card', { hasText: 'Claude Pi' });
     await card.waitFor();
     await auditLayout(page, 'hôtes avec bouton Claude');

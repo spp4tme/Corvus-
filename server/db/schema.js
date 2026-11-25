@@ -240,4 +240,14 @@ CREATE TABLE behavior_profile (
 ) WITHOUT ROWID;
 `,
   },
+  {
+    version: 2,
+    name: 'comptes : anti-rejeu TOTP, fin des sessions sans compte',
+    sql: `
+ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT -1;
+ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
+-- Les sessions ouvertes avec l'ancien token unique ne correspondent à aucun compte.
+DELETE FROM auth_sessions WHERE user_id IS NULL;
+`,
+  },
 ];

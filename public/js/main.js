@@ -153,9 +153,10 @@ async function boot() {
     status = { authenticated: false, offline: true };
   }
   if (!status.authenticated) {
-    showLogin({ offline: status.offline });
+    showLogin({ offline: status.offline, setupRequired: status.setupRequired });
     return;
   }
+  state.setMe(status.user);
   await startApp();
 }
 

@@ -19,9 +19,18 @@ export function createServices(ctx) {
   ctx.monitor = new MonitorService(ctx);
   ctx.proxy = new ProxyService({ db: ctx.db, journal: ctx.journal, config: ctx.config });
   ctx.push = new PushService({ db: ctx.db, vault: ctx.vault, config: ctx.config, journal: ctx.journal });
+  // Alertes : aux administrateurs, et aux comptes qui ont accès à l'hôte concerné.
+  ctx.push.audience = (userId, hostId) => {
+    const u = userId && ctx.users.row(userId);
+    if (!u || u.disabled) return false;
+    if (u.role === 'admin') return true;
+    const host = hostId && ctx.hosts.find(hostId);
+    return !!host && !!ctx.users.hostRole(u, host);
+  };
   ctx.notify = (n) => {
-    ctx.journal.add({ type: 'terminal', event: 'notify', host: n.hostId ? ctx.hosts.find(n.hostId) : undefined, detail: `${n.title} : ${n.body}` });
-    ctx.push.notify(n).catch(() => {});
+    ctx.journal.add({ type: 'terminal', event: 'notify', host: n.hostId ? ctx.hosts.find(n.hostId) : undefined, user: n.owner || null, ip: null, detail: `${n.title} : ${n.body}` });
+    // Notification d'un terminal : seulement aux appareils de son propriétaire.
+    ctx.push.notify(n, n.owner ? { userIds: [n.owner.id] } : undefined).catch(() => {});
   };
 }
 

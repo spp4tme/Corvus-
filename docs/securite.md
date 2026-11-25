@@ -1,6 +1,6 @@
 # Sécurité de Corvus
 
-Corvus donne un **shell sur vos machines** à quiconque possède son token. Il est conçu pour
+Corvus donne un **shell sur vos machines** à ses utilisateurs. Il est conçu pour
 n'être joignable **que depuis votre tailnet Tailscale**.
 
 ## Règles d'exposition
@@ -20,23 +20,39 @@ vers le port 443 de la machine Corvus).
 
 ## Mesures en place
 
-### Authentification
-- Token aléatoire de 256 bits généré au premier lancement (`data/token`, permissions 600).
-- Comparaison **timing-safe** (sur empreintes SHA-256 de taille fixe).
-- Échange du token contre un cookie de session `HttpOnly; SameSite=Strict` (+ `Secure` en HTTPS),
-  durée 30 jours (`SESSION_TTL_DAYS`). Le token n'est jamais stocké dans le navigateur.
-- `Authorization: Bearer <token>` accepté pour les scripts.
-- **Limitation des échecs** : délai exponentiel (0,25 s → 8 s) par tentative, blocage 15 min
-  après 10 échecs **par IP**. Le volume global d'échecs n'alourdit que le délai (4 s minimum) et ne
-  bloque jamais un autre appareil : personne ne peut vous enfermer dehors.
-- Rotation : `npm run token:rotate` (re-chiffre les secrets, révoque toutes les sessions).
-  Chaque session est liée à l'empreinte du token qui l'a créée : la révocation tient même si le
-  serveur encore lancé réécrit `sessions.json` avant son redémarrage. Tant qu'il n'a pas redémarré,
-  le serveur refuse de modifier les secrets (le coffre a été re-chiffré) plutôt que de les écraser.
+### Comptes et authentification
+- **Comptes nominatifs** : identifiant + mot de passe (12 caractères min., haché **scrypt**
+  N=2¹⁵) + **TOTP obligatoire** (RFC 6238, 6 chiffres / 30 s, anti-rejeu : un code ne sert
+  qu'une fois). Le secret TOTP est stocké dans le coffre chiffré.
+- **Premier lancement** : le token aléatoire de 256 bits (`data/token`, 600) sert uniquement à
+  créer le premier administrateur. Il ne permet plus de se connecter ensuite (il reste la clé du
+  coffre si aucune passphrase maître n'est définie).
+- **Rôles** : administrateur (tout), opérateur (utilise les hôtes accordés), lecture seule.
+  Droits par hôte, par groupe ou « tous les hôtes » ; un droit ne dépasse jamais le rôle du compte.
+  Un hôte non accordé est **invisible** (404). Un seul middleware décide pour toutes les routes
+  (`server/lib/access.js`) : toute nouvelle route d'hôte est protégée d'office.
+- Comptes créés par un administrateur : **mot de passe provisoire** à changer et TOTP à enrôler
+  à la première connexion. Dernier administrateur protégé (ni supprimé, ni rétrogradé).
+- Cookie de session `HttpOnly; SameSite=Strict` (+ `Secure` en HTTPS), 30 jours
+  (`SESSION_TTL_DAYS`) ; désactiver un compte coupe ses sessions.
+- **Jetons d'API personnels** (`cvu_…`, Bearer) pour les scripts, révocables, stockés hachés.
+- **Limitation des échecs** par IP **et** par identifiant : délai exponentiel (0,25 s → 8 s),
+  blocage 15 min après 10 échecs. Réponse en temps constant que le compte existe ou non.
+- Rotation du token d'amorçage : `npm run token:rotate` (ré-emballe la clé du coffre, révoque
+  toutes les sessions). Tant que le serveur n'a pas redémarré, il refuse de modifier les secrets.
+
+### Journal d'audit infalsifiable
+- Connexions (réussies et échouées), terminaux, transferts SFTP, git, Docker, processus, comptes,
+  hôtes, sauvegardes : chaque entrée indique le compte, l'IP et l'hôte.
+- **Chaînage SHA-256** : chaque entrée contient l'empreinte de la précédente. *Journal → Vérifier
+  l'intégrité* recalcule toute la chaîne et signale la première entrée modifiée ou supprimée.
+- Le journal n'est jamais vidé ni purgé. **Limite** : un attaquant root sur le serveur Corvus
+  peut recalculer toute la chaîne ; notez l'empreinte de tête affichée (ou exportez-la) pour
+  comparer plus tard.
 
 ### API et WebSocket
-- Toutes les routes `/api/*` (sauf `health`, `auth/status`, `auth/login`) et `/ws/*` exigent
-  l'authentification.
+- Toutes les routes `/api/*` (sauf `health` et `auth/*`) et `/ws/*` exigent un compte
+  authentifié (session cookie après TOTP, ou jeton d'API).
 - **Anti-CSRF** : toute mutation par cookie exige l'en-tête `X-Corvus: 1` (impossible à envoyer
   cross-origin sans pré-vol CORS, que Corvus n'accorde jamais) et une origine identique.
 - **Origin check WebSocket** : obligatoire pour les navigateurs. L'origine MagicDNS
@@ -49,7 +65,8 @@ vers le port 443 de la machine Corvus).
 
 ### Secrets
 - Mots de passe, clés privées et passphrases chiffrés au repos : **AES-256-GCM**, clé dérivée par
-  **scrypt** (N=2¹⁵) de `CORVUS_MASTER_PASSPHRASE` si définie, sinon du token.
+  par une clé de données elle-même chiffrée par une clé dérivée (**scrypt** N=2¹⁵) de
+  `CORVUS_MASTER_PASSPHRASE` si définie, sinon du token d'amorçage. Stockés dans SQLite.
 - Fichiers de données en 600, dossier en 700.
 - Les secrets ne sont **jamais renvoyés** au frontend (seulement `hasPassword` / `hasKey`).
 - Avec une passphrase maître, voler le dossier `data/` ne suffit plus à lire les secrets.
@@ -82,5 +99,9 @@ vers le port 443 de la machine Corvus).
 ## Que faire si…
 
 - **Token compromis** : `npm run token:rotate` puis redémarrez Corvus.
-- **Appareil perdu** : rotation du token (révoque toutes les sessions), et retirez l'appareil du tailnet.
+- **Appareil perdu** : un administrateur désactive le compte ou réinitialise son TOTP (coupe ses
+  sessions), et retirez l'appareil du tailnet.
+- **Administrateur unique qui perd son TOTP** : arrêtez Corvus, puis
+  `sqlite3 <stockage>/corvus.db "UPDATE users SET totp_enabled=0 WHERE username='admin'"` :
+  l'enrôlement sera redemandé à la connexion suivante (mot de passe toujours exigé).
 - **Alerte host key** : ne vous connectez pas tant que vous n'avez pas vérifié l'empreinte.

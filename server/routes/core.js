@@ -1,68 +1,29 @@
-// Routes : authentification, hôtes, terminaux, journal, tailscale.
+// Routes : hôtes, terminaux, journal, tailscale. (Authentification : routes/accounts.js ;
+// droits : lib/access.js, appliqué avant ces routes.)
 import { Router } from 'express';
-import { COOKIE, parseCookies, tokenMatches } from '../lib/auth.js';
 import { tailscalePeers } from '../lib/tailscale.js';
 import { HttpError } from '../lib/validate.js';
 import * as v from '../lib/validate.js';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-export function authRoutes(ctx) {
-  const r = Router();
-  const { auth, journal, config } = ctx;
-
-  r.get('/status', (req, res) => {
-    res.json({ authenticated: !!auth.identify(req), version: ctx.version });
-  });
-
-  r.post('/login', async (req, res) => {
-    const ip = req.ip;
-    const wait = auth.limiter.blockedFor(ip);
-    if (wait > 0) {
-      res.set('Retry-After', String(Math.ceil(wait / 1000)));
-      throw new HttpError(429, 'RATE_LIMITED', `Trop de tentatives. Réessayez dans ${Math.ceil(wait / 60000)} min.`);
-    }
-    if (!tokenMatches(req.body?.token, auth.token)) {
-      const penalty = auth.limiter.fail(ip);
-      journal.add({ type: 'auth', event: 'login', ok: false, detail: `échec depuis ${ip}` });
-      await sleep(penalty);
-      throw new HttpError(401, 'BAD_TOKEN', 'Token invalide');
-    }
-    auth.limiter.success(ip);
-    const sid = auth.createSession({ ua: req.headers['user-agent'], ip });
-    journal.add({ type: 'auth', event: 'login', detail: `depuis ${ip}` });
-    res.cookie(COOKIE, sid, {
-      httpOnly: true,
-      sameSite: 'strict',
-      // https direct, via tailscale serve (X-Forwarded-Proto) ou origine https déclarée par le navigateur
-      secure: req.secure || String(req.headers.origin || '').startsWith('https://'),
-      path: '/',
-      maxAge: config.sessionTtlDays * 86_400_000,
-    });
-    res.json({ ok: true });
-  });
-
-  r.post('/logout', (req, res) => {
-    auth.destroySession(parseCookies(req.headers.cookie)[COOKIE]);
-    res.clearCookie(COOKIE, { path: '/' });
-    res.json({ ok: true });
-  });
-
-  return r;
-}
 
 export function hostRoutes(ctx) {
   const r = Router();
   const { hosts, pool, knownHosts, journal, terminals, config } = ctx;
 
   r.get('/hosts', (req, res) => {
+    const allowed = req.allowedHostIds();
     res.json({
-      hosts: hosts.list().map((h) => ({ ...h, connection: pool.status(h.id), knownHost: knownHosts.get(h.hostname, h.port) })),
+      hosts: hosts.list().filter((h) => !allowed || allowed.includes(h.id)).map((h) => ({
+        ...h, connection: pool.status(h.id), knownHost: knownHosts.get(h.hostname, h.port),
+        status: ctx.hostStatus?.get(h.id) || null, role: ctx.users.hostRole(req.user, h),
+      })),
     });
   });
 
   r.post('/hosts', (req, res) => {
-    res.status(201).json({ host: hosts.create(req.body) });
+    const host = hosts.create(req.body);
+    journal.add({ type: 'admin', event: 'host-create', user: req.user, host, ip: req.ip });
+    res.status(201).json({ host });
   });
 
   // Test d'une configuration non enregistrée (formulaire d'ajout).
@@ -84,6 +45,7 @@ export function hostRoutes(ctx) {
     const connChanged = ['hostname', 'port', 'username', 'authType', 'password', 'privateKey', 'passphrase', 'clearSecrets']
       .some((k) => k in (req.body || {}));
     const host = hosts.update(id, req.body);
+    journal.add({ type: 'admin', event: 'host-update', user: req.user, host, ip: req.ip, detail: Object.keys(req.body || {}).filter((k) => !['password', 'privateKey', 'passphrase'].includes(k)).join(', ') + (connChanged ? ' (connexion)' : '') });
     if (connChanged) {
       pool.drop(id);
       ctx.sftp?.forget(id);
@@ -96,6 +58,7 @@ export function hostRoutes(ctx) {
     hosts.get(id);
     for (const t of terminals.list()) if (t.hostId === id) terminals.close(t.id);
     pool.drop(id);
+    journal.add({ type: 'admin', event: 'host-delete', user: req.user, host: hosts.get(id), ip: req.ip });
     hosts.delete(id);
     res.json({ ok: true });
   });
@@ -130,12 +93,15 @@ export function hostRoutes(ctx) {
     res.json(await tailscalePeers(config.tailscaleBin));
   });
 
+  // Chacun ne voit que ses terminaux (les sessions partagées avec lui sont listées à part).
   r.get('/terminals', (req, res) => {
-    res.json({ terminals: terminals.list() });
+    res.json({ terminals: terminals.list().filter((t) => t.ownerId === req.user.id) });
   });
 
   r.delete('/terminals/:id', (req, res) => {
     const id = v.str(req.params.id, 'id', { min: 8, max: 32 });
+    const t = terminals.list().find((x) => x.id === id);
+    if (t && t.ownerId !== req.user.id && req.user.role !== 'admin') throw new HttpError(403, 'FORBIDDEN', 'Ce terminal appartient à un autre compte');
     terminals.close(id);
     res.json({ ok: true });
   });
@@ -145,7 +111,7 @@ export function hostRoutes(ctx) {
     const type = req.query.type ? v.str(req.query.type, 'type', { max: 20 }) : undefined;
     const hostId = req.query.hostId ? v.id(req.query.hostId) : undefined;
     const before = req.query.before ? v.int(req.query.before, 'before', { min: 1 }) : undefined;
-    res.json({ entries: journal.list({ limit, type, hostId, before }), head: journal.head() });
+    res.json({ entries: journal.list({ limit, type, hostId, before, hostIds: req.allowedHostIds() || undefined }), head: req.user.role === 'admin' ? journal.head() : undefined });
   });
 
   // Le journal d'audit n'est jamais vidé (chaîne infalsifiable) : vérification à la place.

@@ -8,6 +8,23 @@ export const state = {
   hosts: [],
   loaded: false,
   activeHostId: prefs.get('activeHost', null),
+  me: null,
+
+  setMe(user) {
+    this.me = user;
+    document.documentElement.dataset.role = user?.role || '';
+    emit();
+  },
+
+  get isAdmin() {
+    return this.me?.role === 'admin';
+  },
+
+  /** Rôle sur un hôte (fourni par le serveur avec la liste des hôtes). */
+  canOperate(hostId) {
+    const r = this.host(hostId)?.role;
+    return r === 'admin' || r === 'operator';
+  },
 
   async refreshHosts() {
     const { hosts } = await get('/api/hosts');

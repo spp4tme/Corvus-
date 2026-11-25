@@ -19,8 +19,9 @@ export default {
     el.append(
       h('div', { class: 'toolbar' },
         search,
-        button({ label: 'Ajouter', icon: 'plus', variant: 'primary', onClick: () => editHost() }),
-        button({ label: 'Importer Tailscale', icon: 'download', onClick: importTailscale })),
+        // Ajout / import : réservés aux administrateurs (le serveur le vérifie aussi).
+        state.isAdmin ? button({ label: 'Ajouter', icon: 'plus', variant: 'primary', onClick: () => editHost() }) : null,
+        state.isAdmin ? button({ label: 'Importer Tailscale', icon: 'download', onClick: importTailscale }) : null),
       list);
 
     function render() {
@@ -30,8 +31,8 @@ export default {
       if (!state.hosts.length) {
         return replace(list, emptyState({
           icon: 'server', title: 'Aucun hôte',
-          text: 'Ajoutez une machine de votre tailnet (IP 100.x ou nom MagicDNS).',
-          action: button({ label: 'Ajouter un hôte', icon: 'plus', variant: 'primary', onClick: () => editHost() }),
+          text: state.isAdmin ? 'Ajoutez une machine de votre tailnet (IP 100.x ou nom MagicDNS).' : 'Aucun hôte ne vous a encore été accordé : demandez-le à un administrateur.',
+          action: state.isAdmin ? button({ label: 'Ajouter un hôte', icon: 'plus', variant: 'primary', onClick: () => editHost() }) : null,
         }));
       }
       if (!hosts.length) return replace(list, emptyState({ title: 'Aucun résultat', text: `Rien ne correspond à « ${query} ».` }));
@@ -62,15 +63,16 @@ export default {
           h('div', { class: 'grow' },
             h('div', { class: 'row' }, h('h3', { class: 'host-name ellipsis' }, host.name), host.pinned ? icon('pin', { size: 14, label: 'épinglé' }) : null),
             h('div', { class: 'host-addr ellipsis' }, `${host.username}@${host.hostname}${host.port !== 22 ? `:${host.port}` : ''}`)),
-          button({ label: host.pinned ? 'Désépingler' : 'Épingler', icon: 'pin', iconOnly: true, variant: 'ghost', pressed: host.pinned, onClick: () => togglePin(host) }),
-          button({ label: 'Modifier', icon: 'edit', iconOnly: true, variant: 'ghost', onClick: () => editHost(host) })),
+          state.isAdmin ? button({ label: host.pinned ? 'Désépingler' : 'Épingler', icon: 'pin', iconOnly: true, variant: 'ghost', pressed: host.pinned, onClick: () => togglePin(host) }) : null,
+          state.isAdmin ? button({ label: 'Modifier', icon: 'edit', iconOnly: true, variant: 'ghost', onClick: () => editHost(host) }) : null),
         (status || missing || host.tmux) ? h('div', { class: 'row' }, status, missing, host.tmux ? badge(`tmux · ${host.tmuxSession}`, 'accent') : null) : null,
         result,
+        host.role === 'viewer' ? h('div', null, badge('lecture seule')) : null,
         h('div', { class: 'host-actions' },
-          button({ label: 'Terminal', icon: 'terminal', variant: 'primary', onClick: () => openTerminal(host) }),
-          button({ label: 'Claude Code', icon: 'sparkle', onClick: () => { state.setActiveHost(host.id); location.hash = '#/claude'; } }),
+          host.role !== 'viewer' ? button({ label: 'Terminal', icon: 'terminal', variant: 'primary', onClick: () => openTerminal(host) }) : null,
+          host.role !== 'viewer' ? button({ label: 'Claude Code', icon: 'sparkle', onClick: () => { state.setActiveHost(host.id); location.hash = '#/claude'; } }) : null,
           button({ label: 'Fichiers', icon: 'folder', onClick: () => { state.setActiveHost(host.id); location.hash = '#/files'; } }),
-          testBtn));
+          host.role !== 'viewer' ? testBtn : null));
     }
 
     async function togglePin(host) {

@@ -44,9 +44,13 @@ describe('authentification', () => {
     assert.equal(r.status, 401);
   });
 
-  test('mauvais token refusé, puis bon token accepté (cookie HttpOnly SameSite=Strict)', async () => {
-    const bad = await c.login('cv_faux');
+  test('mauvais mot de passe ou mauvais code refusés, puis connexion (cookie HttpOnly SameSite=Strict)', async () => {
+    const bad = await c.login({ password: 'faux-mot-de-passe-123' });
     assert.equal(bad.status, 401);
+    const badCode = await c.login({ code: '000000' });
+    assert.equal(badCode.status, 401);
+    const oldToken = await c.login({ username: undefined, password: undefined, token: env.bootstrapToken });
+    assert.equal(oldToken.status, 401, "le token d'amorçage ne permet plus de se connecter");
     const ok = await c.login();
     assert.equal(ok.status, 200);
     const cookie = ok.headers.get('set-cookie');

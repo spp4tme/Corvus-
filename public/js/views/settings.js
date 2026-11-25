@@ -4,6 +4,7 @@ import { h, prefs } from '../ui/dom.js';
 import { button, field, select, checkbox, toast, toastError } from '../ui/components.js';
 import { TERMINAL_THEMES } from '../terminal-themes.js';
 import { termSettings } from './terminal.js';
+import { state } from '../state.js';
 
 export default {
   mount(el) {
@@ -29,10 +30,15 @@ export default {
 
     const notifSlot = h('div');
     const storageSlot = h('div');
-    import('./storage-settings.js').then((m) => m.renderStorageSettings(storageSlot)).catch(() => {});
+    const accountSlot = h('div');
+    const usersSlot = h('div');
+    import('./accounts-settings.js').then((m) => { m.renderMyAccount(accountSlot); m.renderUsers(usersSlot); }).catch(() => {});
+    if (state.isAdmin) import('./storage-settings.js').then((m) => m.renderStorageSettings(storageSlot)).catch(() => {});
     import('../push.js').then((m) => m.renderPushSettings?.(notifSlot)).catch(() => {});
 
     el.append(
+      accountSlot,
+      usersSlot,
       h('h2', { class: 'section-title' }, 'Terminal (cet appareil)'),
       h('div', { class: 'card card-pad form-grid' },
         field({ label: 'Taille de police', control: size }),

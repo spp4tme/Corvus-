@@ -4,20 +4,43 @@ import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import { createCorvus } from '../../server/app.js';
+import * as totp from '../../server/lib/totp.js';
 
-export async function startCorvus(overrides = {}) {
+export const ADMIN = { username: 'admin', password: 'mot-de-passe-admin-test' };
+
+/** Crée un compte avec TOTP déjà activé (les tests n'ont pas de téléphone). */
+export function makeUser(corvus, { username, password, role = 'admin' }) {
+  const { users } = corvus.ctx;
+  const u = users.create({ username, password, role });
+  const secret = totp.generateSecret();
+  corvus.ctx.vault.set(`totp:${u.id}`, { secret });
+  corvus.ctx.db.run('UPDATE users SET totp_enabled = 1 WHERE id = ?', u.id);
+  return { ...u, password, secret };
+}
+
+/** Code TOTP valide ; le compteur anti-rejeu est remis à zéro (plusieurs connexions par test). */
+export function freshCode(corvus, user) {
+  corvus.ctx.db.run('UPDATE users SET totp_last_step = -1 WHERE id = ?', user.id);
+  return totp.codeAt(user.secret, totp.stepAt());
+}
+
+export async function startCorvus(overrides = {}, { setup = true } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-data-'));
   const corvus = createCorvus({ dataDir, logLevel: 'warn', port: 0, bind: '127.0.0.1', ...overrides });
   const addr = await corvus.listen(0, '127.0.0.1');
   const base = `http://127.0.0.1:${addr.port}`;
-  const client = new CorvusClient(base, corvus.ctx.token);
-  return { corvus, base, dataDir, client, token: corvus.ctx.token, close: () => corvus.close() };
+  const admin = setup ? makeUser(corvus, { ...ADMIN, role: 'admin' }) : null;
+  // `token` : jeton d'API personnel de l'admin (Bearer), comme l'ancien token unique.
+  const token = admin ? corvus.ctx.users.createToken(admin.id, 'tests').token : null;
+  const client = new CorvusClient(base, { corvus, user: admin });
+  return { corvus, base, dataDir, client, admin, token, bootstrapToken: corvus.ctx.token, close: () => corvus.close() };
 }
 
 export class CorvusClient {
-  constructor(base, token) {
+  constructor(base, { corvus, user } = {}) {
     this.base = base;
-    this.token = token;
+    this.corvus = corvus;
+    this.user = user;
     this.cookie = null;
   }
 
@@ -25,11 +48,14 @@ export class CorvusClient {
     return this.base;
   }
 
-  async login(token = this.token) {
+  /** Connexion mot de passe + TOTP. `creds` remplace les valeurs par défaut (tests d'échec). */
+  async login(creds = {}) {
+    const u = this.user;
+    const body = { username: u?.username, password: u?.password, code: u ? freshCode(this.corvus, u) : '', ...creds };
     const res = await fetch(`${this.base}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify(body),
     });
     const set = res.headers.get('set-cookie');
     if (set) this.cookie = set.split(';')[0];
