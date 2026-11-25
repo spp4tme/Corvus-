@@ -456,6 +456,28 @@ describe('supervision et docker', () => {
     assert.equal(typeof r2.body.cpu, 'number', 'CPU calculé au 2e relevé');
   });
 
+  test('historique : collecte de fond stockée en base, lecture par plage', async () => {
+    const { metrics } = env.corvus.ctx;
+    await metrics.tick();
+    await new Promise((r) => setTimeout(r, 1100));
+    await metrics.tick();
+    const avail = await c.api('GET', `${M()}/monitor/metrics`);
+    assert.ok(avail.body.metrics.includes('mem'), JSON.stringify(avail.body));
+    const h = await c.api('GET', `${M()}/monitor/history?metrics=cpu,mem&range=1h`);
+    assert.equal(h.status, 200, JSON.stringify(h.body));
+    assert.ok(h.body.points.length >= 1);
+    assert.ok(h.body.points.some((p) => typeof p.values.mem === 'number'));
+    const bad = await c.api('GET', `${M()}/monitor/history?range=10y`);
+    assert.equal(bad.status, 400);
+  });
+
+  test('état de l\'hôte : sonde TCP « en ligne » visible dans la liste', async () => {
+    const r = await c.api('POST', `${M()}/probe`);
+    assert.equal(r.body.status.state, 'up', JSON.stringify(r.body));
+    const list = await c.api('GET', '/api/hosts');
+    assert.equal(list.body.hosts.find((x) => x.id === hostId).status.state, 'up');
+  });
+
   test('processus : liste puis kill', async () => {
     const spawn = await env.corvus.ctx.pool.exec(hostId, '(while :; do :; done) >/dev/null 2>&1 & echo $!');
     const pid = Number(spawn.stdout.toString().trim());

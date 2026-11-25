@@ -9,7 +9,7 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
  * @param {{ title: string, series: {key: string, label: string, color: string}[], max?: number,
  *           format: (v: number) => string, capacity?: number, intervalMs?: number }} opts
  */
-export function lineChart({ title, series, max, minMax = 1, format, capacity = 60, intervalMs = 3000, emptyText = '—' }) {
+export function lineChart({ title, series, max, minMax = 1, format, capacity = 60, intervalMs = 3000, emptyText = '—', spanLabel, tipTime }) {
   const canvas = h('canvas', { class: 'chart-canvas', role: 'img', 'aria-label': title });
   const tip = h('div', { class: 'chart-tip', hidden: true, role: 'presentation' });
   const value = h('div', { class: 'chart-value' }, '—');
@@ -83,7 +83,7 @@ export function lineChart({ title, series, max, minMax = 1, format, capacity = 6
       if (f > 0) ctx.fillText(format(top * f), x0 + 2, y - 2);
     }
     ctx.textBaseline = 'top';
-    ctx.fillText(`${Math.round((capacity * intervalMs) / 60000)} min`, x0 + 2, y0 + 2);
+    ctx.fillText(spanLabel || `${Math.round((capacity * intervalMs) / 60000)} min`, x0 + 2, y0 + 2);
 
     // Séries : traits 2px, aire légère pour une série unique.
     const labels = [];
@@ -162,7 +162,7 @@ export function lineChart({ title, series, max, minMax = 1, format, capacity = 6
     hoverIndex = Math.max(0, Math.min(data.length - 1, i));
     const d = data[hoverIndex];
     tip.replaceChildren(
-      h('div', { class: 'chart-tip-time' }, new Date(d.t).toLocaleTimeString('fr-FR')),
+      h('div', { class: 'chart-tip-time' }, tipTime ? tipTime(d.t) : new Date(d.t).toLocaleTimeString('fr-FR')),
       ...series.map((s) => h('div', { class: 'chart-tip-row' },
         h('span', { class: 'chart-swatch', dataset: { color: s.color } }), `${s.label} `,
         h('strong', null, d.values[s.key] === null || d.values[s.key] === undefined ? '—' : format(d.values[s.key])))));
@@ -179,5 +179,16 @@ export function lineChart({ title, series, max, minMax = 1, format, capacity = 6
   const ro = new ResizeObserver(() => draw());
   ro.observe(canvas);
 
-  return { el, push, draw, destroy: () => ro.disconnect(), data };
+  /** Remplace toute la série (historique) : l'axe X couvre exactement les points fournis. */
+  function setAll(points) {
+    data.length = 0;
+    for (const p of points) data.push(p);
+    capacity = Math.max(2, data.length);
+    const last = data[data.length - 1];
+    const missing = (v) => v === null || v === undefined;
+    value.textContent = !last ? emptyText : series.map((s) => (missing(last.values[s.key]) ? '—' : format(last.values[s.key]))).join(' · ');
+    draw();
+  }
+
+  return { el, push, setAll, draw, destroy: () => ro.disconnect(), data };
 }

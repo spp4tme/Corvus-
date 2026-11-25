@@ -44,13 +44,15 @@ tiers.
 
 | Module | Ce qu'il fait |
 |---|---|
-| **Hôtes** | Ajout, modification, suppression ; alias, icône, groupes, épingles ; auth par mot de passe, clé privée (+ passphrase) ou agent SSH ; bouton **Tester la connexion** ; import depuis `tailscale status --json`. |
+| **Hôtes** | Ajout, modification, suppression ; alias, icône, groupes, épingles ; **état en continu** (« en ligne · 23 ms » / « injoignable depuis 12 min », sonde TCP de fond, alerte après 5 min) ; auth par mot de passe, clé privée (+ passphrase) ou agent SSH ; bouton **Tester la connexion** ; import depuis `tailscale status --json`. |
 | **Terminal** | Onglets multiples (xterm.js), thèmes, taille de police, redimensionnement du PTY, **barre de touches mobile** (Esc, Tab, Ctrl/Alt, flèches, `\| ~ / -`, ^C, ^D, coller, copier, dictée), clavier externe, **OSC 52** (copie vers le presse-papiers), **reconnexion WebSocket automatique** (reprise à l'octet près), **mode tmux** (`tmux new-session -A`) pour survivre aux coupures, **défilement de l'historique au doigt** sur mobile (voir [Terminal sur mobile](#terminal-sur-mobile)). |
 | **Claude Code** | Onglet **Claude** dans la navigation (et bouton sur chaque fiche d'hôte) : lance `claude` dans une session tmux dédiée, liste des sessions actives (Reprendre / Tuer / Nouvelle session). Voir [Claude Code](#claude-code). |
 | **Fichiers** | Navigation SFTP, envoi (avec progression, glisser-déposer), téléchargement, nouveau dossier, renommer/déplacer, supprimer, **éditeur texte** (≤ 2 Mo, détection de conflit), aperçu d'images. |
 | **Git** | Statut, branches (checkout, suivi, création), historique, diff, stage/unstage, commit, `pull --ff-only`, push, fetch, découverte des dépôts. |
-| **Supervision** | CPU, RAM, swap, disques, réseau, uptime, charge, température (Pi), **graphiques temps réel** (relevé toutes les 3 s), processus (kill), **Docker** (liste, start/stop/restart, logs). |
-| **Journal** | Historique local des connexions et actions (terminal, SFTP, git, Docker, accès). |
+| **Supervision** | CPU (global et **par cœur**), RAM, swap, disques, **E/S disque** (débit, IOPS), réseau, **TCP** (connexions établies, retransmissions), uptime, charge, température (Pi), graphiques temps réel (3 s), **historique stocké** (collecte de fond toutes les 30 s : 1 h, 24 h, 7 jours, 1 an), processus (kill), **Docker** (liste, start/stop/restart, logs). |
+| **Journal** | Journal d'audit **infalsifiable** (chaîné par SHA-256, vérifiable) : connexions, terminaux, SFTP, git, Docker, comptes, sauvegardes, avec le compte et l'IP. |
+| **Comptes** | Comptes nominatifs, **TOTP obligatoire**, rôles administrateur / opérateur / lecture seule, droits par hôte ou groupe, jetons d'API. |
+| **Stockage** | Base SQLite (option : SSD externe), rétention automatique, **sauvegarde / restauration chiffrées en un bouton**, alerte d'espace disque. |
 | **Services web** | Ouvre une interface web privée du tailnet via un proxy isolé (bac à sable). |
 | **Bonus** | Dictée vocale (Web Speech API), **notifications push** quand une commande longue se termine ([docs/notifications.md](docs/notifications.md)). |
 
@@ -293,6 +295,9 @@ directement.
 | `BIND` | `127.0.0.1` | Adresse d'écoute (IP publique refusée) |
 | `CORVUS_DATA` | `./data` | Petit dossier de configuration (token d'amorçage) ; contient aussi la base si `CORVUS_STORAGE` est vide |
 | `CORVUS_STORAGE` | — | **Données lourdes** : base SQLite, enregistrements de session, sauvegardes. Ex. `/mnt/ssd/corvus` sur un SSD externe. Le dossier doit exister : Corvus refuse de démarrer si le disque n'est pas monté |
+| `HOST_PROBE_SEC` | `60` | Intervalle de la sonde d'état des hôtes (0 = désactivée) ; les hôtes injoignables sont re-testés de plus en plus rarement (jusqu'à 15 min) |
+| `HOST_DOWN_ALERT_MIN` | `5` | Alerte (journal + push) quand un hôte reste injoignable plus longtemps |
+| `METRICS_INTERVAL_SEC` | `30` | Collecte de fond des métriques (0 = désactivée) ; un hôte injoignable est sauté |
 | `CORVUS_MIN_FREE_MB` | `2048` | Seuil d'alerte d'espace libre (le plus grand de ce seuil et de 5 % du disque) |
 | `RETENTION_METRICS_RAW_DAYS` | `7` | Conservation des métriques détaillées (ensuite : agrégats horaires) |
 | `RETENTION_METRICS_HOURLY_DAYS` | `365` | Conservation des agrégats horaires |

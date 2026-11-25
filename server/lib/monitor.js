@@ -5,8 +5,10 @@ import { q } from './shell.js';
 
 const STATS_SCRIPT = (doubleSample) => [
   'export LC_ALL=C',
-  "echo '##stat'; head -n 1 /proc/stat 2>/dev/null",
-  doubleSample ? "sleep 0.5; echo '##stat2'; head -n 1 /proc/stat 2>/dev/null" : '',
+  "echo '##stat'; grep '^cpu' /proc/stat 2>/dev/null",
+  doubleSample ? "sleep 0.5; echo '##stat2'; grep '^cpu' /proc/stat 2>/dev/null" : '',
+  "echo '##diskstats'; cat /proc/diskstats 2>/dev/null",
+  "echo '##snmp'; grep '^Tcp:' /proc/net/snmp 2>/dev/null",
   "echo '##meminfo'; cat /proc/meminfo 2>/dev/null",
   "echo '##loadavg'; cat /proc/loadavg 2>/dev/null",
   "echo '##uptime'; cat /proc/uptime 2>/dev/null",
@@ -17,6 +19,27 @@ const STATS_SCRIPT = (doubleSample) => [
   "echo '##temp'; cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null",
   "echo '##end'",
 ].filter(Boolean).join('\n');
+
+// Disques entiers (pas les partitions, ni loop/ram) : sda, nvme0n1, mmcblk0, vda, xvda…
+const DISK_RE = /^(sd[a-z]+|hd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+n\d+|mmcblk\d+)$/;
+
+export function parseDiskstats(lines) {
+  const out = [];
+  for (const l of lines) {
+    const f = l.trim().split(/\s+/);
+    if (f.length < 14 || !DISK_RE.test(f[2])) continue;
+    out.push({ name: f[2], reads: +f[3], readBytes: +f[5] * 512, writes: +f[7], writeBytes: +f[9] * 512 });
+  }
+  return out;
+}
+
+export function parseSnmpTcp(lines) {
+  const rows = lines.filter((l) => l.startsWith('Tcp:'));
+  if (rows.length < 2) return null;
+  const keys = rows[0].trim().split(/\s+/).slice(1);
+  const vals = rows[1].trim().split(/\s+/).slice(1).map(Number);
+  return Object.fromEntries(keys.map((k, i) => [k, vals[i]]));
+}
 
 const PSEUDO_FS = /^(tmpfs|devtmpfs|udev|overlay|squashfs|none|efivarfs|shm|cgroup2?|proc|sysfs|run|devfs|map |nsfs)/;
 const PSEUDO_MOUNT = /^\/(snap|run|dev|sys|proc)(\/|$)|^\/var\/lib\/docker\//;
@@ -124,15 +147,27 @@ export class MonitorService {
     this.prev = new Map();
   }
 
-  async stats(hostId) {
-    const prev = this.prev.get(hostId);
-    const fresh = !prev || Date.now() - prev.ts > 30_000;
+  /**
+   * Relevé complet. `key` sépare les « mémoires » des calculs de débit : l'affichage en direct
+   * (toutes les 3 s) et la collecte de fond (toutes les 30 s) ne se perturbent pas.
+   */
+  async stats(hostId, { key = 'live', maxAgeMs = 30_000 } = {}) {
+    const prevKey = `${hostId}:${key}`;
+    const prev = this.prev.get(prevKey);
+    const fresh = !prev || Date.now() - prev.ts > maxAgeMs;
     const r = await this.pool.exec(hostId, STATS_SCRIPT(fresh), { timeoutMs: 15_000 });
     const s = sections(r.stdout.toString('utf8'));
     if (!s.end) throw new HttpError(502, 'STATS_ERROR', 'Relevé incomplet (shell distant inhabituel ?)');
     const ts = Date.now();
-    const cpuNow = parseCpu(s.stat2?.[0] ?? s.stat?.[0]);
+    const statNow = s.stat2 ?? s.stat ?? [];
+    const cpuNow = parseCpu(statNow[0]);
     const cpu = fresh ? cpuPercent(parseCpu(s.stat?.[0]), cpuNow) : cpuPercent(prev.cpu, cpuNow);
+    // CPU par cœur : même calcul, ligne par ligne (cpu0, cpu1…).
+    const coresNow = statNow.slice(1).filter((l) => /^cpu\d/.test(l)).map(parseCpu);
+    const coresBefore = fresh ? (s.stat || []).slice(1).filter((l) => /^cpu\d/.test(l)).map(parseCpu) : prev.cores || [];
+    const cpuCores = coresNow.map((c, i) => cpuPercent(coresBefore[i], c));
+    const disksIo = parseDiskstats(s.diskstats || []);
+    const tcpRaw = parseSnmpTcp(s.snmp || []);
     const net = parseNet(s.netdev || []);
     const dt = prev ? (ts - prev.ts) / 1000 : 0;
     const prevNet = new Map((prev?.net || []).map((i) => [i.name, i]));
@@ -150,7 +185,26 @@ export class MonitorService {
         txRate += i.txRate;
       }
     }
-    this.prev.set(hostId, { ts, cpu: cpuNow, net });
+    let disk = null;
+    let tcp = tcpRaw ? { established: tcpRaw.CurrEstab ?? null, retransPerSec: null, opensPerSec: null, resetsPerSec: null } : null;
+    if (prev && dt > 0) {
+      const before = new Map((prev.disksIo || []).map((d) => [d.name, d]));
+      const rate = (a, b) => Math.max(0, (a - b) / dt);
+      const devices = disksIo.filter((d) => before.has(d.name)).map((d) => {
+        const p = before.get(d.name);
+        return { name: d.name, readBps: rate(d.readBytes, p.readBytes), writeBps: rate(d.writeBytes, p.writeBytes), readIops: rate(d.reads, p.reads), writeIops: rate(d.writes, p.writes) };
+      });
+      if (devices.length) {
+        const sum = (k) => devices.reduce((a, d) => a + d[k], 0);
+        disk = { readBps: sum('readBps'), writeBps: sum('writeBps'), readIops: sum('readIops'), writeIops: sum('writeIops'), devices };
+      }
+      if (tcp && prev.tcpRaw) {
+        tcp.retransPerSec = rate(tcpRaw.RetransSegs, prev.tcpRaw.RetransSegs);
+        tcp.opensPerSec = rate(tcpRaw.ActiveOpens + tcpRaw.PassiveOpens, prev.tcpRaw.ActiveOpens + prev.tcpRaw.PassiveOpens);
+        tcp.resetsPerSec = rate(tcpRaw.EstabResets, prev.tcpRaw.EstabResets);
+      }
+    }
+    this.prev.set(prevKey, { ts, cpu: cpuNow, cores: coresNow, net, disksIo, tcpRaw });
     // uname -snrm → « système nom-d'hôte version machine »
     const [sysname, hostname, release, arch] = (s.uname?.[0] || '').trim().split(/\s+/);
     const kernel = sysname ? [sysname, release].filter(Boolean).join(' ') : null;
@@ -164,6 +218,9 @@ export class MonitorService {
       arch: arch || null,
       cores: Number((s.nproc?.[0] || '').trim()) || null,
       cpu,
+      cpuCores,
+      disk,
+      tcp,
       load: loadParts.every((x) => Number.isFinite(x)) && loadParts.length === 3 ? loadParts : null,
       uptime: Number((s.uptime?.[0] || '').split(' ')[0]) || null,
       mem, swap,

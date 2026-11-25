@@ -54,7 +54,7 @@ export default {
 
     function hostCard(host) {
       const result = h('div', { hidden: true });
-      const status = host.connection?.connected ? badge('connecté', 'ok') : null;
+      const status = hostStatusBadge(host);
       const missing = !host.hasPassword && !host.hasKey && host.authType !== 'agent' ? badge('secret manquant', 'warn') : null;
       const testBtn = button({ label: 'Tester', icon: 'plug', onClick: () => testHost(host, testBtn, result) });
       return h('article', { class: 'card host-card' },
@@ -88,6 +88,19 @@ export default {
     return () => unsub();
   },
 };
+
+/** « connecté », « en ligne · 23 ms » ou « injoignable depuis 12 min » (sonde de fond du serveur). */
+export function hostStatusBadge(host) {
+  if (host.connection?.connected) return badge('connecté', 'ok');
+  const st = host.status;
+  if (!st) return null;
+  if (st.state === 'up') return badge(st.latencyMs ? `en ligne · ${st.latencyMs} ms` : 'en ligne', 'ok');
+  const min = Math.round((Date.now() - st.since) / 60_000);
+  const since = min < 1 ? 'à l\'instant' : min < 120 ? `depuis ${min} min` : `depuis ${Math.round(min / 60)} h`;
+  const b = badge(`injoignable ${since}`, 'danger');
+  b.title = st.error || '';
+  return b;
+}
 
 export function openTerminal(host) {
   state.setActiveHost(host.id);

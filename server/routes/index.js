@@ -11,12 +11,16 @@ import { monitorRoutes } from './monitor.js';
 import { serviceRoutes } from './services.js';
 import { claudeRoutes } from './claude.js';
 import { systemRoutes } from './system.js';
+import { HostStatus } from '../lib/hoststatus.js';
+import { MetricsCollector } from '../lib/metrics.js';
 
 /** Services instanciés avant le montage des routes (le proxy est monté hors /api). */
 export function createServices(ctx) {
   ctx.sftp = new SftpService(ctx);
   ctx.git = new GitService(ctx);
   ctx.monitor = new MonitorService(ctx);
+  ctx.hostStatus = new HostStatus({ db: ctx.db, hosts: ctx.hosts, pool: ctx.pool, alerts: ctx.alerts, intervalSec: ctx.config.hostProbeSec || 60, downAlertMin: ctx.config.hostDownAlertMin });
+  ctx.metrics = new MetricsCollector({ db: ctx.db, hosts: ctx.hosts, monitor: ctx.monitor, hostStatus: ctx.hostStatus, intervalSec: ctx.config.metricsIntervalSec || 30 });
   ctx.proxy = new ProxyService({ db: ctx.db, journal: ctx.journal, config: ctx.config });
   ctx.push = new PushService({ db: ctx.db, vault: ctx.vault, config: ctx.config, journal: ctx.journal });
   // Alertes : aux administrateurs, et aux comptes qui ont accès à l'hôte concerné.

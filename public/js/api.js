@@ -7,6 +7,17 @@ export class ApiError extends Error {
 }
 
 let onUnauthorized = () => {};
+
+// État de la liaison avec le serveur Corvus (indicateur de l'en-tête).
+let online = true;
+const netListeners = new Set();
+function setOnline(v) {
+  if (v === online) return;
+  online = v;
+  for (const fn of netListeners) fn(v);
+}
+export function onNetwork(fn) { netListeners.add(fn); fn(online); return () => netListeners.delete(fn); }
+export function reportNetwork(v) { setOnline(v); }
 export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
 export async function api(method, url, body, { signal, raw } = {}) {
@@ -24,8 +35,10 @@ export async function api(method, url, body, { signal, raw } = {}) {
     res = await fetch(url, { method, headers, body: payload, credentials: 'same-origin', signal });
   } catch (err) {
     if (err.name === 'AbortError') throw err;
+    setOnline(false);
     throw new ApiError(0, 'NETWORK', 'Serveur Corvus injoignable (réseau ou Tailscale coupé ?)');
   }
+  setOnline(true);
   if (raw && res.ok) return res;
   let data = null;
   const text = await res.text();

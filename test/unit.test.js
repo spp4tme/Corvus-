@@ -625,3 +625,58 @@ describe('étape 0.3 : blobs, rétention, sauvegarde', () => {
     await b.close();
   });
 });
+
+describe('étape 2 : robustesse et métriques', () => {
+  test('diskstats : disques entiers seulement ; snmp TCP', async () => {
+    const { parseDiskstats, parseSnmpTcp } = await import('../server/lib/monitor.js');
+    const d = parseDiskstats([
+      '   8       0 sda 1200 10 48000 300 800 20 64000 900 0 1000 1200 0 0 0 0',
+      '   8       1 sda1 1100 10 44000 280 790 20 63000 880 0 990 1160 0 0 0 0',
+      '   7       0 loop0 50 0 400 1 0 0 0 0 0 4 1 0 0 0 0',
+      ' 179       0 mmcblk0 10 0 80 1 5 0 40 1 0 2 2 0 0 0 0',
+    ]);
+    assert.deepEqual(d.map((x) => x.name), ['sda', 'mmcblk0']);
+    assert.equal(d[0].readBytes, 48000 * 512);
+    const t = parseSnmpTcp(['Tcp: RtoAlgorithm RtoMin CurrEstab RetransSegs', 'Tcp: 1 200 12 345']);
+    assert.equal(t.CurrEstab, 12);
+    assert.equal(t.RetransSegs, 345);
+  });
+
+  test('métriques : aplatissement, historique regroupé par plage', async () => {
+    const { MetricsCollector, flatten } = await import('../server/lib/metrics.js');
+    const rows = flatten({ cpu: 12, cpuCores: [10, null], mem: { percent: 40 }, disk: { readBps: 5 }, disks: [{ mount: '/', percent: 70 }], tcp: { established: 3 } });
+    assert.deepEqual(rows.map((r) => r.metric).sort(), ['cpu', 'cpu.0', 'df:/', 'disk.read', 'mem', 'tcp.estab'].sort());
+    const db = new Db(':memory:');
+    const m = new MetricsCollector({ db, hosts: { hosts: [] }, monitor: null });
+    const now = Date.now();
+    for (let i = 0; i < 20; i++) m.store('h', { ts: now - i * 30_000, cpu: i, mem: { percent: 50 } });
+    const hist = m.history('h', ['cpu', 'mem'], '1h', now);
+    assert.ok(hist.points.length >= 10 && hist.points.length <= 20);
+    assert.equal(hist.points.at(-1).values.mem, 50);
+    assert.deepEqual(m.history('h', ['cpu'], '24h', now).points.length <= 3, true);
+  });
+
+  test('état des hôtes : injoignable depuis…, alerte après le seuil, re-test espacé', async () => {
+    const { HostStatus } = await import('../server/lib/hoststatus.js');
+    const db = new Db(':memory:');
+    db.run("INSERT INTO hosts (id, name, hostname, username, auth_type, created_at, updated_at) VALUES ('h1', 'Pi', '100.64.0.1', 'pi', 'password', 0, 0)");
+    const raised = [];
+    let up = false;
+    const hs = new HostStatus({
+      db, hosts: { hosts: [{ id: 'h1', name: 'Pi', hostname: 'x', port: 22 }], find: () => ({ name: 'Pi' }) },
+      pool: { status: () => ({ connected: false }) }, alerts: { raise: (a) => raised.push(a) },
+      downAlertMin: 0, probe: async () => (up ? { ok: true, latencyMs: 3 } : { ok: false, error: 'ECONNREFUSED' }),
+    });
+    const s1 = await hs.check({ id: 'h1', hostname: 'x', port: 22 });
+    assert.equal(s1.state, 'down');
+    assert.equal(raised[0].kind, 'host-down');
+    const firstDelay = hs.nextAt.get('h1') - Date.now();
+    await hs.check({ id: 'h1', hostname: 'x', port: 22 });
+    assert.ok(hs.nextAt.get('h1') - Date.now() > firstDelay, 'nouvelle tentative plus espacée');
+    assert.equal(hs.get('h1').since, s1.since, '« depuis » conservé tant que l\'état ne change pas');
+    up = true;
+    const s3 = await hs.check({ id: 'h1', hostname: 'x', port: 22 });
+    assert.equal(s3.state, 'up');
+    assert.equal(s3.latencyMs, 3);
+  });
+});

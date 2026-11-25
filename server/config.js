@@ -28,6 +28,10 @@ export const config = Object.freeze({
   // Données lourdes (base SQLite, blobs, sauvegardes) : ex. un SSD externe. Vide = CORVUS_DATA.
   storageDir: env.CORVUS_STORAGE ? path.resolve(env.CORVUS_STORAGE) : '',
   minFreeMb: int(env.CORVUS_MIN_FREE_MB, 2048),
+  // Tâches de fond (0 = désactivé) : sonde d'état des hôtes, collecte des métriques.
+  hostProbeSec: int(env.HOST_PROBE_SEC, 60),
+  hostDownAlertMin: int(env.HOST_DOWN_ALERT_MIN, 5),
+  metricsIntervalSec: int(env.METRICS_INTERVAL_SEC, 30),
   // Rétention (jours) : métriques détaillées, agrégats horaires, enregistrements de session.
   retention: {
     metricsRawDays: int(env.RETENTION_METRICS_RAW_DAYS, 7),

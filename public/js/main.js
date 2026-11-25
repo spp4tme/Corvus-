@@ -1,5 +1,5 @@
 // Démarrage, coquille de l'application et routeur (hash).
-import { get, setUnauthorizedHandler } from './api.js';
+import { get, setUnauthorizedHandler, onNetwork, reportNetwork } from './api.js';
 import { h, clear } from './ui/dom.js';
 import { icon, logo } from './ui/icons.js';
 import { state } from './state.js';
@@ -42,6 +42,14 @@ function buildShell() {
   const title = h('h1', { class: 'view-title ellipsis' });
   // Signal discret dans l'en-tête : espace disque faible, alertes non acquittées.
   const banner = h('a', { class: 'app-banner', href: '#/settings', hidden: true, role: 'status' });
+  // Pastille : liaison avec le serveur Corvus (verte / rouge), mise à jour à chaque requête.
+  const dot = h('span', { class: 'conn-dot', role: 'img', 'aria-label': 'Serveur Corvus joignable', title: 'Serveur Corvus joignable' });
+  onNetwork((ok) => {
+    dot.classList.toggle('offline', !ok);
+    const label = ok ? 'Serveur Corvus joignable' : 'Serveur Corvus injoignable — nouvelle tentative automatique';
+    dot.setAttribute('aria-label', label);
+    dot.title = label;
+  });
   const main = h('main', { class: 'app-main', id: 'main' });
   const nav = h('nav', { class: 'app-nav', 'aria-label': 'Navigation principale' });
   const links = {};
@@ -55,7 +63,7 @@ function buildShell() {
     h('header', { class: 'app-header' },
       h('a', { class: 'brand', href: '#/hosts', 'aria-label': 'Corvus — accueil' }, logo(), h('span', { class: 'brand-name' }, 'Corvus')),
       h('span', { class: 'faint', 'aria-hidden': 'true' }, '·'),
-      title, banner),
+      title, banner, dot),
     main, nav);
   clear(root).appendChild(app);
   return { app, main, nav, links, title, banner, mounted: {}, current: null, cleanup: null };
@@ -163,5 +171,13 @@ async function boot() {
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
+
+// Perte de réseau : pastille rouge tout de suite, puis petite requête toutes les 10 s jusqu'au retour.
+window.addEventListener('offline', () => reportNetwork(false));
+window.addEventListener('online', () => get('/api/health').catch(() => {}));
+onNetwork((ok) => {
+  clearInterval(window.corvusPing);
+  if (!ok) window.corvusPing = setInterval(() => get('/api/health').catch(() => {}), 10_000);
+});
 
 boot();

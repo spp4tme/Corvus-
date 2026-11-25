@@ -234,9 +234,15 @@ test('mobile 375px : supervision (tuiles, graphiques, processus, docker)', async
   await page.screenshot({ path: path.join(OUT, 'mobile-9-supervision.png'), fullPage: false });
   // survol d'un graphique : infobulle
   const canvas = page.locator('.chart-canvas').first();
+  await canvas.scrollIntoViewIfNeeded(); // plus de tuiles (E/S, TCP, cœurs) : les graphiques sont plus bas
   const box = await canvas.boundingBox();
   await page.mouse.move(box.x + box.width - 10, box.y + box.height / 2);
   await page.locator('.chart-tip').first().waitFor();
+
+  await page.getByRole('tab', { name: 'Historique' }).click();
+  await page.getByRole('tab', { name: '1 h' }).click();
+  await page.locator('.chart-canvas, .state').first().waitFor();
+  await auditLayout(page, 'historique');
 
   await page.getByRole('tab', { name: 'Processus' }).click();
   await page.getByText(/processus — \d+ affichés/).waitFor();

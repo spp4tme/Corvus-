@@ -26,7 +26,8 @@ export function freshCode(corvus, user) {
 
 export async function startCorvus(overrides = {}, { setup = true } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-data-'));
-  const corvus = createCorvus({ dataDir, logLevel: 'warn', port: 0, bind: '127.0.0.1', ...overrides });
+  // Tâches de fond coupées par défaut (activées par les tests qui les vérifient).
+  const corvus = createCorvus({ dataDir, logLevel: 'warn', port: 0, bind: '127.0.0.1', hostProbeSec: 0, metricsIntervalSec: 0, ...overrides });
   const addr = await corvus.listen(0, '127.0.0.1');
   const base = `http://127.0.0.1:${addr.port}`;
   const admin = setup ? makeUser(corvus, { ...ADMIN, role: 'admin' }) : null;

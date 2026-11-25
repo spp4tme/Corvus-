@@ -398,3 +398,11 @@ dialog.dlg::backdrop { background: var(--c-overlay); }
 /* Signal d'état dans l'en-tête (espace disque, alertes) */
 .app-banner { margin-left: auto; padding: var(--s-1) var(--s-3); border-radius: 999px; background: var(--c-warn-soft); color: var(--c-warn); font-size: var(--fs-sm); text-decoration: none; white-space: nowrap; }
 .app-banner[hidden] { display: none; }
+
+/* CPU par cœur : une barre fine par cœur */
+.cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: var(--s-1) var(--s-3); margin-top: var(--s-2); }
+.core { display: flex; align-items: center; gap: var(--s-1); }
+.core .meter-track { flex: 1; }
+/* État de la connexion au serveur Corvus (en-tête) */
+.conn-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c-ok); flex: none; }
+.conn-dot.offline { background: var(--c-danger); }

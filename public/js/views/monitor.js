@@ -25,7 +25,7 @@ export default {
     const content = h('div');
     const picker = hostPicker((id) => { hostId = id; start(); });
     const tabs = segmented([
-      { value: 'system', label: 'Système' }, { value: 'processes', label: 'Processus' }, { value: 'docker', label: 'Docker' },
+      { value: 'system', label: 'Système' }, { value: 'history', label: 'Historique' }, { value: 'processes', label: 'Processus' }, { value: 'docker', label: 'Docker' },
     ], tab, (v) => { tab = v; prefs.set('monTab', v); start(); }, { label: 'Section supervision' });
     el.append(h('div', { class: 'toolbar' }, picker), h('div', { class: 'toolbar' }, tabs), content);
 
@@ -49,6 +49,7 @@ export default {
       tabs.hidden = false;
       if (tab === 'processes') return renderProcesses();
       if (tab === 'docker') return renderDocker();
+      if (tab === 'history') return renderHistory();
       return renderSystem();
     }
 
@@ -102,6 +103,48 @@ export default {
       tick();
     }
 
+    // ---------- Historique (stocké par Corvus, collecte toutes les 30 s) ----------
+    let range = prefs.get('monRange', '24h');
+    const RANGE_LABEL = { '1h': '1 h', '24h': '24 h', '7d': '7 jours', '1y': '1 an' };
+    async function renderHistory() {
+      const rangeSel = segmented(Object.entries(RANGE_LABEL).map(([value, label]) => ({ value, label })), range,
+        (x) => { range = x; prefs.set('monRange', x); renderHistory(); }, { label: 'Période' });
+      const box = h('div', null, loadingState("Lecture de l'historique…"));
+      replace(content, h('div', { class: 'toolbar' }, rangeSel), box);
+      const forHost = hostId;
+      let data;
+      try {
+        const { metrics: avail } = await get(api('monitor/metrics'));
+        const cores = avail.filter((m) => /^cpu[.]/.test(m)).sort((a, b) => Number(a.slice(4)) - Number(b.slice(4))).slice(0, 4);
+        const wanted = ['cpu', 'mem', 'swap', 'disk.read', 'disk.write', 'net.rx', 'net.tx', 'tcp.estab', 'tcp.retrans', ...cores];
+        data = await get(`${api('monitor/history')}?${new URLSearchParams({ metrics: wanted.join(','), range })}`);
+        data.cores = cores;
+      } catch (err) { return replace(box, errorState(err, renderHistory)); }
+      if (forHost !== hostId || tab !== 'history') return;
+      if (!data.points.length) {
+        return replace(box, emptyState({ icon: 'activity', title: "Pas encore d'historique", text: "Corvus relève les métriques toutes les 30 s tant que l'hôte est joignable (METRICS_INTERVAL_SEC). Revenez dans quelques minutes." }));
+      }
+      const fmtTime = (t) => new Date(t).toLocaleString('fr-FR', range === '1y' || range === '7d' ? { dateStyle: 'short', timeStyle: 'short' } : { timeStyle: 'short' });
+      const mk = (title, series, format, extra = {}) => {
+        const c = lineChart({ title, series, format, spanLabel: RANGE_LABEL[range], tipTime: fmtTime, ...extra });
+        c.setAll(data.points.map((p) => ({ t: p.t, values: p.values })));
+        return c;
+      };
+      const ops = (x) => `${x.toFixed(x < 10 ? 1 : 0)}/s`;
+      const cs = [
+        mk('CPU', [{ key: 'cpu', label: 'CPU', color: '--c-chart-1' }], pct, { max: 100 }),
+        data.cores.length > 1 ? mk('CPU par cœur', data.cores.map((k, i) => ({ key: k, label: `cœur ${k.slice(4)}`, color: `--c-chart-${(i % 4) + 1}` })), pct, { max: 100 }) : null,
+        mk('Mémoire', [{ key: 'mem', label: 'RAM', color: '--c-chart-1' }, { key: 'swap', label: 'Swap', color: '--c-chart-2' }], pct, { max: 100 }),
+        mk('E/S disque', [{ key: 'disk.read', label: 'Lecture', color: '--c-chart-1' }, { key: 'disk.write', label: 'Écriture', color: '--c-chart-2' }], rate, { minMax: 1024 }),
+        mk('Réseau', [{ key: 'net.rx', label: 'Reçu', color: '--c-chart-1' }, { key: 'net.tx', label: 'Envoyé', color: '--c-chart-2' }], rate, { minMax: 1024 }),
+        mk('Connexions TCP établies', [{ key: 'tcp.estab', label: 'TCP', color: '--c-chart-3' }], (x) => String(Math.round(x))),
+        mk('Retransmissions TCP', [{ key: 'tcp.retrans', label: 'Retrans.', color: '--c-chart-4' }], ops),
+      ].filter(Boolean);
+      charts = cs;
+      replace(box, h('p', { class: 'dim' }, `${data.points.length} points, un point = ${Math.round(data.bucketMs / 60000) >= 60 ? `${Math.round(data.bucketMs / 3600000)} h` : `${Math.round(data.bucketMs / 60000) || 0.5} min`} (moyenne).`),
+        h('div', { class: 'charts' }, cs.map((c) => c.el)));
+    }
+
     function tile(label, valueText, sub, ic, level) {
       return h('div', { class: 'card tile' },
         h('div', { class: 'tile-label' }, icon(ic, { size: 16 }), label),
@@ -119,7 +162,17 @@ export default {
         tile('Charge', s.load ? s.load[0].toFixed(2) : '—', s.load ? `5 min ${s.load[1].toFixed(2)} · 15 min ${s.load[2].toFixed(2)}` : null, 'activity'),
         tile('Uptime', s.uptime ? formatDuration(s.uptime) : '—', s.kernel, 'history'),
         s.swap ? tile('Swap', pct(s.swap.percent), `${formatBytes(s.swap.used)} / ${formatBytes(s.swap.total)}`, 'memory') : null,
-        s.temp !== null ? tile('Température', `${s.temp.toFixed(1)} °C`, 'zone thermique 0', 'warning', tempLevel) : null);
+        s.temp !== null ? tile('Température', `${s.temp.toFixed(1)} °C`, 'zone thermique 0', 'warning', tempLevel) : null,
+        s.disk ? tile('E/S disque', `${rate(s.disk.readBps + s.disk.writeBps)}`, `lecture ${rate(s.disk.readBps)} · écriture ${rate(s.disk.writeBps)} · ${Math.round(s.disk.readIops + s.disk.writeIops)} IOPS`, 'disk') : null,
+        s.tcp ? tile('TCP', `${s.tcp.established ?? '—'} établies`, s.tcp.retransPerSec === null ? null : `${s.tcp.retransPerSec.toFixed(1)} retrans./s · ${s.tcp.opensPerSec.toFixed(1)} ouvertures/s`, 'link') : null,
+        s.cpuCores?.length > 1 ? h('div', { class: 'card tile' },
+          h('div', { class: 'tile-label' }, icon('cpu', { size: 16 }), 'CPU par cœur'),
+          h('div', { class: 'cores' }, s.cpuCores.map((c, i) => {
+            const bar = h('div', { class: 'meter-fill' + (c !== null && c > 90 ? ' is-danger' : '') });
+            bar.style.width = `${Math.min(100, c ?? 0).toFixed(0)}%`;
+            return h('div', { class: 'core', title: `cœur ${i} : ${c === null ? '—' : pct(c)}` },
+              h('span', { class: 'faint' }, String(i)), h('div', { class: 'meter-track', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(c ?? 0)), 'aria-label': `Cœur ${i}` }, bar));
+          }))) : null);
     }
 
     function renderDisks(el2, disks) {
