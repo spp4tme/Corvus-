@@ -144,25 +144,12 @@ test('mobile 375px : fichiers (dossier, envoi, édition)', async (t) => {
   await page.getByRole('heading', { name: 'Pi du salon' }).waitFor();
   await page.getByRole('button', { name: 'Fichiers' }).first().click();
   await page.getByRole('button', { name: 'Nouveau dossier' }).waitFor();
+  await page.getByText('Dossier vide').waitFor(); // la liste doit être chargée avant d'agir (sinon runner lent : clic trop tôt)
 
-  const reseau = [];
-  page.on('response', async (r) => { if (r.url().includes('/fs/')) reseau.push(`${r.request().method()} ${r.url().replace(/^.*\/api/, '')} ${r.status()} ${(await r.text().catch(() => '')).slice(0, 150)}`); });
   await page.getByRole('button', { name: 'Nouveau dossier' }).click();
   await page.getByLabel('Nom du dossier').fill('projet-ui');
-  page.on('console', (m) => reseau.push(`console.${m.type()}: ${m.text().slice(0, 200)}`));
-  page.on('requestfailed', (r) => reseau.push(`échec ${r.method()} ${r.url().slice(-60)} ${r.failure()?.errorText}`));
   await page.getByRole('button', { name: 'Valider' }).click();
-  reseau.push(`toast : ${await page.locator('.toast').allInnerTexts().catch(() => '?')}`);
-  await page.waitForTimeout(1500);
-  reseau.push(`toast+1,5 s : ${await page.locator('.toast').allInnerTexts().catch(() => '?')} ; dialogues : ${await page.locator('dialog, [role=dialog]').count()}`);
-  try {
-    await page.getByText('projet-ui', { exact: true }).click({ timeout: 10000 });
-  } catch (err) {
-    // Diagnostic pour la CI (les journaux GitHub exigent une connexion) : ce que la page affichait vraiment.
-    const texte = (await page.locator('body').innerText().catch(() => '?')).replace(/\s+/g, ' ').slice(0, 600);
-    console.log(`::error::DIAG fichiers : page = ${texte} | erreurs = ${JSON.stringify(errors)} | fs = ${JSON.stringify(fs.readdirSync(sshd.root))} | réseau = ${JSON.stringify(reseau)}`);
-    throw err;
-  }
+  await page.getByText('projet-ui', { exact: true }).click();
   await page.getByText('Dossier vide').waitFor();
 
   const tmp = path.join(OUT, 'notes.md');

@@ -229,6 +229,7 @@ export default {
     }
 
     async function newFolder() {
+      if (!current) return; // liste pas encore chargée : rien à faire (évite une erreur « null »)
       const name = await promptDialog({ title: 'Nouveau dossier', label: 'Nom du dossier', validate: (v) => (/[/\n]/.test(v) || v === '.' || v === '..' ? 'Nom invalide' : null) });
       if (!name) return;
       try { await post(`/api/hosts/${hostId}/fs/mkdir`, { path: join(current.path, name) }); load(current.path); } catch (err) { toastError(err); }
