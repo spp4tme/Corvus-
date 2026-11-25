@@ -98,11 +98,16 @@ impl Collector {
     fn after_change(&mut self, buffer: &Buffer, ts: i64, kind: &str, body: &Value) {
         let path = body["path"].as_str().unwrap_or("");
         if self.canaries.contains(path) && matches!(kind, "file.modified" | "file.deleted") {
-            let writers = self.io.top(3, &xray::read_all());
+            let dirs: Vec<String> = ransom::parent_dir(path).into_iter().collect();
+            let writers = self.io.top(3, &xray::read_all(), &dirs);
             let _ = buffer.push(ts, "canary.touched", &json!({ "path": path, "change": kind, "writers": writers }));
         }
         if let Some(mut ev) = self.detector.feed(Instant::now(), kind, body) {
-            ev["writers"] = json!(self.io.top(3, &xray::read_all()));
+            let mut dirs: Vec<String> = ev["sample"].as_array().into_iter().flatten().filter_map(|p| p.as_str()).filter_map(ransom::parent_dir).collect();
+            dirs.extend(ransom::parent_dir(path));
+            dirs.sort();
+            dirs.dedup();
+            ev["writers"] = json!(self.io.top(3, &xray::read_all(), &dirs));
             let _ = buffer.push(ts, "ransom.suspect", &ev);
         }
     }

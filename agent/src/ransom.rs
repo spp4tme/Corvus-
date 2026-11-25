@@ -101,7 +101,11 @@ impl IoTracker {
     }
 
     /// Les `n` processus qui ont le plus écrit sur disque pendant la fenêtre : candidats (pas une preuve).
-    pub fn top(&self, n: usize, all: &HashMap<u32, crate::xray::Proc>) -> Vec<Value> {
+    /// Un candidat doit avoir un lien avec les dossiers touchés (`dirs`) : son dossier courant ou un fichier
+    /// ouvert dedans. Sans cela, le plus gros écrivain du disque (une base de données qui vide ses tampons,
+    /// par exemple) serait accusé à tort — et gelé par la réaction automatique. Les démons critiques ne sont
+    /// jamais proposés.
+    pub fn top(&self, n: usize, all: &HashMap<u32, crate::xray::Proc>, dirs: &[String]) -> Vec<Value> {
         let (Some((_, old)), Some((_, new))) = (self.snaps.front(), self.snaps.back()) else { return vec![] };
         let me = std::process::id();
         let mut v: Vec<(u32, u64)> = new.iter().filter(|(pid, _)| **pid != me).filter_map(|(pid, (start, bytes))| {
@@ -109,11 +113,39 @@ impl IoTracker {
             (ostart == start && bytes > obytes).then(|| (*pid, bytes - obytes))
         }).collect();
         v.sort_by_key(|x| std::cmp::Reverse(x.1));
-        v.into_iter().take(n).filter_map(|(pid, delta)| {
+        v.into_iter().filter_map(|(pid, delta)| {
             let p = all.get(&pid)?;
+            if never_auto(&p.comm) || !touches_dirs(pid, dirs) { return None; }
             Some(json!({ "pid": pid, "start": p.start, "exe": p.exe, "uid": p.uid, "writtenBytes": delta }))
-        }).collect()
+        }).take(n).collect()
     }
+}
+
+/// Démons dont le gel automatique ferait plus de dégâts qu'un ransomware présumé (bases de données, moteurs de
+/// conteneurs, journal, planificateur) : jamais désignés comme écrivain principal.
+const NEVER_AUTO: [&str; 14] = [
+    "postgres", "postmaster", "mysqld", "mariadbd", "mongod", "redis-server", "dockerd", "containerd", "systemd-journal",
+    "journald", "cron", "rsyslogd", "systemd", "kworker",
+];
+
+pub fn never_auto(comm: &str) -> bool {
+    NEVER_AUTO.iter().any(|n| comm.starts_with(n))
+}
+
+/// Dossier parent d'un chemin (chaîne), sans toucher au disque.
+pub fn parent_dir(path: &str) -> Option<String> {
+    let p = std::path::Path::new(path).parent()?.to_str()?;
+    (!p.is_empty()).then(|| p.to_string())
+}
+
+/// Le processus a-t-il son dossier courant ou un fichier ouvert dans l'un de ces dossiers (ou dessous) ?
+/// Lecture de /proc/PID/{cwd,fd} : demande d'être root pour les processus des autres utilisateurs.
+pub fn touches_dirs(pid: u32, dirs: &[String]) -> bool {
+    if dirs.is_empty() { return false; }
+    let inside = |target: &std::path::Path| dirs.iter().any(|d| target.starts_with(d));
+    if fs::read_link(format!("/proc/{pid}/cwd")).is_ok_and(|t| inside(&t)) { return true; }
+    let Ok(rd) = fs::read_dir(format!("/proc/{pid}/fd")) else { return false };
+    rd.flatten().any(|e| fs::read_link(e.path()).is_ok_and(|t| inside(&t)))
 }
 
 // --- Isolement réseau (nftables) -------------------------------------------------------------------------------
@@ -180,6 +212,30 @@ pub fn release() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn un_processus_sans_lien_avec_les_dossiers_touches_nest_pas_accuse() {
+        let dir = std::env::temp_dir().join(format!("corvus-top-{}", std::process::id()));
+        let other = std::env::temp_dir().join(format!("corvus-top-autre-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let f = fs::File::create(dir.join("doc.txt")).unwrap(); // fichier ouvert par CE processus
+        let me = std::process::id();
+        assert!(touches_dirs(me, &[dir.to_string_lossy().into_owned()]), "fichier ouvert dans le dossier");
+        assert!(!touches_dirs(me, &[other.to_string_lossy().into_owned()]), "aucun lien avec cet autre dossier");
+        assert!(!touches_dirs(me, &[]), "pas de dossier connu : personne n'est accusé");
+        drop(f);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn les_demons_critiques_ne_sont_jamais_proposes() {
+        for c in ["postgres", "mariadbd", "dockerd", "systemd-journald", "cron"] { assert!(never_auto(c), "{c}"); }
+        for c in ["python3", "mv", "ransom", "openssl"] { assert!(!never_auto(c), "{c}"); }
+        assert_eq!(parent_dir("/tmp/x/a.doc").as_deref(), Some("/tmp/x"));
+        assert_eq!(parent_dir("a"), None);
+    }
 
     fn e(kind: &str, ent: f64, prev: Option<f64>, size: i64, path: &str) -> (String, Value) {
         (kind.to_string(), json!({ "path": path, "entropy": ent, "prevEntropy": prev, "size": size, "reason": "" }))
