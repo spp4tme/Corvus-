@@ -159,8 +159,13 @@ test('mobile 375px : fichiers (dossier, envoi, édition)', async (t) => {
   await auditLayout(page, 'fichiers');
   await page.screenshot({ path: path.join(OUT, 'mobile-5-fichiers.png') });
 
-  await page.getByText('notes.md', { exact: true }).click();
+  // L'envoi recharge la liste : on attend qu'il soit terminé (fichier écrit, réseau calme) avant de cliquer,
+  // sinon le clic tombe sur un élément remplacé (runner lent).
+  for (let k = 0; k < 100 && !fs.existsSync(path.join(sshd.root, 'projet-ui', 'notes.md')); k++) await new Promise((r) => setTimeout(r, 100));
+  await page.waitForLoadState('networkidle');
   const editor = page.getByLabel(/Contenu de/);
+  await page.getByText('notes.md', { exact: true }).click();
+  await editor.waitFor({ timeout: 8000 }).catch(async () => { await page.getByText('notes.md', { exact: true }).click(); });
   await editor.waitFor();
   assert.match(await editor.inputValue(), /ligne 1/);
   await editor.press('End');
