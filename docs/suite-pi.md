@@ -61,20 +61,91 @@ Protocole complet : [`protocole-agent.md`](protocole-agent.md). Écarts assumés
 balayage régulier au lieu de fanotify/inotify ; `/proc` au lieu d'eBPF (BTF est pourtant présent sur ce noyau) ;
 l'agent ne garde pas de magasin de versions local (le serveur en est le magasin, chiffré) ; pas de zstd (brotli côté serveur).
 
-## Reste à faire / à vérifier
+## Validation en conditions réelles (à faire maintenant, dans cet ordre)
 
-1. **Sur un vrai réseau Tailscale** : l'isolement réseau (`net.isolate`) n'a été validé que par `nft -c`, dans un espace de
-   noms réseau jetable et par les tests Rust. Le marquage `0x80000` des paquets de tailscaled et `udp/41641` doivent être
-   vérifiés sur un hôte non critique AVEC un accès console de secours (la levée automatique est le filet de sécurité).
-2. **systemd** : l'unité `deploy/agent/corvus-agent.service` et le drop-in de prévisualisation n'ont pas été lancés sous systemd.
-3. **TLS** : l'agent n'a été essayé qu'en `ws://` local ; `wss://` (rustls) via `tailscale serve` reste à essayer.
-4. **CI GitHub Actions** : job Rust (`cross`) et compilation de l'agent dans le job Node jamais exécutés.
-5. **Interface** : écrans Agents, Rembobiner, Radiographie ouverts sur le PC dans Edge (375 px et 1280 px) avec un agent
-   simulé : aucune erreur JS, pas de débordement, cibles tactiles ≥ 44 px. Restent à voir avec le vrai agent : le contenu
-   de la Radiographie et la boîte « Prévisualiser ».
-6. **eBPF (Aya)** : non fait (Rust nightly + `bpf-linker`) ; apporterait les processus de moins de 2 s et l'attribution exacte
-   des écritures (fanotify aussi).
-7. Points 1 à 9 de la liste « pas pu être testé sur le PC » ci-dessus : toujours à faire s'ils ne l'ont pas été.
+Ordre : du moins risqué au plus risqué. Pour chaque point : exécuter, noter le résultat (✅ / ❌ + message)
+dans la colonne « Résultat » ci-dessous, corriger ce qui casse (un commit par correction, avec test), puis passer au
+suivant. **Ne pas sauter au point F** tant que A à E ne sont pas verts. Les points marqués 👤 demandent le propriétaire.
+
+| Point | Résultat |
+|---|---|
+| A. Tests sous Linux ARM64 | |
+| B. Installation sur le SSD + sauvegarde / restauration / redémarrage | |
+| C. Onglet Admin + règle sudoers | |
+| D. Agent sous systemd + `wss://` + interface avec le vrai agent | |
+| E. 👤 Téléphone : passkey, notifications push, PWA | |
+| F. 👤 Isolement réseau anti-ransomware | |
+
+### A. Tests sous Linux ARM64 (le Pi)
+```bash
+npm ci && npm run check:pure && npm test
+(cd agent && cargo test && cargo build --release)
+npm test   # relancer : les tests « avec le vrai agent » ne s'exécutent que si le binaire existe
+```
+Puis contre le vrai sshd du Pi (compte de test jetable, `sudo -n` autorisé pour les tests d'admin) :
+```bash
+CORVUS_REAL_SSH=127.0.0.1:22:<utilisateur>:<motdepasse> node --test test/real-ssh.test.js
+```
+Vérifier aussi l'onglet **Actions** de GitHub après le push (jobs node x86_64/ARM64, real-openssh, agent).
+
+### B. Installation, stockage sur le SSD, sauvegarde
+```bash
+sudo CORVUS_STORAGE=/mnt/ssd/corvus ./deploy/install-linux.sh
+systemctl status corvus && corvus status
+```
+- Si une ancienne installation 0.1 existe (dossier `data/` avec des JSON) : vérifier que la migration vers SQLite
+  reprend hôtes, secrets et journal (fichiers renommés en `*.migrated`).
+- Réglages → Stockage : l'espace libre du SSD s'affiche ; une alerte apparaît si on baisse `minFreeMb` au-dessus de
+  l'espace libre.
+- Créer une sauvegarde `.cvbk`, la restaurer, cliquer « Redémarrer » : systemd doit relancer Corvus (code 75) et les
+  données restaurées doivent être là.
+
+### C. Onglet Admin et sudoers
+- Hôte = le Pi lui-même. Onglet **Admin** → copier la règle sudoers générée vers `/etc/sudoers.d/corvus`, puis
+  `sudo visudo -cf /etc/sudoers.d/corvus` (doit répondre « parsed OK »).
+- Démarrer / arrêter / redémarrer `cron` (service sans danger), journal en direct, pare-feu (ufw ou nftables en
+  lecture), mises à jour en attente. Toute action modifiante doit demander une confirmation.
+
+### D. Agent sous systemd, `wss://`, interface
+1. `sudo tailscale serve status` doit publier `https://<pi>.<tailnet>.ts.net` → `http://127.0.0.1:7680`.
+2. Installer l'agent comme un utilisateur le ferait (README, section agent) :
+   `sudo install -m 755 agent/target/release/corvus-agent /usr/local/bin/`, jeton depuis l'écran **Agents**, puis
+   `sudo corvus-agent enroll --server https://<pi>.<tailnet>.ts.net --token <jeton>` (→ `wss://` automatiquement).
+3. `sudo cp deploy/agent/corvus-agent.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now corvus-agent`
+   puis `journalctl -u corvus-agent -f` : connecté, sans erreur de droits (CapabilityBoundingSet).
+4. `sudo ss -tnp | grep corvus-agent` : le pair doit être en `:443` (TLS), pas `:7680`.
+5. Reconnexion : `sudo tailscale down; sleep 20; sudo tailscale up` → l'agent revient seul, les événements en attente
+   arrivent une seule fois (pas de doublons dans Rembobiner).
+6. Certificat refusé : nouveau jeton, `corvus-agent enroll --server https://<IP 100.x> --token … --dir /tmp/a2` doit
+   échouer (erreur de certificat). Nettoyer `/tmp/a2`.
+7. Drop-in de prévisualisation (`deploy/agent/corvus-agent-preview.conf`, mode d'emploi en tête du fichier) puis, dans
+   l'interface : **Prévisualiser** une commande risquée (ex. `rm -rf ~/essai` sur un dossier d'essai) → diff, « Jeter ».
+8. Ouvrir dans un navigateur avec le vrai agent : Agents, Rembobiner (modifier un fichier de `/etc` sans danger, ex. un
+   fichier créé pour l'occasion, voir la différence, restaurer avec confirmation), Radiographie (processus, lignée,
+   connexions, geler/dégeler un `sleep 1000`).
+9. Mise à jour sans perte : réinstaller le binaire, `systemctl restart corvus-agent` → même identité, tampon conservé.
+
+### E. 👤 Téléphone (avec le propriétaire)
+Via `https://<pi>.<tailnet>.ts.net` : installer la PWA, enregistrer une passkey et se connecter avec, activer les
+notifications puis provoquer une alerte (arrêter un hôte de test → « hôte injoignable », ou agent arrêté → « agent hors
+ligne » après 2 min).
+
+### F. 👤 Isolement réseau anti-ransomware (en dernier)
+Validé jusqu'ici seulement par `nft -c`, un espace de noms réseau jetable et les tests Rust. À faire sur un hôte **non
+critique**, propriétaire présent, **avec un accès console de secours** (écran + clavier ou console du fournisseur) :
+déclencher l'isolement depuis la Radiographie avec une durée courte (60 s), vérifier que Corvus et `tailscale0` restent
+joignables (marquage `0x80000` de tailscaled, `udp/41641`) et que le reste est coupé, puis la levée (manuelle, et
+automatique à l'expiration). Ensuite seulement : démo `deploy/demo/fake-ransomware.sh` et restauration par Rembobiner.
+
+## Après la validation (à décider avec le propriétaire)
+
+1. **Version 1.0** (recommandé en premier) : numéro de version, binaire de l'agent publié par la CI, installation de
+   l'agent en une commande depuis l'écran Agents.
+2. **eBPF (Aya) / fanotify** : processus de moins de 2 s, attribution exacte des écritures (Rust nightly + `bpf-linker`).
+3. **Certificats SSH courts** : bloqués par `ssh2` ; seulement si le besoin est réel.
+
+Déjà vérifié sur le PC : écrans Agents, Rembobiner, Radiographie ouverts dans Edge (375 px et 1280 px) avec un agent
+simulé — aucune erreur JS, pas de débordement, cibles tactiles ≥ 44 px.
 
 ## Repères dans le code
 
