@@ -19,7 +19,7 @@ const DEMO = path.join(here, '..', 'deploy', 'demo', 'fake-ransomware.sh');
 const AGENT_BIN = process.env.CORVUS_AGENT_BIN
   || ['debug', 'release'].map((p) => path.join(here, '..', 'agent', 'target', p, 'corvus-agent')).find((p) => fs.existsSync(p));
 
-describe('le faux ransomware refuse tout sauf son dossier de démonstration', () => {
+describe('le faux ransomware refuse tout sauf son dossier de démonstration', { skip: process.platform === 'win32' && 'script de démonstration Linux (bash, /tmp, liens symboliques)' }, () => {
   test('dossiers interdits', async () => {
     for (const d of [os.homedir(), '/etc', '/tmp', '/tmp/corvus-ransomware-demo-inexistant']) {
       await assert.rejects(run('bash', [DEMO, 'attack', d]), (e) => e.code === 2, d);

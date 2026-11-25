@@ -409,7 +409,7 @@ dialog.dlg::backdrop { background: var(--c-overlay); }
 
 /* Lecteur d'enregistrements */
 .player-term { overflow: auto; max-height: 60vh; border-radius: var(--r-2, 8px); background: #000; padding: var(--s-1); }
-.player-seek { flex: 1; min-width: 120px; }
+.player-seek { flex: 1; min-width: 120px; min-height: 44px; } /* curseur : cible tactile de 44 px comme le reste */
 
 /* Barre de commande du terminal */
 .cmdbar { border-top: 1px solid var(--c-border); background: var(--c-surface); padding: var(--s-1) var(--s-2); }

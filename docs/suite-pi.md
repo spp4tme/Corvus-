@@ -69,7 +69,9 @@ l'agent ne garde pas de magasin de versions local (le serveur en est le magasin,
 2. **systemd** : l'unité `deploy/agent/corvus-agent.service` et le drop-in de prévisualisation n'ont pas été lancés sous systemd.
 3. **TLS** : l'agent n'a été essayé qu'en `ws://` local ; `wss://` (rustls) via `tailscale serve` reste à essayer.
 4. **CI GitHub Actions** : job Rust (`cross`) et compilation de l'agent dans le job Node jamais exécutés.
-5. **Interface** : écrans Agents, Rembobiner, Radiographie, Prévisualiser : syntaxe vérifiée, jamais ouverts dans un navigateur.
+5. **Interface** : écrans Agents, Rembobiner, Radiographie ouverts sur le PC dans Edge (375 px et 1280 px) avec un agent
+   simulé : aucune erreur JS, pas de débordement, cibles tactiles ≥ 44 px. Restent à voir avec le vrai agent : le contenu
+   de la Radiographie et la boîte « Prévisualiser ».
 6. **eBPF (Aya)** : non fait (Rust nightly + `bpf-linker`) ; apporterait les processus de moins de 2 s et l'attribution exacte
    des écritures (fanotify aussi).
 7. Points 1 à 9 de la liste « pas pu être testé sur le PC » ci-dessus : toujours à faire s'ils ne l'ont pas été.
