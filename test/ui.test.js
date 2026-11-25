@@ -149,7 +149,12 @@ test('mobile 375px : fichiers (dossier, envoi, édition)', async (t) => {
   page.on('response', async (r) => { if (r.url().includes('/fs/')) reseau.push(`${r.request().method()} ${r.url().replace(/^.*\/api/, '')} ${r.status()} ${(await r.text().catch(() => '')).slice(0, 150)}`); });
   await page.getByRole('button', { name: 'Nouveau dossier' }).click();
   await page.getByLabel('Nom du dossier').fill('projet-ui');
+  page.on('console', (m) => reseau.push(`console.${m.type()}: ${m.text().slice(0, 200)}`));
+  page.on('requestfailed', (r) => reseau.push(`échec ${r.method()} ${r.url().slice(-60)} ${r.failure()?.errorText}`));
   await page.getByRole('button', { name: 'Valider' }).click();
+  reseau.push(`toast : ${await page.locator('.toast').allInnerTexts().catch(() => '?')}`);
+  await page.waitForTimeout(1500);
+  reseau.push(`toast+1,5 s : ${await page.locator('.toast').allInnerTexts().catch(() => '?')} ; dialogues : ${await page.locator('dialog, [role=dialog]').count()}`);
   try {
     await page.getByText('projet-ui', { exact: true }).click({ timeout: 10000 });
   } catch (err) {
