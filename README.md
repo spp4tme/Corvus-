@@ -323,7 +323,7 @@ directement.
 | `MAX_PREVIEW_MB` | `20` | Taille max d'un aperçu d'image |
 | `CORVUS_WEB_PROXY` | `1` | Active le proxy web |
 | `CORVUS_PROXY_ALLOW_PRIVATE` | `0` | Autorise le proxy vers les réseaux privés (LAN) |
-| `CORVUS_VAPID_SUBJECT` | `mailto:corvus@localhost` | Contact VAPID des notifications push |
+| `CORVUS_VAPID_SUBJECT` | `mailto:corvus@example.com` | Contact VAPID des notifications push (Apple refuse en 403 un contact en `localhost` ; mettez le vôtre si vous voulez) |
 | `TAILSCALE_BIN` | `tailscale` | Chemin du CLI Tailscale |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 

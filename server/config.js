@@ -61,5 +61,5 @@ export const config = Object.freeze({
   maxUploadBytes: int(env.MAX_UPLOAD_MB, 1024) * 1024 * 1024,
   webProxy: bool(env.CORVUS_WEB_PROXY, true),
   proxyAllowPrivate: bool(env.CORVUS_PROXY_ALLOW_PRIVATE, false),
-  vapidSubject: env.CORVUS_VAPID_SUBJECT || 'mailto:corvus@localhost',
+  vapidSubject: env.CORVUS_VAPID_SUBJECT || 'mailto:corvus@example.com',
 });
