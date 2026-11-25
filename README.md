@@ -503,7 +503,17 @@ sudo cp deploy/agent/corvus-agent.service /etc/systemd/system/ && sudo systemctl
 
 La clé privée de l'agent ne quitte jamais l'hôte ; l'agent vérifie que c'est bien Corvus qui répond ;
 Corvus ne peut lui envoyer aucune commande shell. Détails : [`docs/protocole-agent.md`](docs/protocole-agent.md).
-Gestion : `GET /api/agents`, `DELETE /api/agents/:id` (révocation). Pas encore d'écran dédié.
+Écrans : **Agents** (installation avec jeton affiché une fois, état, révocation) et **Rembobiner**.
+
+### Rembobiner un hôte (agent requis)
+L'agent surveille `/etc` et les crontabs (option `--watch dossier1,dossier2`) par balayage toutes les 10 s,
+ainsi que les ports en écoute, les services systemd et les paquets (journal dpkg). Chaque version de fichier
+(≤ 512 Ko) est copiée, **chiffrée**, sur le serveur Corvus : un ransomware sur l'hôte ne peut pas toucher
+l'historique. Dans **Rembobiner**, un curseur de temps montre ce qu'un retour à l'instant choisi changerait
+(diff coloré à l'appui) ; **Restaurer** demande une confirmation explicite, exige d'être **administrateur de
+l'hôte**, est journalisé (journal chaîné) et reste annulable (l'état actuel est lui-même dans l'historique).
+Les fichiers secrets (`/etc/shadow`, clés SSH d'hôte, `*.key`…) sont suivis **sans jamais copier leur contenu**
+et ne sont pas restaurables. Historique conservé `RETENTION_REWIND_DAYS` jours (90).
 
 ---
 

@@ -9,7 +9,7 @@ const SHELL = [
   '/js/ui/dom.js', '/js/ui/icons.js', '/js/ui/components.js', '/js/ui/hostpicker.js', '/js/ui/chart.js',
   '/js/views/login.js', '/js/views/hosts.js', '/js/views/terminal.js', '/js/views/claude.js', '/js/views/files.js',
   '/js/views/git.js', '/js/views/monitor.js', '/js/views/journal.js', '/js/views/proxy.js',
-  '/js/views/agents.js', '/js/views/settings.js', '/js/views/more.js', '/js/views/storage-settings.js', '/js/views/accounts-settings.js', '/js/views/recordings.js', '/js/passkey.js', '/js/cmdbar.js', '/js/views/commands.js', '/js/views/admin.js',
+  '/js/views/agents.js', '/js/views/rewind.js', '/js/views/settings.js', '/js/views/more.js', '/js/views/storage-settings.js', '/js/views/accounts-settings.js', '/js/views/recordings.js', '/js/passkey.js', '/js/cmdbar.js', '/js/views/commands.js', '/js/views/admin.js',
   '/icons/logo.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png',
 ];
 
