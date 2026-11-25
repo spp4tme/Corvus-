@@ -79,7 +79,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: check
-        run: if [ -f agent/Cargo.toml ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "Pas encore d'agent : rien à compiler."; fi
+        run: |
+          if [ -f agent/Cargo.toml ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "Pas encore d'agent, rien à compiler."; fi
       - if: steps.check.outputs.present == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
