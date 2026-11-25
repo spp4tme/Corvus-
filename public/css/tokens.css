@@ -2,38 +2,49 @@
 :root {
   color-scheme: dark;
 
-  /* Couleurs — « plumage de corbeau » : encre bleu-noir, reflets bleu-violet. */
-  --c-bg: #0c0e13;
-  --c-surface: #141821;
-  --c-surface-2: #1b202b;
-  --c-surface-3: #242a37;
-  --c-border: #2b3240;
-  --c-border-strong: #3a4354;
-  --c-text: #e7eaf2;
-  --c-text-dim: #a2abbd;
-  --c-text-faint: #6f788a;
-  --c-accent: #8aa4ff;
-  --c-accent-strong: #a9bcff;
-  --c-accent-soft: rgba(138, 164, 255, 0.14);
-  --c-on-accent: #0b1020;
-  --c-ok: #46d39a;
-  --c-ok-soft: rgba(70, 211, 154, 0.14);
-  --c-warn: #f2b84b;
-  --c-warn-soft: rgba(242, 184, 75, 0.14);
-  --c-danger: #ff7a7a;
-  --c-danger-soft: rgba(255, 122, 122, 0.14);
-  --c-overlay: rgba(4, 6, 10, 0.72);
-  --c-focus: #b8c8ff;
+  /* Couleurs — « plumage » : obsidienne chaude (noir à peine violacé, jamais bleu marine), texte os,
+     reflets d'huile sur plume de corbeau : menthe → ultraviolet → rose → or. */
+  --c-bg: #0a090c;
+  --c-surface: #131116;
+  --c-surface-2: #1b1820;
+  --c-surface-3: #26222d;
+  --c-border: #2b2733;
+  --c-border-strong: #413b4c;
+  --c-text: #f3efe8;
+  --c-text-dim: #b6aebf;
+  --c-text-faint: #8a8294;
+  --c-accent: #b794ff;
+  --c-accent-strong: #d2bbff;
+  --c-accent-soft: rgba(183, 148, 255, 0.15);
+  --c-on-accent: #150d26;
+  --c-ok: #52e3a8;
+  --c-ok-soft: rgba(82, 227, 168, 0.14);
+  --c-warn: #ffc247;
+  --c-warn-soft: rgba(255, 194, 71, 0.14);
+  --c-danger: #ff6f86;
+  --c-danger-soft: rgba(255, 111, 134, 0.15);
+  --c-overlay: rgba(6, 4, 9, 0.74);
+  --c-focus: #7df9d0;
+
+  /* Reflet « huile sur plume » : signature visuelle (logo, bouton principal, repères d'état actif). */
+  --c-holo-1: #7df9d0;
+  --c-holo-2: #b794ff;
+  --c-holo-3: #ff8fcf;
+  --c-holo-4: #ffd27a;
+  --holo: linear-gradient(115deg, var(--c-holo-1) 0%, var(--c-holo-2) 38%, var(--c-holo-3) 72%, var(--c-holo-4) 100%);
+  --holo-soft: linear-gradient(115deg, rgba(125, 249, 208, 0.16), rgba(183, 148, 255, 0.16) 40%, rgba(255, 143, 207, 0.14) 75%, rgba(255, 210, 122, 0.12));
+  --glass: rgba(19, 17, 22, 0.72);
+  --hairline: linear-gradient(150deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.04) 38%, rgba(183, 148, 255, 0.22) 100%);
 
   /* Séries de graphiques (supervision) — ordre catégoriel fixe, validé (validate_palette.js,
-     mode sombre, surfaces #141821 et #0c0e13 : bande L, chroma, CVD ΔE ≥ 26, contraste ≥ 3:1).
+     mode sombre, surfaces #131116 et #0a090c : bande L, chroma, CVD ΔE ≥ 26, contraste ≥ 3:1).
      Distinctes des couleurs de statut (ok / warn / danger), qui restent réservées. */
   --c-chart-1: #3987e5;
   --c-chart-2: #d95926;
   --c-chart-3: #9085e9;
   --c-chart-4: #c98500;
-  --c-chart-grid: #232937;
-  --c-chart-axis: #6f788a;
+  --c-chart-grid: #26222d;
+  --c-chart-axis: #8a8294;
 
   /* Espacements — base 4 */
   --s-1: 4px;
@@ -46,13 +57,13 @@
   --s-10: 40px;
 
   /* Rayons */
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 14px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
   --r-pill: 999px;
 
   /* Typographie */
-  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-ui: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --fs-xs: 12px;
   --fs-sm: 13px;
@@ -67,13 +78,14 @@
   --tap: 44px;              /* cible tactile minimale */
   --header-h: 52px;
   --nav-h: 60px;
-  --rail-w: 84px;
+  --rail-w: 96px;
   --content-max: 1100px;
 
   /* Effets */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.45);
-  --t-fast: 120ms ease;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 18px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --glow: 0 0 0 1px rgba(183, 148, 255, 0.35), 0 8px 28px rgba(183, 148, 255, 0.22);
+  --t-fast: 140ms cubic-bezier(0.2, 0.7, 0.2, 1);
 
   /* Safe areas iOS */
   --safe-top: env(safe-area-inset-top, 0px);

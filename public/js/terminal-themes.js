@@ -5,8 +5,8 @@ function cssVar(name) {
 }
 
 const ANSI_CORVUS = {
-  black: '#1b202b', red: '#ff7a7a', green: '#46d39a', yellow: '#f2b84b', blue: '#8aa4ff', magenta: '#e08cff', cyan: '#5fd4e0', white: '#d4d9e4',
-  brightBlack: '#6f788a', brightRed: '#ff9b9b', brightGreen: '#74e3b4', brightYellow: '#ffd27f', brightBlue: '#a9bcff', brightMagenta: '#ecb0ff', brightCyan: '#8fe6ee', brightWhite: '#ffffff',
+  black: '#1b1820', red: '#ff6f86', green: '#52e3a8', yellow: '#ffc247', blue: '#8fa8ff', magenta: '#ff8fcf', cyan: '#7df9d0', white: '#d9d3e0',
+  brightBlack: '#8a8294', brightRed: '#ff94a5', brightGreen: '#82efc2', brightYellow: '#ffd77f', brightBlue: '#b4c4ff', brightMagenta: '#ffb3de', brightCyan: '#a6fbe3', brightWhite: '#ffffff',
 };
 
 export const TERMINAL_THEMES = {
@@ -14,7 +14,7 @@ export const TERMINAL_THEMES = {
     label: 'Corvus',
     build: () => ({
       background: cssVar('--c-bg'), foreground: cssVar('--c-text'), cursor: cssVar('--c-accent'),
-      cursorAccent: cssVar('--c-bg'), selectionBackground: 'rgba(138, 164, 255, 0.35)', ...ANSI_CORVUS,
+      cursorAccent: cssVar('--c-bg'), selectionBackground: 'rgba(183, 148, 255, 0.35)', ...ANSI_CORVUS,
     }),
   },
   minuit: {

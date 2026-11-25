@@ -9,7 +9,7 @@ import { chromium } from 'playwright-core';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dir = path.join(root, 'public', 'icons');
 const svg = fs.readFileSync(path.join(dir, 'logo.svg'), 'utf8');
-const BG = '#141821';
+const BG = '#0a090c';
 
 // [fichier, taille, fond plein, échelle du logo]
 const ICONS = [
@@ -20,8 +20,8 @@ const ICONS = [
 ];
 
 let browser;
-for (const channel of ['msedge', 'chrome', 'chromium']) {
-  try { browser = await chromium.launch({ channel, headless: true }); break; } catch { /* suivant */ }
+for (const channel of ['msedge', 'chrome', 'chromium', null]) {
+  try { browser = await chromium.launch({ ...(channel ? { channel } : {}), headless: true }); break; } catch { /* suivant */ }
 }
 if (!browser) {
   console.error('Aucun navigateur Chromium/Edge trouvé.');

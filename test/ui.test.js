@@ -27,7 +27,8 @@ async function launch() {
   for (const channel of channels) {
     try { return await chromium.launch({ channel, headless: true }); } catch { /* suivant */ }
   }
-  return null;
+  // Repli : navigateur headless installé par `npx playwright-core install chromium-headless-shell`.
+  try { return await chromium.launch({ headless: true }); } catch { return null; }
 }
 
 before(async () => {
@@ -426,5 +427,61 @@ test('mobile 375px : barre de commande (règles de risque) et vues Commandes / A
   await page.getByText(/sudo -n|Aucun outil/).first().waitFor();
   await auditLayout(page, 'admin');
   assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('tous les écrans : aucun débordement horizontal à 320, 375, 768 et 1280 px', async (t) => {
+  if (!browser) return t.skip('aucun navigateur disponible');
+  await env.client.login();
+  const added = await env.client.api('POST', '/api/hosts', { name: 'Balayage', hostname: '127.0.0.1', port: sshd.port, username: sshd.user, authType: 'password', password: sshd.password });
+  assert.ok(added.status < 300, JSON.stringify(added.body));
+  env.client.cookie = null;
+  const routes = ['hosts', 'claude', 'files', 'git', 'monitor', 'journal', 'commands', 'admin', 'agents', 'rewind', 'xray', 'recordings', 'proxy', 'settings', 'more'];
+  const problems = [];
+  for (const width of [320, 375, 768, 1280]) {
+    const ctx = await browser.newContext({ viewport: { width, height: width < 700 ? 740 : 900 }, isMobile: width < 700, hasTouch: width < 900, deviceScaleFactor: 1 });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(env.base);
+    await uiLogin(page);
+    await page.locator('.app-nav').waitFor();
+    for (const route of routes) {
+      await page.evaluate((r) => { location.hash = `#/${r}`; }, route);
+      await page.waitForTimeout(450);
+      const over = await page.evaluate(() => {
+        const vw = window.innerWidth;
+        const out = [];
+        if (document.documentElement.scrollWidth > vw) out.push(`page +${document.documentElement.scrollWidth - vw}px`);
+        const main = document.querySelector('.app-main');
+        if (main && main.scrollWidth > main.clientWidth + 1) out.push(`main +${main.scrollWidth - main.clientWidth}px`);
+        for (const el of document.querySelectorAll('.app-main *, .app-header *, .app-nav *')) {
+          const r = el.getBoundingClientRect();
+          if (!r.width || r.right <= vw + 1) continue;
+          let scrolled = false;
+          for (let p = el.parentElement; p; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o === 'auto' || o === 'scroll' || o === 'hidden') { scrolled = true; break; } }
+          if (!scrolled) out.push(`${el.tagName.toLowerCase()}.${String(el.className).slice(0, 30)} +${Math.round(r.right - vw)}px`);
+        }
+        return out.slice(0, 4);
+      });
+      if (over.length) problems.push(`${width}px #/${route} : ${over.join(' ; ')}`);
+      await page.screenshot({ path: path.join(OUT, `balayage-${width}-${route}.png`) });
+    }
+    if (errors.length) problems.push(`${width}px erreurs JS : ${errors.join(' | ')}`);
+    await ctx.close();
+  }
+  assert.deepEqual(problems, []);
+});
+
+test('navigations qui se chevauchent : la vue n\'est montée qu\'une fois', async (t) => {
+  if (!browser) return t.skip('aucun navigateur disponible');
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 740 } });
+  const page = await ctx.newPage();
+  await page.goto(env.base);
+  await uiLogin(page);
+  await page.locator('.app-nav').waitFor();
+  await page.evaluate(() => { location.hash = '#/hosts'; location.hash = '#/hosts?x=1'; location.hash = '#/hosts?x=2'; });
+  await page.waitForTimeout(600);
+  assert.equal(await page.locator('.app-main > .view').count(), 1, 'une seule vue dans <main>');
   await ctx.close();
 });

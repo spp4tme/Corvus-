@@ -11,14 +11,14 @@ const ROUTES = {
   claude: { title: 'Claude', icon: 'sparkle', load: () => import('./views/claude.js') },
   files: { title: 'Fichiers', icon: 'folder', load: () => import('./views/files.js') },
   git: { title: 'Git', icon: 'git', load: () => import('./views/git.js') },
-  monitor: { title: 'Supervision', icon: 'activity', load: () => import('./views/monitor.js') },
+  monitor: { title: 'Supervision', short: 'Système', icon: 'activity', load: () => import('./views/monitor.js') },
   journal: { title: 'Journal', icon: 'journal', load: () => import('./views/journal.js'), secondary: true },
   commands: { title: 'Commandes', icon: 'terminal', load: () => import('./views/commands.js'), secondary: true },
   admin: { title: 'Admin', icon: 'settings', load: () => import('./views/admin.js'), secondary: true },
   agents: { title: 'Agents', icon: 'server', load: () => import('./views/agents.js'), secondary: true },
   rewind: { title: 'Rembobiner', icon: 'history', load: () => import('./views/rewind.js'), secondary: true },
   xray: { title: 'Radiographie', icon: 'activity', load: () => import('./views/xray.js'), secondary: true },
-  recordings: { title: 'Enregistrements', icon: 'history', load: () => import('./views/recordings.js'), secondary: true },
+  recordings: { title: 'Enregistrements', short: 'Replays', icon: 'history', load: () => import('./views/recordings.js'), secondary: true },
   proxy: { title: 'Services web', icon: 'link', load: () => import('./views/proxy.js'), secondary: true },
   settings: { title: 'Réglages', icon: 'settings', load: () => import('./views/settings.js'), secondary: true },
   more: { title: 'Plus', icon: 'more', load: () => import('./views/more.js'), mobileOnly: true },
@@ -62,7 +62,10 @@ function buildShell() {
   for (const key of NAV) {
     const r = ROUTES[key];
     const cls = ['nav-item', r.mobileOnly && 'nav-more-only', r.secondary && 'nav-wide-only'].filter(Boolean).join(' ');
-    links[key] = h('a', { class: cls, href: `#/${key}` }, icon(r.icon), h('span', null, r.title));
+    // Libellé court affiché (petits écrans), libellé complet pour les lecteurs d'écran.
+    links[key] = r.short
+      ? h('a', { class: cls, href: `#/${key}` }, icon(r.icon), h('span', { 'aria-hidden': 'true' }, r.short), h('span', { class: 'sr-only' }, r.title))
+      : h('a', { class: cls, href: `#/${key}` }, icon(r.icon), h('span', null, r.title));
     nav.appendChild(links[key]);
   }
   const app = h('div', { class: 'app' },
@@ -75,8 +78,10 @@ function buildShell() {
   return { app, main, nav, links, title, banner, mounted: {}, current: null, cleanup: null };
 }
 
+let routeSeq = 0;
 async function route() {
   if (!shell) return;
+  const seq = ++routeSeq; // deux navigations qui se chevauchent : seule la dernière monte sa vue
   const [, key = 'hosts', ...rest] = (location.hash || '#/hosts').split('?')[0].split('/');
   const r = ROUTES[key] || ROUTES.hosts;
   const name = ROUTES[key] ? key : 'hosts';
@@ -97,7 +102,7 @@ async function route() {
   shell.current = name;
 
   const mod = await r.load();
-  if (shell.current !== name) return;
+  if (seq !== routeSeq || !shell || shell.current !== name) return;
   if (r.persistent) {
     if (!shell.mounted[name]) {
       const el = h('section', { class: 'view-full', dataset: { persistent: '1' } });
