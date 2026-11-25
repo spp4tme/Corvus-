@@ -62,6 +62,8 @@ function securityHeaders(req, res, next) {
     'X-Frame-Options': 'SAMEORIGIN',
     'Permissions-Policy': 'microphone=(self), camera=(), geolocation=(), payment=(), usb=()',
   });
+  // Navigateur ramené en https pour de bon (derrière tailscale serve ou un proxy de confiance).
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000');
   next();
 }
 

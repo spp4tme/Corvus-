@@ -106,9 +106,12 @@ export function authRoutes(ctx) {
   });
 
   r.post('/totp/enroll', async (req, res) => {
+    rateCheck(req.ip);
     const e = enrollments.get(String(req.body?.enrollToken || ''));
-    if (!e || e.expires < Date.now()) throw new HttpError(400, 'ENROLL_EXPIRED', 'Enrôlement expiré : reconnectez-vous.');
-    users.enableTotp(e.userId, e.secret, String(req.body?.code ?? ''));
+    if (!e || e.expires < Date.now()) { auth.limiter.fail(req.ip); throw new HttpError(400, 'ENROLL_EXPIRED', 'Enrôlement expiré : reconnectez-vous.'); }
+    // Le code à 6 chiffres ne doit pas pouvoir être deviné par essais répétés.
+    try { users.enableTotp(e.userId, e.secret, String(req.body?.code ?? '')); } catch (err) { await sleep(auth.limiter.fail(req.ip)); throw err; }
+    auth.limiter.success(req.ip);
     enrollments.delete(String(req.body.enrollToken));
     const u = users.row(e.userId);
     journal.add({ type: 'account', event: 'totp-enabled', user: u, ip: req.ip });
