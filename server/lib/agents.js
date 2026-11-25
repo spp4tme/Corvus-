@@ -198,8 +198,12 @@ export class AgentService {
             const text = JSON.stringify(e.body ?? {});
             if (text.length > 64_000) continue;
             // UNIQUE (agent_id, agent_seq) : un renvoi après coupure est ignoré sans erreur.
-            this.db.run('INSERT OR IGNORE INTO agent_events (agent_id, host_id, agent_seq, ts, type, body, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            const ins = this.db.run('INSERT OR IGNORE INTO agent_events (agent_id, host_id, agent_seq, ts, type, body, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
               agent.id, agent.host_id, e.seq, Number.isFinite(e.ts) ? e.ts : Date.now(), e.type, text, Date.now());
+            // Nouveauté seulement : un renvoi après coupure ne doit pas compter deux fois dans l'empreinte du normal.
+            if (ins.changes > 0 && this.behavior) {
+              try { this.behavior.ingest(agent.host_id, { type: e.type, body: e.body ?? {}, ts: Number.isFinite(e.ts) ? e.ts : Date.now() }); } catch (err) { log.warn(`empreinte : ${err.message}`); }
+            }
             upTo = Math.max(upTo, e.seq);
           }
         });

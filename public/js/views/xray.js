@@ -1,8 +1,8 @@
 // Vue Radiographie : arbre des processus (qui a lancé quoi, via quelle session SSH), connexions réseau,
 // gel / dégel / arrêt d'un processus. Agent requis ; lecture seule tant qu'on ne confirme pas une action.
-import { get, post } from '../api.js';
-import { h, replace } from '../ui/dom.js';
-import { button, confirmDialog, select, input, segmented, loadingState, emptyState, errorState, badge, toast, toastError } from '../ui/components.js';
+import { get, post, put } from '../api.js';
+import { h, replace, formatDate } from '../ui/dom.js';
+import { button, confirmDialog, select, input, segmented, checkbox, loadingState, emptyState, errorState, badge, toast, toastError } from '../ui/components.js';
 import { state } from '../state.js';
 
 function tree(processes) {
@@ -30,7 +30,7 @@ export default {
     hostSel.addEventListener('change', () => { hostId = hostSel.value; load(); });
     const q = input({ placeholder: 'Filtrer (programme, commande, utilisateur SSH)…' });
     q.addEventListener('input', draw);
-    const tabs = segmented([{ value: 'procs', label: 'Processus' }, { value: 'conns', label: 'Connexions' }], tab, (v) => { tab = v; draw(); }, { label: 'Vue' });
+    const tabs = segmented([{ value: 'procs', label: 'Processus' }, { value: 'conns', label: 'Connexions' }, { value: 'normal', label: 'Normal et anomalies' }], tab, (v) => { tab = v; draw(); }, { label: 'Vue' });
     const body = h('div', { class: 'stack' });
     replace(root, h('div', { class: 'row' }, h('h2', { class: 'section-title grow' }, 'Radiographie'), hostSel, button({ label: 'Actualiser', icon: 'refresh', variant: 'ghost', onClick: load })),
       h('p', { class: 'dim' }, 'Instantané en direct (lu dans /proc par l\'agent). Un processus qui naît et meurt en moins de 2 s n\'apparaît pas dans l\'historique.'), tabs, q, body);
@@ -42,7 +42,35 @@ export default {
       try { await post(`/api/hosts/${hostId}/xray/proc`, { pid: p.pid, start: p.start, action, confirm: true }); toast(`${verb} : fait`, 'ok', 2500); load(); } catch (err) { toastError(err); }
     }
 
+    const KIND = { proc: 'programme', conn: 'destination', listen: 'port en écoute' };
+    async function drawNormal() {
+      replace(body, loadingState());
+      try {
+        const o = await get(`/api/hosts/${hostId}/behavior`);
+        const admin = state.host(hostId)?.role === 'admin';
+        const max = Math.max(1, ...o.hours);
+        const freeze = checkbox('Geler automatiquement un programme jamais vu lancé pendant une heure calme (SIGSTOP, à vous de décider ensuite)', { checked: o.autoFreeze, disabled: !admin });
+        freeze.input.addEventListener('change', async () => { try { await put(`/api/hosts/${hostId}/behavior/settings`, { autoFreeze: freeze.input.checked }); toast('Réglage enregistré', 'ok', 1500); } catch (err) { toastError(err); freeze.input.checked = !freeze.input.checked; } });
+        replace(body,
+          h('p', null, o.learning ? badge('apprentissage en cours', 'warn') : badge('surveillance active', 'ok'), ' ',
+            o.startedAt ? `depuis le ${formatDate(o.startedAt)} · ${o.learnDays} jours d'apprentissage${o.learning ? ` (fin le ${formatDate(o.endsAt)})` : ''}` : 'pas encore d\'événement reçu'),
+          h('p', { class: 'dim' }, `Appris : ${o.counts.proc || 0} programmes, ${o.counts.conn || 0} destinations, ${o.counts.listen || 0} ports. Règles et statistiques simples, aucune IA : une anomalie est un élément jamais vu après l'apprentissage.`),
+          h('div', { class: 'frise', 'aria-label': 'Activité apprise par heure' }, o.hours.map((n, i) => h('span', { class: 'frise-bar', style: `height:${Math.max(4, Math.round((n / max) * 100))}%`, title: `${i} h : ${n} démarrage(s)` }))),
+          freeze,
+          h('h3', null, `À examiner (${o.anomalies.length})`),
+          o.anomalies.length ? h('ul', { class: 'list' }, o.anomalies.map((a) => h('li', { class: 'list-item' },
+            h('div', { class: 'grow' }, h('div', { class: 'mono' }, a.item.replace('|', ' · ')), h('div', { class: 'dim' }, badge(KIND[a.kind] || a.kind), ` vu ${a.count}× · ${formatDate(a.firstSeen)}`)),
+            state.canOperate(hostId) ? button({ label: 'Autoriser', variant: 'ghost', onClick: async () => { try { await post(`/api/hosts/${hostId}/behavior/allow`, { kind: a.kind, item: a.item }); drawNormal(); } catch (err) { toastError(err); } } }) : null)))
+            : emptyState({ icon: 'activity', title: 'Rien à examiner', text: o.learning ? 'Pendant l\'apprentissage, tout est considéré comme normal.' : 'Aucune nouveauté depuis la fin de l\'apprentissage.' }),
+          admin ? button({ label: 'Recommencer l\'apprentissage', variant: 'ghost', onClick: async () => {
+            if (!(await confirmDialog({ title: 'Recommencer l\'apprentissage ?', message: 'Tout ce qui a été appris sera oublié et les anomalies en attente effacées.', confirmLabel: 'Recommencer', danger: true }))) return;
+            try { await post(`/api/hosts/${hostId}/behavior/restart`, { confirm: true }); drawNormal(); } catch (err) { toastError(err); }
+          } }) : null);
+      } catch (err) { replace(body, errorState(err, drawNormal)); }
+    }
+
     function draw() {
+      if (tab === 'normal') return drawNormal();
       if (!data) return;
       const f = q.value.toLowerCase();
       const match = (p) => !f || `${p.exe} ${p.cmd} ${p.ssh || ''} ${p.comm}`.toLowerCase().includes(f);

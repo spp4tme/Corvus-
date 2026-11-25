@@ -516,6 +516,17 @@ requête exige d'être administrateur de l'hôte. **Limites** : réseau, bases d
 lancés ne sont pas simulés ; la suppression d'un dossier entier est affichée mais pas appliquée ; sous
 Ubuntu 24.04 l'OverlayFS sans root est bloqué par AppArmor, d'où le passage par l'agent en root.
 
+### Radiographie et empreinte du normal (agent requis)
+L'écran **Radiographie** montre l'arbre des processus d'un hôte (qui a lancé quoi, via quelle session SSH),
+ses connexions sortantes, et permet de **geler / dégeler / tuer** un processus (confirmation, journalisé ; les
+processus protégés et l'agent lui-même sont refusés). Lecture de `/proc` toutes les 2 s : un processus vivant
+moins de 2 s n'est pas vu (eBPF n'est pas implémenté).
+Pendant `BEHAVIOR_LEARN_DAYS` jours (14) Corvus apprend le **normal** de l'hôte : programmes (binaire + utilisateur),
+destinations réseau (par /24 et port), ports en écoute, activité par heure. Ensuite, un élément **jamais vu**
+déclenche une alerte push et rejoint la liste « À examiner » (**Autoriser** pour l'apprendre). S'il apparaît pendant
+une heure habituellement calme (< 1 % de l'activité apprise), l'alerte est critique et, si vous avez activé l'option
+pour l'hôte, le programme est **gelé** en attendant votre décision. Règles et statistiques, aucune IA.
+
 ### Rembobiner un hôte (agent requis)
 L'agent surveille `/etc` et les crontabs (option `--watch dossier1,dossier2`) par balayage toutes les 10 s,
 ainsi que les ports en écoute, les services systemd et les paquets (journal dpkg). Chaque version de fichier

@@ -43,6 +43,8 @@ export const config = Object.freeze({
     // Historique des fichiers des hôtes (rembobinage) : événements et contenus conservés ce nombre de jours.
     rewindDays: int(env.RETENTION_REWIND_DAYS, 90),
   },
+  // Empreinte du normal : durée d'apprentissage d'un hôte avant de signaler les nouveautés.
+  behaviorLearnDays: int(env.BEHAVIOR_LEARN_DAYS, 14),
   masterPassphrase: env.CORVUS_MASTER_PASSPHRASE || '',
   allowedOrigins: list(env.CORVUS_ALLOWED_ORIGINS),
   // 'loopback' : on fait confiance à X-Forwarded-* uniquement depuis 127.0.0.1 (tailscale serve)
