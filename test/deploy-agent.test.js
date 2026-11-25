@@ -20,4 +20,8 @@ describe('drop-ins systemd de l\'agent', () => {
       }
     });
   }
+
+  test('corvus-agent-full.conf : CAP_SYS_PTRACE (sinon /proc/<pid>/exe des autres utilisateurs est illisible et la Radiographie ne voit que root)', () => {
+    assert.ok(value(conf('corvus-agent-full.conf'), 'CapabilityBoundingSet').includes('CAP_SYS_PTRACE'));
+  });
 });
