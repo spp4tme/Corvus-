@@ -145,6 +145,8 @@ test('mobile 375px : fichiers (dossier, envoi, édition)', async (t) => {
   await page.getByRole('button', { name: 'Fichiers' }).first().click();
   await page.getByRole('button', { name: 'Nouveau dossier' }).waitFor();
 
+  const reseau = [];
+  page.on('response', async (r) => { if (r.url().includes('/fs/')) reseau.push(`${r.request().method()} ${r.url().replace(/^.*\/api/, '')} ${r.status()} ${(await r.text().catch(() => '')).slice(0, 150)}`); });
   await page.getByRole('button', { name: 'Nouveau dossier' }).click();
   await page.getByLabel('Nom du dossier').fill('projet-ui');
   await page.getByRole('button', { name: 'Valider' }).click();
@@ -153,7 +155,7 @@ test('mobile 375px : fichiers (dossier, envoi, édition)', async (t) => {
   } catch (err) {
     // Diagnostic pour la CI (les journaux GitHub exigent une connexion) : ce que la page affichait vraiment.
     const texte = (await page.locator('body').innerText().catch(() => '?')).replace(/\s+/g, ' ').slice(0, 600);
-    console.log(`::error::DIAG fichiers : page = ${texte} | erreurs = ${JSON.stringify(errors)} | fs = ${JSON.stringify(fs.readdirSync(sshd.root))}`);
+    console.log(`::error::DIAG fichiers : page = ${texte} | erreurs = ${JSON.stringify(errors)} | fs = ${JSON.stringify(fs.readdirSync(sshd.root))} | réseau = ${JSON.stringify(reseau)}`);
     throw err;
   }
   await page.getByText('Dossier vide').waitFor();
