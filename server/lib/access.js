@@ -21,6 +21,7 @@ const GLOBAL_RULES = [
   ['GET', /^\/journal\/verify$/, 'admin'],
   ['POST', /^\/alerts\//, 'operator'],
   [ANY, /^\/exec(\/|$)/, 'operator'],
+  [ANY, /^\/agents(\/|$)/, 'admin'],
 ];
 
 const forbidden = (msg) => new HttpError(403, 'FORBIDDEN', msg);

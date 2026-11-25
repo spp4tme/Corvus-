@@ -14,7 +14,7 @@
     "dev": "node --watch server/index.js",
     "token": "node server/cli.js token",
     "token:rotate": "node server/cli.js rotate-token",
-    "test": "node --test --test-concurrency=1 test/unit.test.js test/e2e.test.js test/accounts.test.js test/passkeys.test.js test/productivity.test.js test/ui.test.js",
+    "test": "node --test --test-concurrency=1 test/unit.test.js test/agent.test.js test/e2e.test.js test/accounts.test.js test/passkeys.test.js test/productivity.test.js test/ui.test.js",
     "test:e2e": "node --test --test-concurrency=1 test/e2e.test.js",
     "test:ui": "node --test test/ui.test.js",
     "check:pure": "node scripts/check-pure-js.js",

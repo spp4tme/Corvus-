@@ -1,0 +1,206 @@
+// Agents Corvus (étape 1) : enrôlement par jeton à usage unique et canal WebSocket authentifié
+// des deux côtés par des clés Ed25519. Protocole décrit dans docs/protocole-agent.md.
+//
+// Principes :
+//  - l'agent se connecte vers Corvus (aucun port ouvert sur l'hôte) ;
+//  - chacun signe un défi aléatoire de l'autre : ni l'agent ni le serveur ne peuvent être usurpés ;
+//  - le serveur n'envoie JAMAIS de commande shell : seulement des actions nommées (aucune à ce stade) ;
+//  - les événements portent un numéro (`seq`) : un renvoi après coupure est sans effet (idempotent).
+import crypto from 'node:crypto';
+import { HttpError } from './validate.js';
+import { logger } from './log.js';
+
+const log = logger('agents');
+export const PROTOCOL = 1;
+const SPKI_ED25519 = Buffer.from('302a300506032b6570032100', 'hex');
+const ENROLL_TTL_MS = 15 * 60_000;
+const METRIC_RE = /^[A-Za-z0-9_.:/-]{1,80}$/;
+const MAX_BATCH = 500;
+
+const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const b64 = (buf) => Buffer.from(buf).toString('base64');
+
+/** Clé publique brute (32 octets, base64) → objet clé Node. */
+export function publicKeyFromRaw(rawB64) {
+  const raw = Buffer.from(String(rawB64), 'base64');
+  if (raw.length !== 32) throw new HttpError(400, 'BAD_KEY', 'Clé publique Ed25519 invalide (32 octets attendus)');
+  return crypto.createPublicKey({ key: Buffer.concat([SPKI_ED25519, raw]), format: 'der', type: 'spki' });
+}
+
+/** Texte signé : contexte + rôle + défi, pour qu'une signature ne serve jamais à autre chose. */
+export const signedText = (role, challengeB64) => Buffer.from(`corvus-agent-v${PROTOCOL}|${role}|${challengeB64}`);
+
+export class AgentService {
+  constructor({ db, vault, journal, hosts, alerts }) {
+    Object.assign(this, { db, vault, journal, hosts, alerts });
+    this.connections = new Map(); // agentId → ws
+    this.#loadServerKey();
+  }
+
+  #loadServerKey() {
+    let stored = this.vault.get('agent:server-key');
+    if (!stored?.pkcs8) {
+      const { privateKey } = crypto.generateKeyPairSync('ed25519');
+      stored = { pkcs8: privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64') };
+      this.vault.set('agent:server-key', stored);
+    }
+    this.privateKey = crypto.createPrivateKey({ key: Buffer.from(stored.pkcs8, 'base64'), format: 'der', type: 'pkcs8' });
+    const spki = crypto.createPublicKey(this.privateKey).export({ format: 'der', type: 'spki' });
+    this.publicKeyB64 = b64(spki.subarray(spki.length - 32));
+  }
+
+  // --- Enrôlement ---------------------------------------------------------
+  /** Jeton à usage unique, valable 15 minutes, lié à un hôte. Retourné une seule fois (seul son hash est conservé). */
+  createEnrollment(hostId) {
+    const host = this.hosts.find(hostId);
+    if (!host) throw new HttpError(404, 'HOST_NOT_FOUND', 'Hôte inconnu');
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = Date.now() + ENROLL_TTL_MS;
+    this.db.run('DELETE FROM agent_enrollments WHERE expires_at < ? OR used_at IS NOT NULL', Date.now() - 86_400_000);
+    this.db.run('INSERT INTO agent_enrollments (token_hash, host_id, expires_at) VALUES (?, ?, ?)', sha256(token), host.id, expiresAt);
+    this.journal.add({ type: 'agent', event: 'enroll-token', host, detail: 'jeton d\'enrôlement créé (15 min)' });
+    return { token, expiresAt, host: { id: host.id, name: host.name } };
+  }
+
+  /** Consomme le jeton (une seule fois, de façon atomique) et enregistre la clé publique de l'agent. */
+  enroll({ token, publicKey, version, hostname, capabilities }) {
+    if (typeof token !== 'string' || token.length < 20 || token.length > 200) throw new HttpError(400, 'BAD_TOKEN', 'Jeton invalide');
+    publicKeyFromRaw(publicKey); // valide le format
+    const agentId = crypto.randomBytes(12).toString('hex');
+    const res = this.db.tx(() => {
+      const row = this.db.get('SELECT host_id, expires_at, used_at FROM agent_enrollments WHERE token_hash = ?', sha256(token));
+      if (!row || row.used_at || row.expires_at < Date.now()) return null;
+      this.db.run('UPDATE agent_enrollments SET used_at = ? WHERE token_hash = ?', Date.now(), sha256(token));
+      this.db.run(
+        'INSERT INTO agents (id, host_id, public_key, version, capabilities, enrolled_at) VALUES (?, ?, ?, ?, ?, ?)',
+        agentId, row.host_id, String(publicKey), String(version || '').slice(0, 40), JSON.stringify(capabilities && typeof capabilities === 'object' ? capabilities : {}), Date.now(),
+      );
+      return row;
+    });
+    if (!res) throw new HttpError(403, 'ENROLL_REFUSED', 'Jeton inconnu, expiré ou déjà utilisé');
+    const host = this.hosts.find(res.host_id);
+    this.journal.add({ type: 'agent', event: 'enrolled', host, user: null, detail: `agent ${agentId} (${String(hostname || '?').slice(0, 60)}) enrôlé` });
+    return { agentId, serverPublicKey: this.publicKeyB64, hostId: res.host_id, protocol: PROTOCOL };
+  }
+
+  list() {
+    return this.db.all('SELECT id, host_id AS hostId, version, capabilities, enrolled_at AS enrolledAt, last_seen_at AS lastSeenAt FROM agents ORDER BY enrolled_at')
+      .map((a) => ({ ...a, capabilities: safeJson(a.capabilities), online: this.connections.has(a.id) }));
+  }
+
+  revoke(id) {
+    const row = this.db.get('SELECT id, host_id FROM agents WHERE id = ?', id);
+    if (!row) throw new HttpError(404, 'AGENT_NOT_FOUND', 'Agent inconnu');
+    this.db.run('DELETE FROM agents WHERE id = ?', id);
+    this.connections.get(id)?.close(4003, 'révoqué');
+    this.journal.add({ type: 'agent', event: 'revoked', host: this.hosts.find(row.host_id), detail: `agent ${id} révoqué` });
+  }
+
+  // --- Canal WebSocket ----------------------------------------------------
+  /** Gestionnaire de `/agent` (route WebSocket publique : l'authentification est le défi signé). */
+  handle(ws, url, req) {
+    const send = (type, body = {}, id) => ws.send(JSON.stringify({ v: PROTOCOL, id: id || crypto.randomUUID(), type, ts: Date.now(), body }));
+    const fail = (code, msg) => { try { send('error', { code, message: msg }); } catch { /* fermé */ } ws.close(4001, msg.slice(0, 100)); };
+    const challenge = b64(crypto.randomBytes(32));
+    let agent = null;
+    let helloTimer = setTimeout(() => fail('TIMEOUT', 'authentification trop lente'), 10_000);
+
+    send('hello', { challenge, protocol: PROTOCOL });
+
+    ws.on('message', (data) => {
+      let msg;
+      try { msg = JSON.parse(data.toString()); } catch { return fail('BAD_JSON', 'JSON invalide'); }
+      if (!msg || msg.v !== PROTOCOL || typeof msg.type !== 'string') return fail('BAD_ENVELOPE', 'enveloppe invalide');
+      try {
+        if (!agent) return this.#authenticate(msg, challenge, ws, send, fail, (a) => { agent = a; clearTimeout(helloTimer); helloTimer = null; });
+        this.#dispatch(agent, msg, send);
+      } catch (err) {
+        log.warn(`agent ${agent?.id || '?'} : ${err.message}`);
+        fail('PROTOCOL', 'message refusé');
+      }
+    });
+    ws.on('close', () => {
+      if (helloTimer) clearTimeout(helloTimer);
+      if (agent && this.connections.get(agent.id) === ws) {
+        this.connections.delete(agent.id);
+        this.journal.add({ type: 'agent', event: 'disconnected', host: this.hosts.find(agent.host_id), user: null, ip: req.socket.remoteAddress, detail: `agent ${agent.id} déconnecté` });
+      }
+    });
+  }
+
+  #authenticate(msg, challenge, ws, send, fail, accept) {
+    if (msg.type !== 'auth') return fail('NOT_AUTHENTICATED', 'auth attendu');
+    const { agentId, signature, challenge: agentChallenge } = msg.body || {};
+    const row = typeof agentId === 'string' ? this.db.get('SELECT * FROM agents WHERE id = ?', agentId) : null;
+    // Même réponse qu'une signature fausse : on ne révèle pas quels agents existent.
+    if (!row || typeof signature !== 'string' || typeof agentChallenge !== 'string' || agentChallenge.length > 100) return fail('AUTH', 'authentification refusée');
+    let ok = false;
+    try {
+      ok = crypto.verify(null, signedText('agent', challenge), publicKeyFromRaw(row.public_key), Buffer.from(signature, 'base64'));
+    } catch { ok = false; }
+    if (!ok) {
+      this.journal.add({ type: 'agent', event: 'auth-failed', host: this.hosts.find(row.host_id), ok: false, detail: `signature invalide pour l'agent ${row.id}` });
+      return fail('AUTH', 'authentification refusée');
+    }
+    // Une seule connexion par agent : la nouvelle remplace l'ancienne (reprise après coupure réseau).
+    this.connections.get(row.id)?.close(4002, 'remplacé');
+    this.connections.set(row.id, ws);
+    this.db.run('UPDATE agents SET last_seen_at = ? WHERE id = ?', Date.now(), row.id);
+    accept(row);
+    const last = this.db.get('SELECT MAX(agent_seq) AS m FROM agent_events WHERE agent_id = ?', row.id)?.m || 0;
+    send('auth_ok', {
+      signature: b64(crypto.sign(null, signedText('server', agentChallenge), this.privateKey)),
+      lastSeq: last, // l'agent peut purger son tampon jusqu'ici
+    });
+    this.journal.add({ type: 'agent', event: 'connected', host: this.hosts.find(row.host_id), user: null, detail: `agent ${row.id} connecté` });
+  }
+
+  #dispatch(agent, msg, send) {
+    const body = msg.body || {};
+    switch (msg.type) {
+      case 'ping': send('pong', {}, msg.id); break;
+      case 'hello_agent': { // version et capacités annoncées après l'authentification
+        this.db.run('UPDATE agents SET version = ?, capabilities = ? WHERE id = ?', String(body.version || '').slice(0, 40), JSON.stringify(body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : {}), agent.id);
+        break;
+      }
+      case 'events': {
+        const items = Array.isArray(body.items) ? body.items.slice(0, MAX_BATCH) : [];
+        let upTo = 0;
+        this.db.tx(() => {
+          for (const e of items) {
+            if (!Number.isSafeInteger(e?.seq) || e.seq < 1 || typeof e.type !== 'string' || e.type.length > 60) continue;
+            const text = JSON.stringify(e.body ?? {});
+            if (text.length > 64_000) continue;
+            // UNIQUE (agent_id, agent_seq) : un renvoi après coupure est ignoré sans erreur.
+            this.db.run('INSERT OR IGNORE INTO agent_events (agent_id, host_id, agent_seq, ts, type, body, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              agent.id, agent.host_id, e.seq, Number.isFinite(e.ts) ? e.ts : Date.now(), e.type, text, Date.now());
+            upTo = Math.max(upTo, e.seq);
+          }
+        });
+        send('ack', { upTo });
+        break;
+      }
+      case 'metrics': {
+        if (!agent.host_id) break;
+        const ts = Number.isFinite(body.ts) ? body.ts : Date.now();
+        const entries = Object.entries(body.values || {}).slice(0, 200);
+        this.db.tx(() => {
+          for (const [metric, value] of entries) {
+            if (!METRIC_RE.test(metric) || typeof value !== 'number' || !Number.isFinite(value)) continue;
+            this.db.run('INSERT OR REPLACE INTO metrics_raw (host_id, metric, ts, value) VALUES (?, ?, ?, ?)', agent.host_id, metric, ts, value);
+          }
+        });
+        break;
+      }
+      default: throw new Error(`type inconnu : ${msg.type}`);
+    }
+    this.db.run('UPDATE agents SET last_seen_at = ? WHERE id = ?', Date.now(), agent.id);
+  }
+
+  closeAll() {
+    for (const ws of this.connections.values()) ws.terminate();
+    this.connections.clear();
+  }
+}
+
+function safeJson(s) { try { return JSON.parse(s); } catch { return {}; } }

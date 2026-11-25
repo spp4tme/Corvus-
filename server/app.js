@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
+import { AgentService } from './lib/agents.js';
 import { config as baseConfig } from './config.js';
 import { Auth, loadToken, originAllowed, isLoopback } from './lib/auth.js';
 import { Vault } from './lib/vault.js';
@@ -99,6 +100,7 @@ export function createCorvus(overrides = {}) {
   ctx.retention = new Retention({ db, blobs: ctx.blobs, config });
   ctx.recorder = new Recorder({ db, blobs: ctx.blobs, maxBytes: config.recordingMaxBytes, enabled: config.recordSessions });
   ctx.claude = new ClaudeService({ pool, hosts, journal });
+  ctx.agents = new AgentService({ db, vault, journal, hosts, alerts: ctx.alerts });
   ctx.terminals = new TerminalManager({
     pool, hosts, journal, config, claude: ctx.claude,
     requireHost: (user, hostId, level) => ctx.requireHost(user, hostId, level),
@@ -125,6 +127,20 @@ export function createCorvus(overrides = {}) {
   api.use(express.json({ limit: '4mb' }));
   api.get('/health', (req, res) => res.json({ ok: true }));
   api.use('/auth', authRoutes(ctx));
+  // Enrôlement d'un agent : public, protégé par le jeton à usage unique (et le limiteur d'échecs par IP).
+  api.post('/agent/enroll', (req, res, next) => {
+    const wait = auth.limiter.blockedFor(req.ip);
+    if (wait > 0) {
+      res.set('Retry-After', String(Math.ceil(wait / 1000)));
+      return next(new HttpError(429, 'RATE_LIMITED', 'Trop de tentatives'));
+    }
+    try {
+      res.json(ctx.agents.enroll(req.body || {}));
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 403) auth.limiter.fail(req.ip);
+      next(err);
+    }
+  });
 
   // Tout le reste exige une authentification.
   api.use((req, res, next) => {
@@ -216,6 +232,8 @@ export function createCorvus(overrides = {}) {
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   ctx.wsRoutes = { '/ws/terminal': (ws, url, req) => ctx.terminals.handle(ws, url, req) };
+  // Routes WebSocket sans session navigateur : l'authentification y est le défi signé (Ed25519) de l'agent.
+  ctx.wsPublic = { '/agent': (ws, url, req) => ctx.agents.handle(ws, url, req) };
 
   server.on('upgrade', (req, socket, head) => {
     const reject = (code, text) => {
@@ -224,7 +242,8 @@ export function createCorvus(overrides = {}) {
     };
     let url;
     try { url = new URL(req.url, 'http://corvus.local'); } catch { return reject(400, 'Bad Request'); }
-    const handler = ctx.wsRoutes[url.pathname];
+    const publicHandler = ctx.wsPublic[url.pathname];
+    const handler = publicHandler || ctx.wsRoutes[url.pathname];
     if (!handler) return reject(404, 'Not Found');
 
     // req.ip n'existe pas hors Express : on reconstruit l'IP pour le limiteur.
@@ -232,25 +251,31 @@ export function createCorvus(overrides = {}) {
     const fwd = isLoopback(remote) && trustForwarded ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '';
     const ip = fwd || remote;
 
-    const who = auth.identify(req);
-    if (!who) {
-      if (req.headers.authorization) {
-        if (auth.limiter.blockedFor(ip) > 0) return reject(429, 'Too Many Requests');
-        auth.limiter.fail(ip);
+    let who = null;
+    if (!publicHandler) {
+      who = auth.identify(req);
+      if (!who) {
+        if (req.headers.authorization) {
+          if (auth.limiter.blockedFor(ip) > 0) return reject(429, 'Too Many Requests');
+          auth.limiter.fail(ip);
+        }
+        return reject(401, 'Unauthorized');
       }
-      return reject(401, 'Unauthorized');
-    }
-    // Origin check : obligatoire pour un navigateur (cookie). Un client Bearer peut ne pas en envoyer.
-    const origin = req.headers.origin;
-    if (origin ? !originAllowed(origin, req, { allowedOrigins: config.allowedOrigins, trustForwarded }) : who.kind !== 'bearer') {
-      log.warn(`WebSocket refusé : origine ${origin || '(absente)'} depuis ${ip}`);
+      // Origin check : obligatoire pour un navigateur (cookie). Un client Bearer peut ne pas en envoyer.
+      const origin = req.headers.origin;
+      if (origin ? !originAllowed(origin, req, { allowedOrigins: config.allowedOrigins, trustForwarded }) : who.kind !== 'bearer') {
+        log.warn(`WebSocket refusé : origine ${origin || '(absente)'} depuis ${ip}`);
+        return reject(403, 'Forbidden');
+      }
+    } else if (req.headers.origin) {
+      // Un agent n'est pas un navigateur : une origine présente trahit une page web qui tente sa chance.
       return reject(403, 'Forbidden');
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.isAlive = true;
       ws.on('pong', () => { ws.isAlive = true; });
       ws.on('error', () => {});
-      req.user = publicUser(who.user);
+      req.user = who ? publicUser(who.user) : null;
       req.clientIp = ip;
       Promise.resolve(requestContext.run({ user: req.user, ip }, () => handler(ws, url, req))).catch((err) => {
         log.error('WebSocket', err);
@@ -283,6 +308,7 @@ export function createCorvus(overrides = {}) {
   async function close() {
     clearInterval(heartbeat);
     ctx.terminals.closeAll();
+    ctx.agents.closeAll();
     pool.closeAll();
     for (const ws of wss.clients) ws.terminate();
     await new Promise((r) => server.close(r));

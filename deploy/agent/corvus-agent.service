@@ -1,0 +1,39 @@
+# Service systemd de l'agent Corvus.
+#   sudo install -m 755 corvus-agent /usr/local/bin/corvus-agent
+#   sudo corvus-agent enroll --server https://<corvus>.<tailnet>.ts.net --token <jeton>
+#   sudo cp deploy/agent/corvus-agent.service /etc/systemd/system/ && sudo systemctl enable --now corvus-agent
+#
+# Droits : à ce stade l'agent n'envoie que des métriques lues dans /proc et /sys, il n'a donc besoin
+# d'AUCUNE capacité. Les capacités (CAP_KILL, CAP_BPF…) seront ajoutées avec les étapes 6 et 7,
+# chacune justifiée dans docs/plan.md §2.4.
+[Unit]
+Description=Agent Corvus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/corvus-agent run
+Environment=CORVUS_AGENT_DIR=/var/lib/corvus-agent
+StateDirectory=corvus-agent
+StateDirectoryMode=0700
+Restart=always
+RestartSec=5
+# Durcissement : lecture seule du système, aucun privilège, aucun accès aux dossiers personnels.
+User=root
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

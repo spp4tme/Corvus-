@@ -34,9 +34,10 @@ tiers.
 9. [Configuration](#configuration-variables-denvironnement)
 10. [Sécurité](#sécurité)
 11. [Claude Code](#claude-code)
-12. [Tests](#tests)
-13. [Structure du dépôt](#structure-du-dépôt)
-14. [Limites connues](#limites-connues)
+12. [Agent Corvus (optionnel)](#agent-corvus-optionnel)
+13. [Tests](#tests)
+14. [Structure du dépôt](#structure-du-dépôt)
+15. [Limites connues](#limites-connues)
 
 ---
 
@@ -478,6 +479,34 @@ Corvus n'ouvre pas de terminal : il affiche un message avec la commande d'instal
 
 ---
 
+## Agent Corvus (optionnel)
+
+Par défaut Corvus travaille **uniquement par SSH**, sans rien installer sur les hôtes. L'**agent**
+(`agent/`, en Rust) est un petit programme facultatif qui se connecte **vers** Corvus (aucun port ouvert
+sur l'hôte) et lui envoie des métriques ; il prépare les fonctions avancées du plan (`docs/plan.md`).
+État actuel : enrôlement, authentification mutuelle Ed25519, tampon local, métriques. Rien d'autre.
+
+```bash
+# 1. Compiler (une fois, sur une machine avec Rust ; binaire statique musl, environ 3 Mo)
+cd agent && rustup target add aarch64-unknown-linux-musl     # ou x86_64-unknown-linux-musl
+cargo build --release --target aarch64-unknown-linux-musl
+
+# 2. Créer un jeton à usage unique (15 min) pour un hôte : API admin
+curl -s -X POST -H "Authorization: Bearer <jeton d'API admin>" -H 'content-type: application/json' \
+     -d '{"hostId":"<id de l'hôte>"}' https://<corvus>/api/agents/enrollments
+
+# 3. Sur l'hôte : installer, enrôler, démarrer
+sudo install -m 755 corvus-agent /usr/local/bin/
+sudo corvus-agent enroll --server https://<corvus>.<tailnet>.ts.net --token <jeton>
+sudo cp deploy/agent/corvus-agent.service /etc/systemd/system/ && sudo systemctl enable --now corvus-agent
+```
+
+La clé privée de l'agent ne quitte jamais l'hôte ; l'agent vérifie que c'est bien Corvus qui répond ;
+Corvus ne peut lui envoyer aucune commande shell. Détails : [`docs/protocole-agent.md`](docs/protocole-agent.md).
+Gestion : `GET /api/agents`, `DELETE /api/agents/:id` (révocation). Pas encore d'écran dédié.
+
+---
+
 ## Tests
 
 ```bash
@@ -536,7 +565,8 @@ public/                 PWA (vanilla JS, modules ES, sans build)
   js/views/             Une vue par module
 deploy/                 install-linux.sh (install-pi.sh = alias), corvus.service (systemd),
                         windows/install-windows.ps1 et start-corvus.ps1
-docs/                   securite.md, notifications.md
+agent/                  Agent Rust (cargo build / cargo test) ; deploy/agent/ : service systemd
+docs/                   securite.md, notifications.md, plan.md, protocole-agent.md, suite-pi.md
 test/                   unit, e2e, ui + sshd de test
 Dockerfile, docker-compose.yml
 ```
