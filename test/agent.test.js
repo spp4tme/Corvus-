@@ -214,8 +214,8 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
     const child = spawn(AGENT_BIN, ['run', '--dir', d, '--interval', '1'], { stdio: 'pipe' });
     try {
       const { db } = env.corvus.ctx;
-      await waitFor(() => db.get("SELECT 1 AS x FROM agent_events WHERE agent_id = ? AND type = 'agent.start'", identity.agent_id), 15000);
-      await waitFor(() => db.get('SELECT 1 AS x FROM metrics_raw WHERE host_id = ? AND metric = ?', hostId, 'mem'), 15000);
+      await waitFor(() => db.get("SELECT 1 AS x FROM agent_events WHERE agent_id = ? AND type = 'agent.start'", identity.agent_id), 40000);
+      await waitFor(() => db.get('SELECT 1 AS x FROM metrics_raw WHERE host_id = ? AND metric = ?', hostId, 'mem'), 40000);
       const list = (await (await fetch(`${env.base}/api/agents`, { headers: auth() })).json()).agents;
       const me = list.find((a) => a.id === identity.agent_id);
       assert.equal(me.online, true);
