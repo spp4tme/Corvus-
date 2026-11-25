@@ -70,7 +70,7 @@ suivant. **Ne pas sauter au point F** tant que A à E ne sont pas verts. Les poi
 | Point | Résultat |
 |---|---|
 | A. Tests sous Linux ARM64 | ✅ (sauf onglet Actions GitHub à vérifier) 2026-11-25 : `check:pure` ✅, `cargo test` 33/33 ✅, `cargo build --release` ✅, `npm test` 172 ✅ / 0 ❌ (7 ignorés : navigateur absent) ; `real-ssh` contre le vrai sshd 5/5 ✅ (compte jetable supprimé). Piège : un binaire `target/debug` périmé fait échouer le test `/tmp` de la prévisualisation → refaire `cargo build` (pas seulement `cargo test`). Reste : onglet Actions de GitHub après le push. |
-| B. Installation sur le SSD + sauvegarde / restauration / redémarrage | |
+| B. Installation sur le SSD + sauvegarde / restauration / redémarrage | ⚠️ 2026-11-25 : validé sur une **copie** (`/opt/corvus-test`, port 7690, unité `corvus-test`, stockage `/mnt/ssd-test/corvus` sur le même disque, pas de SSD monté ni de données 0.1 à migrer). ✅ installation `--no-service`, base SQLite dans le stockage séparé, sauvegarde `.cvbk`, restauration, redémarrage (code 75 puis relance par systemd, hôte repère retrouvé), alerte disque faible. Non testé : vrai SSD, migration 0.1, `install-linux.sh` avec service (il écrase toujours `corvus.service` : unité non configurable). Copie supprimée. |
 | C. Onglet Admin + règle sudoers | |
 | D. Agent sous systemd + `wss://` + interface avec le vrai agent | |
 | E. 👤 Téléphone : passkey, notifications push, PWA | |
