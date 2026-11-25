@@ -51,6 +51,16 @@ export class Retention {
         this.db.run('DELETE FROM undo_ops WHERE id = ?', u.id);
       }
       out.undo = undos.length;
+      // Historique des fichiers : événements anciens, puis contenus que plus aucun événement ne cite.
+      const cutoff = now - (ret.rewindDays ?? 90) * DAY;
+      out.rewindEvents = this.db.run("DELETE FROM agent_events WHERE ts < ? AND (type LIKE 'file.%' OR type LIKE 'port.%' OR type LIKE 'service.%' OR type LIKE 'pkg.%')", cutoff).changes;
+      const orphans = this.db.all(`SELECT v.host_id, v.sha256 FROM agent_versions v WHERE v.received_at < ? AND NOT EXISTS (
+        SELECT 1 FROM agent_events e WHERE e.host_id = v.host_id AND e.type LIKE 'file.%' AND (json_extract(e.body, '$.sha') = v.sha256 OR json_extract(e.body, '$.prevSha') = v.sha256))`, cutoff);
+      for (const o of orphans) {
+        this.db.run('DELETE FROM agent_versions WHERE host_id = ? AND sha256 = ?', o.host_id, o.sha256);
+        this.blobs.release(o.sha256);
+      }
+      out.rewindVersions = orphans.length;
       out.alerts = this.db.run('DELETE FROM alerts WHERE ack_at IS NOT NULL AND ts < ?', now - 90 * DAY).changes;
     });
     // Rend au disque la place libérée dans le journal WAL.

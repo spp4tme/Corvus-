@@ -40,6 +40,8 @@ export const config = Object.freeze({
     metricsHourlyDays: int(env.RETENTION_METRICS_HOURLY_DAYS, 365),
     recordingsDays: int(env.RETENTION_RECORDINGS_DAYS, 90),
     undoDays: int(env.RETENTION_UNDO_DAYS, 30),
+    // Historique des fichiers des hôtes (rembobinage) : événements et contenus conservés ce nombre de jours.
+    rewindDays: int(env.RETENTION_REWIND_DAYS, 90),
   },
   masterPassphrase: env.CORVUS_MASTER_PASSPHRASE || '',
   allowedOrigins: list(env.CORVUS_ALLOWED_ORIGINS),

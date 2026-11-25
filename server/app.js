@@ -100,7 +100,7 @@ export function createCorvus(overrides = {}) {
   ctx.retention = new Retention({ db, blobs: ctx.blobs, config });
   ctx.recorder = new Recorder({ db, blobs: ctx.blobs, maxBytes: config.recordingMaxBytes, enabled: config.recordSessions });
   ctx.claude = new ClaudeService({ pool, hosts, journal });
-  ctx.agents = new AgentService({ db, vault, journal, hosts, alerts: ctx.alerts });
+  ctx.agents = new AgentService({ db, vault, journal, hosts, alerts: ctx.alerts, blobs: ctx.blobs });
   ctx.terminals = new TerminalManager({
     pool, hosts, journal, config, claude: ctx.claude,
     requireHost: (user, hostId, level) => ctx.requireHost(user, hostId, level),

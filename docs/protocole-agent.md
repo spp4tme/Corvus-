@@ -60,9 +60,41 @@ mises en tampon (une mesure manquée pendant une coupure n'a pas d'intérêt).
 
 Tout message invalide ferme la connexion (4001) : l'agent se reconnecte (1 s, 2 s, 4 s… jusqu'à 30 s).
 
-## 5. Limites de la version 1
-- Pas d'action envoyée par Corvus (le canal existe, mais aucune action n'est définie).
+## 5. Surveillance des fichiers et rembobinage (étape 6)
+L'agent surveille des dossiers (`--watch /etc,/var/spool/cron` par défaut) par **balayage toutes les 10 s**
+(date, taille, inode ; empreinte SHA-256 seulement si le fichier a changé). Pas d'inotify/fanotify : aucune
+dépendance au noyau, aucune limite de « watches » ; en contrepartie, un fichier modifié puis remis à
+l'identique entre deux balayages passe inaperçu.
+
+Événements `events` produits (corps : `path, sha, prevSha, size, mode, uid, gid, noContent, reason`) :
+`file.baseline` (état initial), `file.created`, `file.modified`, `file.meta` (droits seuls), `file.deleted`,
+`port.snapshot|open|close`, `service.snapshot|changed|gone` (systemd), `pkg.change` (journal dpkg),
+`action.done`.
+
+| Sens | Type | Corps |
+|---|---|---|
+| A → S | `version` | `{sha256, data}` — contenu (≤ 512 Ko, base64) envoyé AVANT l'événement qui le cite ; le serveur recalcule l'empreinte et refuse si elle diffère |
+| S → A | `action` | `{name, args}` (id dans l'enveloppe) — action nommée, voir ci-dessous |
+| A → S | `action_result` | `{reqId, ok, data \| error}` |
+
+**Jamais de commande shell.** Actions : `file.restore {path, sha256, data, mode, uid, gid}` et
+`file.remove {path}`. L'agent valide tout : chemin absolu, normalisé, **sous un dossier surveillé**, parent
+non symbolique, cible non symbolique, jamais un fichier secret ; pour `file.restore`, l'empreinte du contenu
+reçu doit correspondre ; écriture atomique (fichier temporaire + renommage). Avant d'agir, l'agent
+fait un balayage immédiat : l'état actuel est donc dans l'historique et la restauration est annulable.
+
+**Secrets** (`/etc/shadow*`, clés SSH d'hôte, `*.key`, `/etc/ssl/private`…) : leur modification est détectée
+(empreinte) mais **leur contenu n'est jamais copié** ni restaurable (`noContent: true`).
+
+Côté serveur : contenus chiffrés dans le `BlobStore` (table `agent_versions`), purgés après
+`RETENTION_REWIND_DAYS` (90 jours) avec les événements qui les citent. API : `GET /api/hosts/:id/rewind/{events,changes,diff,version/:sha}`,
+`POST /api/hosts/:id/rewind/restore {at, paths, confirm: true}` (**administrateur de l'hôte**, journalisé).
+
+## 6. Limites
+- Balayage : pas de temps réel au-delà de 10 s ; fichiers > 512 Ko suivis sans contenu (non restaurables).
+- Si l'agent est hors ligne pendant qu'un fichier change deux fois, seule la dernière version est connue.
+- Corvus ne restaure que ce qu'un agent en ligne accepte ; pas de restauration de dossiers entiers « d'un coup » :
+  la liste des différences est calculée, puis vous cochez les fichiers.
 - Pas de TLS propre à Corvus : la confidentialité vient de Tailscale (WireGuard) + `tailscale serve`.
-  Les signatures Ed25519 garantissent l'authenticité, pas le secret des métriques sur un réseau en clair :
+  Les signatures Ed25519 garantissent l'authenticité, pas le secret des échanges sur un réseau en clair :
   n'utilisez `http://` qu'en local.
-- Pas encore d'alerte « agent hors ligne » ni de bouton « Installer l'agent » dans l'interface (API seulement).

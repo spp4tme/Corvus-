@@ -13,6 +13,8 @@ import { claudeRoutes } from './claude.js';
 import { systemRoutes } from './system.js';
 import { terminalRoutes } from './terminals.js';
 import { agentRoutes } from './agents.js';
+import { rewindRoutes } from './rewind.js';
+import { Rewind } from '../lib/rewind.js';
 import { productivityRoutes } from './productivity.js';
 import { hostAdminRoutes } from './hostadmin.js';
 import { HostAdmin } from '../lib/hostadmin.js';
@@ -56,6 +58,8 @@ export function extraRoutes(ctx) {
   r.use(systemRoutes(ctx));
   r.use(terminalRoutes(ctx));
   r.use(agentRoutes(ctx));
+  ctx.rewind = new Rewind(ctx);
+  r.use(rewindRoutes(ctx));
   r.use(productivityRoutes(ctx));
   r.use(hostAdminRoutes(ctx));
   return r;

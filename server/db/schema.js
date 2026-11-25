@@ -250,4 +250,19 @@ ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
 DELETE FROM auth_sessions WHERE user_id IS NULL;
 `,
   },
+  {
+    version: 3,
+    name: 'rembobinage : versions de fichiers reçues des agents',
+    sql: `
+-- Un contenu (blob chiffré, adressé par SHA-256) par hôte et par empreinte ; une référence dans la table blobs par ligne.
+CREATE TABLE agent_versions (
+  host_id TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  received_at INTEGER NOT NULL,
+  PRIMARY KEY (host_id, sha256)
+) WITHOUT ROWID;
+CREATE INDEX agent_events_type ON agent_events(host_id, type, ts);
+`,
+  },
 ];

@@ -16,6 +16,10 @@ const SPKI_ED25519 = Buffer.from('302a300506032b6570032100', 'hex');
 const ENROLL_TTL_MS = 15 * 60_000;
 const METRIC_RE = /^[A-Za-z0-9_.:/-]{1,80}$/;
 const MAX_BATCH = 500;
+export const MAX_VERSION_BYTES = 512 * 1024;
+const SHA_RE = /^[0-9a-f]{64}$/;
+/** Actions nommées que Corvus peut demander (l'agent les valide à son tour). Jamais de commande shell. */
+export const ACTIONS = new Set(['file.restore', 'file.remove']);
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const b64 = (buf) => Buffer.from(buf).toString('base64');
@@ -31,9 +35,10 @@ export function publicKeyFromRaw(rawB64) {
 export const signedText = (role, challengeB64) => Buffer.from(`corvus-agent-v${PROTOCOL}|${role}|${challengeB64}`);
 
 export class AgentService {
-  constructor({ db, vault, journal, hosts, alerts, offlineAfterSec = 120 }) {
-    Object.assign(this, { db, vault, journal, hosts, alerts, offlineAfterSec });
+  constructor({ db, vault, journal, hosts, alerts, blobs, offlineAfterSec = 120 }) {
+    Object.assign(this, { db, vault, journal, hosts, alerts, blobs, offlineAfterSec });
     this.timer = null;
+    this.pendingRequests = new Map(); // id → { resolve, reject, timer, agentId }
     this.connections = new Map(); // agentId → ws
     this.#loadServerKey();
   }
@@ -201,6 +206,28 @@ export class AgentService {
         send('ack', { upTo });
         break;
       }
+      case 'version': { // contenu d'un fichier surveillé (copie chiffrée côté serveur)
+        const { sha256, data } = body;
+        if (!agent.host_id || !SHA_RE.test(String(sha256)) || typeof data !== 'string') throw new Error('version invalide');
+        const buf = Buffer.from(data, 'base64');
+        if (buf.length > MAX_VERSION_BYTES) throw new Error('version trop grosse');
+        if (crypto.createHash('sha256').update(buf).digest('hex') !== sha256) throw new Error('empreinte de version fausse');
+        const known = this.db.get('SELECT 1 AS x FROM agent_versions WHERE host_id = ? AND sha256 = ?', agent.host_id, sha256);
+        if (!known) {
+          this.blobs.put(buf, 'version');
+          this.db.run('INSERT OR IGNORE INTO agent_versions (host_id, sha256, size, received_at) VALUES (?, ?, ?, ?)', agent.host_id, sha256, buf.length, Date.now());
+        }
+        break;
+      }
+      case 'action_result': {
+        const p = this.pendingRequests.get(body.reqId);
+        if (p && p.agentId === agent.id) {
+          clearTimeout(p.timer);
+          this.pendingRequests.delete(body.reqId);
+          if (body.ok) p.resolve(body.data ?? {}); else p.reject(new HttpError(422, 'AGENT_REFUSED', `L'agent a refusé : ${String(body.error || 'erreur').slice(0, 200)}`));
+        }
+        break;
+      }
       case 'metrics': {
         if (!agent.host_id) break;
         const ts = Number.isFinite(body.ts) ? body.ts : Date.now();
@@ -218,7 +245,23 @@ export class AgentService {
     this.db.run('UPDATE agents SET last_seen_at = ? WHERE id = ?', Date.now(), agent.id);
   }
 
+  /** Envoie une action NOMMÉE à l'agent d'un hôte et attend son résultat (le serveur n'envoie jamais de commande shell). */
+  async request(hostId, name, args, timeoutMs = 20_000) {
+    if (!ACTIONS.has(name)) throw new HttpError(400, 'BAD_ACTION', 'Action inconnue');
+    const row = this.db.get('SELECT id FROM agents WHERE host_id = ? ORDER BY enrolled_at DESC LIMIT 1', hostId);
+    const ws = row && this.connections.get(row.id);
+    if (!ws) throw new HttpError(409, 'AGENT_OFFLINE', 'Aucun agent connecté sur cet hôte');
+    const id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.pendingRequests.delete(id); reject(new HttpError(504, 'AGENT_TIMEOUT', 'L\'agent n\'a pas répondu')); }, timeoutMs);
+      this.pendingRequests.set(id, { resolve, reject, timer, agentId: row.id });
+      ws.send(JSON.stringify({ v: PROTOCOL, id, type: 'action', ts: Date.now(), body: { name, args } }));
+    });
+  }
+
   closeAll() {
+    for (const p of this.pendingRequests.values()) { clearTimeout(p.timer); p.reject(new HttpError(503, 'CLOSING', 'Arrêt')); }
+    this.pendingRequests.clear();
     for (const ws of this.connections.values()) ws.terminate();
     this.connections.clear();
   }

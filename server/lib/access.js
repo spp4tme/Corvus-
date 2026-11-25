@@ -38,6 +38,8 @@ export function hostLevel(method, sub, body) {
   if (sub === '/hostkey' && !read) return 'admin';
   if (sub.startsWith('/admin/') && !read) return 'admin';
   if (sub === '/sudoers') return 'admin';
+  // Restaurer des fichiers sur un hôte : écriture à distance par l'agent, donc réservé aux administrateurs de l'hôte.
+  if (sub === '/rewind/restore') return 'admin';
   return read ? 'viewer' : 'operator';
 }
 

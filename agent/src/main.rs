@@ -6,10 +6,14 @@
 //!   corvus-agent enroll --server https://corvus.exemple.ts.net --token <jeton>   (une seule fois)
 //!   corvus-agent run                                                              (service)
 
+mod actions;
 mod buffer;
 mod identity;
 mod metrics;
 mod protocol;
+mod state;
+mod sys;
+mod watch;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use buffer::Buffer;
@@ -17,7 +21,7 @@ use ed25519_dalek::SigningKey;
 use identity::{websocket_url, Identity};
 use rand::rngs::OsRng;
 use serde_json::{json, Value};
-use std::{env, path::PathBuf, process, thread, time::{Duration, Instant}};
+use std::{collections::HashSet, env, path::PathBuf, process, thread, time::{Duration, Instant}};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -46,8 +50,59 @@ fn data_dir(args: &[String]) -> PathBuf {
 }
 
 fn capabilities() -> Value {
-    // Fonctions avancées : désactivées pour l'instant (étapes 6 et 7).
-    json!({ "metrics": true, "fanotify": false, "ebpf": false, "snapshots": false })
+    // eBPF et fanotify : pas encore (étape 7) ; les fichiers sont suivis par balayage régulier.
+    json!({
+        "metrics": true, "files": true, "ports": true,
+        "services": sys::systemd_available(),
+        "packages": std::path::Path::new("/var/log/dpkg.log").exists(),
+        "actions": actions::names(),
+        "fanotify": false, "ebpf": false,
+    })
+}
+
+/// Dossiers surveillés : --watch a,b (ou $CORVUS_AGENT_WATCH), par défaut /etc et les crontabs.
+fn watch_roots(args: &[String]) -> Vec<PathBuf> {
+    let raw = opt(args, "--watch").or_else(|| env::var("CORVUS_AGENT_WATCH").ok()).unwrap_or_else(|| "/etc,/var/spool/cron".into());
+    raw.split(',').map(str::trim).filter(|p| p.starts_with('/') && std::path::Path::new(p).exists()).map(PathBuf::from).collect()
+}
+
+/// Tout ce que l'agent observe, même hors connexion : les événements vont dans le tampon SQLite.
+struct Collector {
+    state: state::State,
+    watcher: watch::Watcher,
+    scan_every: Duration,
+    next_scan: Instant,
+    next_ports: Instant,
+    next_services: Instant,
+    next_pkgs: Instant,
+}
+
+impl Collector {
+    /// Balayage immédiat (avant une action : l'état actuel d'un fichier doit être dans l'historique).
+    fn scan_now(&mut self, buffer: &Buffer) {
+        self.next_scan = Instant::now();
+        self.tick(buffer);
+    }
+
+    fn tick(&mut self, buffer: &Buffer) {
+        let now = Instant::now();
+        let ts = protocol::now_ms() as i64;
+        if now >= self.next_scan {
+            self.next_scan = now + self.scan_every;
+            let baseline = self.state.get("baseline.files").is_none();
+            match self.watcher.scan(&self.state, baseline) {
+                Ok(changes) => {
+                    for c in changes { let _ = buffer.push(ts, c.kind, &c.body); }
+                    if baseline { let _ = self.state.set("baseline.files", "1"); }
+                }
+                Err(e) => eprintln!("balayage : {e}"),
+            }
+        }
+        let push = |events: Vec<sys::Event>| { for e in events { let _ = buffer.push(ts, e.kind, &e.body); } };
+        if now >= self.next_ports { self.next_ports = now + Duration::from_secs(10); push(sys::check_ports(&self.state)); }
+        if now >= self.next_services { self.next_services = now + Duration::from_secs(60); push(sys::check_services(&self.state)); }
+        if now >= self.next_pkgs { self.next_pkgs = now + Duration::from_secs(30); push(sys::check_packages(&self.state)); }
+    }
 }
 
 // --- Enrôlement ---------------------------------------------------------------------------------
@@ -99,20 +154,28 @@ fn run(args: &[String]) -> Result<(), String> {
     let identity = Identity::load(&dir.join("identity.json"))?;
     let interval = Duration::from_secs(opt(args, "--interval").and_then(|v| v.parse().ok()).unwrap_or(30).max(1));
     let buffer = Buffer::open(&dir.join("buffer.db")).map_err(|e| format!("tampon : {e}"))?;
-    buffer.push(protocol::now_ms() as i64, "agent.start", &json!({ "version": VERSION })).map_err(|e| e.to_string())?;
+    let roots = watch_roots(args);
+    let now = Instant::now();
+    let mut collector = Collector {
+        state: state::State::open(&dir.join("state.db")).map_err(|e| format!("état : {e}"))?,
+        watcher: watch::Watcher { roots: roots.clone(), pending_dir: dir.join("pending") },
+        scan_every: Duration::from_secs(opt(args, "--scan-interval").and_then(|v| v.parse().ok()).unwrap_or(10).max(1)),
+        next_scan: now, next_ports: now, next_services: now, next_pkgs: now,
+    };
+    buffer.push(protocol::now_ms() as i64, "agent.start", &json!({ "version": VERSION, "watch": roots })).map_err(|e| e.to_string())?;
+    eprintln!("surveillance : {roots:?}");
 
-    // Reconnexion automatique : 1 s, 2 s, 4 s… jusqu'à 30 s. Le tampon garde les événements entre-temps.
+    // Reconnexion automatique : 1 s, 2 s, 4 s… jusqu'à 30 s. L'observation continue pendant l'attente.
     let mut wait = 1u64;
     loop {
         let started = Instant::now();
-        match session(&identity, &buffer, interval) {
+        match session(&identity, &buffer, &mut collector, interval) {
             Ok(()) => eprintln!("connexion fermée par Corvus"),
             Err(e) => eprintln!("connexion perdue : {e}"),
         }
-        // Une session qui a duré a réussi à se connecter : on repart de 1 s.
         wait = if started.elapsed() > Duration::from_secs(60) { 1 } else { (wait * 2).min(30) };
         eprintln!("nouvelle tentative dans {wait} s");
-        thread::sleep(Duration::from_secs(wait));
+        for _ in 0..wait { collector.tick(&buffer); thread::sleep(Duration::from_secs(1)); }
     }
 }
 
@@ -142,7 +205,7 @@ fn send(ws: &mut Socket, kind: &str, body: Value) -> Result<(), String> {
 }
 
 /// Une connexion complète : poignée de main, puis boucle d'envoi jusqu'à la coupure.
-fn session(identity: &Identity, buffer: &Buffer, interval: Duration) -> Result<(), String> {
+fn session(identity: &Identity, buffer: &Buffer, collector: &mut Collector, interval: Duration) -> Result<(), String> {
     let key = identity.signing_key()?;
     let (mut ws, _) = tungstenite::connect(websocket_url(&identity.server)?).map_err(|e| format!("connexion : {e}"))?;
     set_read_timeout(&ws, Duration::from_secs(10));
@@ -174,12 +237,24 @@ fn session(identity: &Identity, buffer: &Buffer, interval: Duration) -> Result<(
     let mut next_metrics = Instant::now();
     let mut next_ping = Instant::now() + Duration::from_secs(25);
     let mut in_flight = false; // un lot attend son « ack » : on n'en envoie pas un second
+    let mut uploaded: HashSet<String> = HashSet::new(); // contenus déjà envoyés pendant cette connexion
 
     loop {
+        collector.tick(buffer);
         // Événements du tampon (envoyés tant que Corvus ne les a pas confirmés).
         if !in_flight {
             let pending = buffer.pending(200).map_err(|e| e.to_string())?;
             if !pending.is_empty() {
+                // Les contenus de fichiers partent AVANT les événements qui les citent.
+                for e in &pending {
+                    if let Some(sha) = e.body["sha"].as_str() {
+                        if e.body["noContent"] != true && uploaded.insert(sha.to_string()) {
+                            if let Some(data) = collector.watcher.pending_content(sha) {
+                                send(&mut ws, "version", json!({ "sha256": sha, "data": B64.encode(data) }))?;
+                            }
+                        }
+                    }
+                }
                 let items: Vec<Value> = pending.iter().map(|e| json!({ "seq": e.seq, "ts": e.ts, "type": e.kind, "body": e.body })).collect();
                 send(&mut ws, "events", json!({ "items": items }))?;
                 in_flight = true;
@@ -198,6 +273,23 @@ fn session(identity: &Identity, buffer: &Buffer, interval: Duration) -> Result<(
                 Some("ack") => {
                     if let Some(n) = msg["body"]["upTo"].as_i64() { buffer.ack(n).map_err(|e| e.to_string())?; }
                     in_flight = false;
+                    // Les contenus que plus aucun événement en attente ne cite peuvent être effacés.
+                    let needed: HashSet<String> = buffer.pending(100_000).map_err(|e| e.to_string())?.iter().filter_map(|e| e.body["sha"].as_str().map(String::from)).collect();
+                    collector.watcher.purge_pending(&needed);
+                    uploaded.retain(|s| needed.contains(s));
+                }
+                Some("action") => {
+                    // Action NOMMÉE demandée par Corvus : validée par `actions::run`, jamais exécutée comme commande.
+                    let name = msg["body"]["name"].as_str().unwrap_or("");
+                    collector.scan_now(buffer);
+                    let ctx = actions::Context { roots: &collector.watcher.roots };
+                    let result = actions::run(&ctx, name, &msg["body"]["args"]);
+                    let ts = protocol::now_ms() as i64;
+                    let (ok, payload) = match &result { Ok(v) => (true, json!({ "data": v })), Err(e) => (false, json!({ "error": e })) };
+                    let _ = buffer.push(ts, "action.done", &json!({ "name": name, "ok": ok, "path": msg["body"]["args"]["path"] }));
+                    let mut body = json!({ "reqId": msg["id"], "ok": ok });
+                    body.as_object_mut().unwrap().extend(payload.as_object().unwrap().clone());
+                    send(&mut ws, "action_result", body)?;
                 }
                 Some("pong") => {}
                 Some("error") => return Err(format!("erreur de Corvus : {}", msg["body"]["message"])),
