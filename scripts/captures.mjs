@@ -26,7 +26,10 @@ fs.mkdirSync(OUT, { recursive: true });
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- Décor : un faux serveur SSH avec des fichiers, un dépôt git et des dossiers surveillés ----------
-const sshd = await startFakeSshd();
+const HOME_DIR = '/tmp/corvus-demo-home';
+fs.rmSync(HOME_DIR, { recursive: true, force: true });
+fs.mkdirSync(HOME_DIR);
+const sshd = await startFakeSshd({ root: HOME_DIR });
 const home = sshd.root;
 const w = (rel, text) => { fs.mkdirSync(path.dirname(path.join(home, rel)), { recursive: true }); fs.writeFileSync(path.join(home, rel), text); };
 w('docker-compose.yml', 'services:\n  web:\n    image: nginx:alpine\n    ports: ["80:80"]\n');
@@ -55,10 +58,13 @@ const mkHost = async (name, extra = {}) => (await api('POST', '/api/hosts', { na
 const hPi = await mkHost('Pi du salon', { group: 'Maison' });
 await mkHost('NAS de la cave', { group: 'Maison' });
 await mkHost('Serveur web', { group: 'Travail' });
+await api('PATCH', `/api/hosts/${hPi}`, { repos: [path.join(home, 'projet-web')] });
 await api('POST', `/api/hosts/${hPi}/test`);
 
 // ---------- Agent réel sur « Pi du salon » ----------
-let agent; let agentDir; let ransomDir;
+let agent; let agentDir; let ransomDir; let tAvant = 0;
+const pad = (n) => String(n).padStart(2, '0');
+const localInput = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
 if (AGENT_BIN) {
   agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-captures-agent-'));
   const t = (await api('POST', '/api/agents/enrollments', { hostId: hPi })).body;
@@ -99,12 +105,13 @@ try {
   await shot(page, 'hotes');
 
   // Terminal : quelques commandes réelles dans le faux sshd
-  await page.getByRole('button', { name: /Terminal/ }).first().click().catch(() => {});
+  await page.locator('.card, .list-item', { hasText: 'Pi du salon' }).getByRole('button', { name: 'Terminal' }).first().click();
   await page.waitForTimeout(2500);
   const term = page.locator('.xterm-helper-textarea').first();
   if (await term.count()) {
     await term.focus();
-    for (const c of ['uname -srm', 'ls', 'cat notes/todo.md', 'git -C projet-web log --oneline']) { await page.keyboard.type(c); await page.keyboard.press('Enter'); await page.waitForTimeout(900); }
+    // Le faux sshd n'a pas de vrai pty : `script` en fournit un (retours à la ligne corrects), puis une invite lisible.
+    for (const c of ['exec script -qfc "env LC_ALL=C.UTF-8 bash --norc --noediting" /dev/null', "stty -echo; export PS1='antho@pi-du-salon:~$ '; clear", 'uname -srm', 'ls', 'cat notes/todo.md', 'git -C projet-web log --oneline', 'git -C projet-web status -s']) { await page.keyboard.type(c); await page.keyboard.press('Enter'); await page.waitForTimeout(1000); }
   }
   await shot(page, 'terminal');
 
@@ -117,29 +124,36 @@ try {
 
     // Rembobiner : on modifie la configuration surveillée, puis on regarde la frise
     await pause(3500);
+    tAvant = Date.now() - 1500;
     w('config/nginx.conf', 'server {\n  listen 80;\n  server_name pi.local;\n  root /var/www;\n  autoindex on;\n}\n');
     fs.writeFileSync(path.join(home, 'config', 'app.env'), 'MODE=debug\nPORT=8080\nSECRET=oups\n');
     fs.rmSync(path.join(home, 'config', 'hosts.allow'));
     await pause(6000);
-    await go(page, 'rewind', 1500); await pickHost(page, 'Pi du salon'); await page.waitForTimeout(1500); await shot(page, 'rembobiner');
+    await go(page, 'rewind', 1500); await pickHost(page, 'Pi du salon'); await page.waitForTimeout(1500);
+    await page.getByLabel('Instant visé').fill(localInput(tAvant)); await page.getByLabel('Instant visé').dispatchEvent('change'); await page.waitForTimeout(2500); await shot(page, 'rembobiner');
 
-    await go(page, 'xray', 1500); await pickHost(page, 'Pi du salon'); await page.waitForTimeout(3500); await shot(page, 'radiographie');
+    await go(page, 'xray', 1500); await pickHost(page, 'Pi du salon'); await page.waitForTimeout(3000);
+    // Filtre : on ne montre que les services système (les autres processus de la machine de démonstration sont privés).
+    await page.getByPlaceholder(/Filtrer/).fill('systemd'); await page.waitForTimeout(800); await shot(page, 'radiographie');
+    await page.getByPlaceholder(/Filtrer/).fill('');
     const tab = page.getByRole('tab', { name: /Normal/ });
     if (await tab.count()) { await tab.first().click(); await page.waitForTimeout(1200); await shot(page, 'empreinte'); }
 
     // Anti-ransomware : attaque simulée, puis le journal des alertes
     await run('bash', [DEMO, 'attack', ransomDir]);
     await waitFor(() => env.corvus.ctx.db.get("SELECT 1 AS x FROM alerts WHERE kind LIKE 'ransom:%'"), 40000, 500).catch(() => console.log('  ⚠ pas d\'alerte ransomware'));
-    await go(page, 'journal', 1500); await shot(page, 'journal');
-    await go(page, 'hosts', 1500); await shot(page, 'alerte-ransomware');
+    await go(page, 'journal', 1500);
+    await page.getByRole('tab', { name: 'Alertes' }).click().catch(() => {}); await page.waitForTimeout(1200); await shot(page, 'alertes-ransomware');
   }
 
   // Barre de commande : une commande risquée proposée en prévisualisation (agent root requis)
   if (agent && AS_ROOT) {
+    // La prévisualisation s'exécute sous le compte SSH de l'hôte : on indique le compte local réel (le faux sshd accepte « tester »).
+    env.corvus.ctx.db.run('UPDATE hosts SET username = ? WHERE id = ?', os.userInfo().username, hPi);
     await go(page, 'terminal', 1800);
     const bar = page.locator('.cmdbar-input');
     if (await bar.count()) {
-      await bar.fill('rm -r config');
+      await bar.fill(`rm -r ${home}/config`);
       await bar.press('Enter');
       await page.waitForTimeout(1500);
       await shot(page, 'commande-risquee');
@@ -155,7 +169,7 @@ try {
   await login(mp);
   await mp.waitForTimeout(3000); await shot(mp, 'mobile-hotes');
   await go(mp, 'monitor', 1500); await pickHost(mp, 'Pi du salon'); await mp.waitForTimeout(4000); await shot(mp, 'mobile-supervision');
-  if (agent) { await go(mp, 'rewind', 1500); await pickHost(mp, 'Pi du salon'); await mp.waitForTimeout(1500); await shot(mp, 'mobile-rembobiner'); }
+  if (agent) { await go(mp, 'rewind', 1500); await pickHost(mp, 'Pi du salon'); await mp.waitForTimeout(1500); await mp.getByLabel('Instant visé').fill(localInput(tAvant)); await mp.getByLabel('Instant visé').dispatchEvent('change'); await mp.waitForTimeout(2500); await shot(mp, 'mobile-rembobiner'); }
   await m.close();
 } finally {
   await browser.close();
@@ -164,4 +178,5 @@ try {
   if (ransomDir) { try { execFileSync('rm', ['-rf', ransomDir]); } catch { /* tant pis */ } }
   await env.close();
   await sshd.close();
+  fs.rmSync(HOME_DIR, { recursive: true, force: true });
 }
