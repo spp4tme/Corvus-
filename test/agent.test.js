@@ -219,7 +219,7 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
       const list = (await (await fetch(`${env.base}/api/agents`, { headers: auth() })).json()).agents;
       const me = list.find((a) => a.id === identity.agent_id);
       assert.equal(me.online, true);
-      assert.equal(me.version, '0.2.0');
+      assert.equal(me.version, '0.2.1');
       assert.equal(me.capabilities.ebpf, false);
     } finally {
       child.kill();

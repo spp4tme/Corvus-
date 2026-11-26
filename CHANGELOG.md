@@ -4,6 +4,17 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [0.2.1] - 2026-11-26
+
+### Modifié
+- **Nouveau logo** : un corbeau de profil dessiné plume par plume dans un médaillon à graduations (`scripts/make-logo.mjs`).
+  Icônes de la PWA, en-tête, écran de connexion et README mis à jour.
+- Rembobinage : l'état des fichiers est regroupé par chemin dans SQLite (les changements récents d'un hôte actif n'étaient
+  plus vus), l'état à l'instant visé est calculé une seule fois par restauration, le diff tient en un seul bloc mémoire.
+- Enregistrements : la relecture est refusée quand l'accès à l'hôte est retiré.
+- Productivité : réimporter l'historique du shell remplace l'import précédent (plus de doublons) ; l'annulation est protégée
+  par un verrou atomique contre la double restauration.
+
 ## [0.2.0] - 2026-11-26
 
 La version « multi-comptes + agent » : Corvus ne se limite plus à un terminal, il surveille, protège et sait revenir en arrière.
