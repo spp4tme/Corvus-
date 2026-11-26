@@ -1,23 +1,103 @@
+<div align="center">
+
+<img src="public/icons/icon-192.png" alt="Logo Corvus" width="96" height="96">
+
 # Corvus
 
-**Corvus** est une passerelle SSH/DevOps **auto-hébergée, gratuite et sans compte** pour les
-machines de votre réseau **Tailscale**. C'est une PWA installable sur téléphone et sur PC :
-terminal SSH à onglets, fichiers (SFTP), git distant, supervision et Docker, depuis n'importe quel
-appareil de votre tailnet.
+**Votre bastion SSH de poche, et le gardien de vos machines.**<br>
+Terminal, fichiers, git, supervision, restauration et défense : tout depuis le navigateur de votre téléphone ou de votre PC,
+sur votre réseau **Tailscale**. Auto-hébergé, gratuit, sans cloud, sans télémétrie, **sans IA**.
 
-```
- Téléphone / PC (navigateur, PWA)
-        │  HTTPS (tailscale serve) + WebSocket
-        ▼
- Corvus (Node.js, sur votre PC ou un Raspberry Pi)
-        │  SSH / SFTP (ssh2, pur JS)
-        ▼
- Machines du tailnet (100.x.y.z ou machine.tailnet.ts.net)
+[![CI](https://github.com/spp4tme/Corvus-/actions/workflows/ci.yml/badge.svg)](https://github.com/spp4tme/Corvus-/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/spp4tme/Corvus-?display_name=tag&sort=semver)](https://github.com/spp4tme/Corvus-/releases/latest)
+[![Image Docker](https://img.shields.io/badge/ghcr.io-spp4tme%2Fcorvus-2496ED?logo=docker&logoColor=white)](https://github.com/spp4tme/Corvus-/pkgs/container/corvus)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-green.svg)](LICENSE)
+![Node.js 22.13+](https://img.shields.io/badge/node-%E2%89%A522.13-339933?logo=node.js&logoColor=white)
+![Rust (agent)](https://img.shields.io/badge/agent-Rust-CE412B?logo=rust&logoColor=white)
+
+<img src="docs/img/hotes.png" alt="Corvus : la liste des hôtes avec leur état en continu" width="860">
+
+</div>
+
+---
+
+## Pourquoi Corvus ?
+
+- **Il tient dans votre poche.** Interface pensée d'abord pour le téléphone : cibles tactiles, barre de touches, défilement
+  au doigt, dictée vocale. Installable comme une application (PWA).
+- **Il reste chez vous.** Corvus ne réimplémente pas le VPN : il s'appuie sur Tailscale. Aucun compte, aucun cloud tiers,
+  aucune télémétrie. Les secrets sont chiffrés au repos.
+- **Il sait revenir en arrière.** Avec l'agent facultatif : historique des fichiers surveillés (**Rembobiner**), **prévisualisation**
+  d'une commande risquée dans un bac à sable, **radiographie** des processus, détection de comportements inhabituels et
+  **anti-ransomware**.
+- **Il est honnête.** Règles et statistiques, jamais d'IA dans l'application. Toute action destructive demande une confirmation
+  explicite et laisse une trace dans un journal infalsifiable.
+- **Il est léger.** ~100 Mo de RAM pour Corvus sur un Raspberry Pi ; l'agent est un binaire statique de 3 Mo.
+
+```mermaid
+flowchart LR
+    T["Téléphone / PC<br/>navigateur ou PWA"] -- "HTTPS (tailscale serve)<br/>+ WebSocket" --> C["Corvus<br/>Node.js · SQLite"]
+    C -- "SSH / SFTP" --> H["Machines du tailnet"]
+    A["Agent Corvus<br/>Rust · facultatif"] -. "WebSocket sortant<br/>Ed25519 mutuel" .-> C
+    A --- H
 ```
 
-Tailscale tourne sur vos appareils : Corvus **ne réimplémente pas** le VPN. Il ouvre les
-connexions SSH à votre place et vous les présente dans le navigateur. Rien ne passe par un cloud
-tiers.
+## Visite guidée
+
+<table>
+<tr>
+<td width="50%"><img src="docs/img/terminal.png" alt="Terminal SSH à onglets"><br><b>Terminal</b> : onglets, barre de commande avec suggestions, reprise après coupure (tmux).</td>
+<td width="50%"><img src="docs/img/supervision.png" alt="Supervision en temps réel"><br><b>Supervision</b> : CPU par cœur, mémoire, E/S, réseau, disques, historique jusqu'à un an, Docker.</td>
+</tr>
+<tr>
+<td><img src="docs/img/fichiers.png" alt="Gestionnaire de fichiers SFTP"><br><b>Fichiers</b> : SFTP, envoi avec progression, éditeur, aperçu d'images.</td>
+<td><img src="docs/img/git.png" alt="Git distant"><br><b>Git</b> : statut, branches, historique, diff, commit, push, depuis le téléphone.</td>
+</tr>
+</table>
+
+### La défense (avec l'agent)
+
+<table>
+<tr>
+<td width="50%"><img src="docs/img/rembobiner.png" alt="Rembobiner : retour à un instant précis"><br><b>Rembobiner</b> : un curseur de temps montre ce qu'un retour en arrière changerait ; restauration confirmée, jamais automatique.</td>
+<td width="50%"><img src="docs/img/previsualisation.png" alt="Prévisualisation d'une commande dans un bac à sable"><br><b>Prévisualiser</b> : la commande risquée s'exécute dans un bac à sable sans réseau ; on voit ce qu'elle aurait changé.</td>
+</tr>
+<tr>
+<td><img src="docs/img/radiographie.png" alt="Radiographie des processus"><br><b>Radiographie</b> : qui a lancé quoi, via quelle session SSH ; geler, dégeler ou arrêter un processus.</td>
+<td><img src="docs/img/empreinte.png" alt="Empreinte du normal et anomalies"><br><b>Empreinte du normal</b> : 14 jours d'apprentissage, puis alerte sur tout élément jamais vu.</td>
+</tr>
+<tr>
+<td><img src="docs/img/alertes-ransomware.png" alt="Alertes anti-ransomware"><br><b>Anti-ransomware</b> : fichiers pièges et rafales de fichiers chiffrés, alertes critiques, isolement réseau optionnel.</td>
+<td><img src="docs/img/commande-risquee.png" alt="Analyse d'une commande risquée"><br><b>Commandes risquées</b> : analysées avant l'envoi ; exécution annulable, prévisualisation ou « sans filet ».</td>
+</tr>
+</table>
+
+### Sur mobile
+
+<p align="center">
+<img src="docs/img/mobile-hotes.png" alt="Hôtes sur mobile" width="240">
+&nbsp;
+<img src="docs/img/mobile-supervision.png" alt="Supervision sur mobile" width="240">
+&nbsp;
+<img src="docs/img/mobile-rembobiner.png" alt="Rembobiner sur mobile" width="240">
+</p>
+
+> Captures générées automatiquement par [`scripts/captures.mjs`](scripts/captures.mjs) à partir d'une instance de
+> démonstration (faux serveur SSH, vrai agent, faux ransomware) : aucune donnée réelle.
+
+---
+
+## Installer Corvus : le plus court chemin
+
+| Vous voulez… | Commande |
+|---|---|
+| **Essayer en 1 minute** (Node.js 22.13+) | `git clone https://github.com/spp4tme/Corvus-.git corvus && cd corvus && npm ci && npm start` |
+| **Un service permanent** sur Linux / Raspberry Pi | Télécharger l'archive de la [dernière release](https://github.com/spp4tme/Corvus-/releases/latest), puis `tar xzf corvus-*.tar.gz && cd corvus-* && sudo ./deploy/install-linux.sh` |
+| **Docker** (amd64 et arm64) | `docker run -d --name corvus --network host -v corvus-data:/data ghcr.io/spp4tme/corvus:latest` |
+| **L'agent** sur un hôte à protéger | Binaire de la release (`corvus-agent-<version>-linux-x86_64` ou `-aarch64`) : voir [Agent Corvus](#agent-corvus-facultatif) |
+
+Chaque release publie l'archive de Corvus, les binaires de l'agent, un fichier `SHA256SUMS` et l'image Docker
+(voir [Releases et paquets](#releases-et-paquets)). Détails ci-dessous.
 
 ---
 
@@ -34,10 +114,12 @@ tiers.
 9. [Configuration](#configuration-variables-denvironnement)
 10. [Sécurité](#sécurité)
 11. [Claude Code](#claude-code)
-12. [Agent Corvus (optionnel)](#agent-corvus-optionnel)
-13. [Tests](#tests)
-14. [Structure du dépôt](#structure-du-dépôt)
-15. [Limites connues](#limites-connues)
+12. [Agent Corvus (facultatif)](#agent-corvus-facultatif)
+13. [Releases et paquets](#releases-et-paquets)
+14. [Tests](#tests)
+15. [Structure du dépôt](#structure-du-dépôt)
+16. [Limites connues](#limites-connues)
+17. [Contribuer et documentation](#contribuer-et-documentation)
 
 ---
 
@@ -59,6 +141,10 @@ tiers.
 | **Admin** | Façon Cockpit, par hôte : services systemd (état, démarrer / arrêter / redémarrer), **journal en direct** filtrable, pare-feu (ufw en lecture/écriture, nftables en lecture), utilisateurs, **mises à jour en attente**, règle **sudoers limitée** générée. |
 | **Comptes** | Comptes nominatifs, **TOTP obligatoire**, **passkeys** (WebAuthn) en option, rôles administrateur / opérateur / lecture seule, droits par hôte ou groupe, jetons d'API. |
 | **Stockage** | Base SQLite (option : SSD externe), rétention automatique, **sauvegarde / restauration chiffrées en un bouton**, alerte d'espace disque. |
+| **Rembobiner** *(agent)* | Surveillance des fichiers, versions chiffrées côté serveur, curseur de temps, diff coloré, restauration confirmée. |
+| **Prévisualiser** *(agent root)* | Une commande risquée s'exécute dans un bac à sable OverlayFS (sans réseau) : on voit ce qu'elle aurait changé, puis on applique ou non. |
+| **Radiographie** *(agent)* | Processus et lignée, session SSH d'origine, connexions ; geler, dégeler, arrêter. **Empreinte du normal** : alerte sur tout élément jamais vu. |
+| **Anti-ransomware** *(agent)* | Fichiers pièges, détection de rafales de fichiers chiffrés (entropie), alertes critiques, isolement réseau nftables optionnel. |
 | **Services web** | Ouvre une interface web privée du tailnet via un proxy isolé (bac à sable). |
 | **Bonus** | Dictée vocale (Web Speech API), **notifications push** quand une commande longue se termine ([docs/notifications.md](docs/notifications.md)). |
 
@@ -194,7 +280,19 @@ puis cochez « tmux » dans la fiche de l'hôte.
 ## Installation avec Docker
 
 Image **multi-architecture** (amd64/arm64), utilisateur non-root, système de fichiers en lecture
-seule, volume `/data` :
+seule, volume `/data`. Chaque release publie l'image dans le registre de GitHub :
+
+```bash
+docker run -d --name corvus --restart unless-stopped --network host -v corvus-data:/data \
+  -e TZ=Europe/Paris ghcr.io/spp4tme/corvus:latest        # ou une version précise : ghcr.io/spp4tme/corvus:0.2.0
+docker exec corvus node server/cli.js token               # afficher le token d'accès
+sudo tailscale serve --bg --https=443 http://127.0.0.1:7680
+```
+
+> Si `docker pull` répond « denied » ou « not found » : la page *Packages* du dépôt doit être en visibilité **Public**
+> (Package settings → Danger Zone → Change visibility), ce que GitHub ne fait pas tout seul pour un premier paquet.
+
+Ou construire soi-même avec Compose :
 
 ```bash
 docker compose up -d --build
@@ -479,44 +577,79 @@ Corvus n'ouvre pas de terminal : il affiche un message avec la commande d'instal
 
 ---
 
-## Agent Corvus (optionnel)
+## Agent Corvus (facultatif)
 
-Par défaut Corvus travaille **uniquement par SSH**, sans rien installer sur les hôtes. L'**agent**
-(`agent/`, en Rust) est un petit programme facultatif qui se connecte **vers** Corvus (aucun port ouvert
-sur l'hôte) et lui envoie des métriques ; il prépare les fonctions avancées du plan (`docs/plan.md`).
-État actuel : enrôlement, authentification mutuelle Ed25519, tampon local, métriques. Rien d'autre.
+<p align="center"><img src="docs/img/agents.png" alt="Écran Agents : agent en ligne et ses capacités" width="760"></p>
+
+Par défaut Corvus travaille **uniquement par SSH**, sans rien installer sur les hôtes. L'**agent** (`agent/`, en Rust) est
+un petit programme facultatif (binaire statique de 3 Mo) qui se connecte **vers** Corvus : **aucun port ouvert sur l'hôte**.
+Il débloque les fonctions de défense : **Rembobiner**, **Prévisualiser**, **Radiographie**, **empreinte du normal** et
+**anti-ransomware**, décrites plus bas.
+
+Sécurité de l'agent : la clé privée ne quitte jamais l'hôte ; l'authentification est **mutuelle** (Ed25519) : l'agent vérifie que
+c'est bien votre Corvus qui répond ; Corvus ne peut lui envoyer **aucune commande shell**, seulement des actions nommées et
+validées une à une. Protocole complet : [`docs/protocole-agent.md`](docs/protocole-agent.md).
+
+### Installation de l'agent
 
 ```bash
-# 1. Compiler (une fois, sur une machine avec Rust ; binaire statique musl, environ 3 Mo)
-cd agent && rustup target add aarch64-unknown-linux-musl     # ou x86_64-unknown-linux-musl
-cargo build --release --target aarch64-unknown-linux-musl
+# 1. Le binaire : depuis la dernière release (x86_64 ou aarch64), vérifié par SHA256SUMS…
+V=0.2.0; A=$(uname -m)      # x86_64 ou aarch64
+curl -fLO https://github.com/spp4tme/Corvus-/releases/download/v$V/corvus-agent-$V-linux-$A
+curl -fLO https://github.com/spp4tme/Corvus-/releases/download/v$V/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing && sudo install -m 755 corvus-agent-$V-linux-$A /usr/local/bin/corvus-agent
+#    … ou compilé soi-même (Rust) :
+#    cd agent && cargo build --release        # binaire statique avec la cible *-unknown-linux-musl
 
-# 2. Créer un jeton à usage unique (15 min) pour un hôte : API admin
-curl -s -X POST -H "Authorization: Bearer <jeton d'API admin>" -H 'content-type: application/json' \
-     -d '{"hostId":"<id de l'hôte>"}' https://<corvus>/api/agents/enrollments
+# 2. Dans Corvus : écran Agents → « Installer un agent » → choisir l'hôte : un jeton à usage unique (15 min) s'affiche.
+#    (API équivalente : POST /api/agents/enrollments {"hostId":"…"} avec un jeton d'API administrateur.)
 
-# 3. Sur l'hôte : installer, enrôler, démarrer
-sudo install -m 755 corvus-agent /usr/local/bin/
-sudo corvus-agent enroll --server https://<corvus>.<tailnet>.ts.net --token <jeton>
+# 3. Sur l'hôte : enrôler, puis démarrer le service
+sudo corvus-agent enroll --server https://<machine>.<tailnet>.ts.net --token <jeton>
 sudo cp deploy/agent/corvus-agent.service /etc/systemd/system/ && sudo systemctl enable --now corvus-agent
 ```
 
-La clé privée de l'agent ne quitte jamais l'hôte ; l'agent vérifie que c'est bien Corvus qui répond ;
-Corvus ne peut lui envoyer aucune commande shell. Détails : [`docs/protocole-agent.md`](docs/protocole-agent.md).
-Écrans : **Agents** (installation avec jeton affiché une fois, état, révocation) et **Rembobiner**.
+> **Agent sur la machine qui héberge Corvus** : une machine ne résout pas toujours son propre nom MagicDNS. Utilisez alors
+> `--server http://127.0.0.1:7680` (le trafic ne quitte pas la machine).
+
+### Droits : tout est opt-in
+
+L'unité de base `deploy/agent/corvus-agent.service` n'accorde **aucun privilège** (système en lecture seule) : métriques,
+surveillance et lecture de `/proc` fonctionnent. Les actions qui modifient le système demandent un **drop-in systemd** à
+installer en connaissance de cause :
+
+| Fonction | Droits nécessaires | Fichier |
+|---|---|---|
+| Métriques, surveillance, Radiographie en lecture | aucun | `corvus-agent.service` |
+| Prévisualiser | root + `--allow-preview` | `corvus-agent-preview.conf` |
+| Prévisualiser, restaurer, geler / arrêter un processus, isoler le réseau | root + capacités (`CAP_SYS_ADMIN`, `CAP_KILL`, `CAP_NET_ADMIN`…) | **`corvus-agent-full.conf`** |
+
+```bash
+sudo mkdir -p /etc/systemd/system/corvus-agent.service.d
+sudo cp deploy/agent/corvus-agent-full.conf /etc/systemd/system/corvus-agent.service.d/full.conf
+sudo systemctl daemon-reload && sudo systemctl restart corvus-agent
+```
+
+Chaque droit est expliqué en commentaire dans le fichier. Retour en arrière : supprimer `full.conf`, puis `daemon-reload` et `restart`.
+Options de l'agent : `--dir`, `--watch a,b`, `--canary a,b`, `--ransom-threshold N` (20), `--scan-interval s`, `--interval s`,
+`--allow-preview`, `--isolate-allow ip,…`.
 
 ### Prévisualiser une commande (agent root requis, désactivé par défaut)
+<p align="center"><img src="docs/img/previsualisation.png" alt="Prévisualisation d'une commande" width="760"></p>
+
 Quand la barre de commande Corvus détecte une commande risquée, le bouton **Prévisualiser** l'exécute dans un
 **bac à sable OverlayFS** sur l'hôte : le système réel est en lecture seule, la commande n'a **pas de réseau**
 et ses capacités dangereuses sont retirées (`setpriv`). Corvus montre ce qui aurait changé (fichiers créés,
 modifiés, supprimés, diff, sortie, code de sortie) ; **Appliquer** rejoue ce diff seulement si les fichiers
 d'origine n'ont pas bougé entre-temps (sinon : conflit, rien n'est écrit). Activation : agent lancé avec
-`--allow-preview`, en root, et `deploy/agent/corvus-agent-preview.conf` (drop-in systemd). `root` dans la
+`--allow-preview`, en root, et `deploy/agent/corvus-agent-full.conf` ou `corvus-agent-preview.conf` (drop-ins systemd). `root` dans la
 requête exige d'être administrateur de l'hôte. **Limites** : réseau, bases de données, services et processus
 lancés ne sont pas simulés ; la suppression d'un dossier entier est affichée mais pas appliquée ; sous
 Ubuntu 24.04 l'OverlayFS sans root est bloqué par AppArmor, d'où le passage par l'agent en root.
 
 ### Radiographie et empreinte du normal (agent requis)
+<p align="center"><img src="docs/img/radiographie.png" alt="Radiographie" width="380">&nbsp;<img src="docs/img/empreinte.png" alt="Empreinte du normal" width="380"></p>
+
 L'écran **Radiographie** montre l'arbre des processus d'un hôte (qui a lancé quoi, via quelle session SSH),
 ses connexions sortantes, et permet de **geler / dégeler / tuer** un processus (confirmation, journalisé ; les
 processus protégés et l'agent lui-même sont refusés). Lecture de `/proc` toutes les 2 s : un processus vivant
@@ -528,6 +661,8 @@ une heure habituellement calme (< 1 % de l'activité apprise), l'alerte est crit
 pour l'hôte, le programme est **gelé** en attendant votre décision. Règles et statistiques, aucune IA.
 
 ### Anti-ransomware (agent requis)
+<p align="center"><img src="docs/img/alertes-ransomware.png" alt="Alertes anti-ransomware" width="760"></p>
+
 Lancez l'agent avec `--canary /home/vous/Documents` (fichiers pièges `!corvus-leurre-*`, ajoutés à la surveillance) et
 éventuellement `--ransom-threshold 20`. Corvus alerte (critique, push) quand un fichier piège est touché ou qu'une rafale
 de fichiers « devient aléatoire » (entropie), et nomme le processus qui écrit le plus. **Options par hôte, désactivées
@@ -539,6 +674,8 @@ celui qu'il crée dans `/tmp`). **Limites** : sans eBPF/fanotify, l'attribution 
 éprouvé avec un vrai tailscaled — gardez un accès console et testez d'abord sur un hôte non critique.
 
 ### Rembobiner un hôte (agent requis)
+<p align="center"><img src="docs/img/rembobiner.png" alt="Rembobiner" width="760"></p>
+
 L'agent surveille `/etc` et les crontabs (option `--watch dossier1,dossier2`) par balayage toutes les 10 s,
 ainsi que les ports en écoute, les services systemd et les paquets (journal dpkg). Chaque version de fichier
 (≤ 512 Ko) est copiée, **chiffrée**, sur le serveur Corvus : un ransomware sur l'hôte ne peut pas toucher
@@ -547,6 +684,31 @@ l'historique. Dans **Rembobiner**, un curseur de temps montre ce qu'un retour à
 l'hôte**, est journalisé (journal chaîné) et reste annulable (l'état actuel est lui-même dans l'historique).
 Les fichiers secrets (`/etc/shadow`, clés SSH d'hôte, `*.key`…) sont suivis **sans jamais copier leur contenu**
 et ne sont pas restaurables. Historique conservé `RETENTION_REWIND_DAYS` jours (90).
+
+---
+
+## Releases et paquets
+
+Chaque version est publiée sur la page [Releases](https://github.com/spp4tme/Corvus-/releases) du dépôt, par le workflow
+[`release.yml`](.github/workflows/release.yml), **sans aucun secret à configurer** (il utilise le `GITHUB_TOKEN` du dépôt).
+
+| Élément | Où |
+|---|---|
+| `corvus-<version>.tar.gz` : Corvus (serveur, interface, scripts d'installation, documentation) | Release |
+| `corvus-agent-<version>-linux-x86_64` et `-aarch64` : agent, binaires statiques | Release |
+| `SHA256SUMS` : `sha256sum -c SHA256SUMS --ignore-missing` | Release |
+| Image Docker `ghcr.io/spp4tme/corvus:<version>` et `:latest` (amd64 et arm64) | [Packages](https://github.com/spp4tme/Corvus-/pkgs/container/corvus) |
+
+**Publier une version** (pour le mainteneur) :
+
+```bash
+# 1. Mettre à jour CHANGELOG.md (section « ## [X.Y.Z] - date »), package.json et agent/Cargo.toml (même numéro)
+# 2. Commit, puis l'étiquette : le workflow vérifie que les trois numéros concordent
+git tag vX.Y.Z && git push origin main vX.Y.Z
+```
+
+Le workflow compile l'agent pour x86_64 et aarch64, crée la release avec les notes extraites du CHANGELOG, puis publie l'image
+Docker. Un numéro qui ne concorde pas, ou une section absente du CHANGELOG, fait échouer la publication avant tout envoi.
 
 ---
 
@@ -585,7 +747,8 @@ npm run check:pure
 `.github/workflows/ci.yml` lance `npm test` à chaque push sur Linux **x86_64 et ARM64**, puis
 `test/real-ssh.test.js` contre un **vrai OpenSSH** (compte de test créé sur le runner). Pour le
 lancer sur le Pi : `CORVUS_REAL_SSH=127.0.0.1:22:<utilisateur>:<mot de passe> node --test test/real-ssh.test.js`.
-Le job `agent` (Rust, x86_64 + aarch64) s'active quand `agent/Cargo.toml` existe.
+Le job `agent` (Rust, `cross`, x86_64 + aarch64) lance les tests et la compilation de l'agent, et le job `docker` vérifie que l'image
+se construit et répond sur `/api/health`. Les échecs de tests sont remontés en annotations (les journaux GitHub exigent une connexion).
 
 ---
 
@@ -607,27 +770,32 @@ public/                 PWA (vanilla JS, modules ES, sans build)
   js/ui/                Composants partagés (boutons, champs, dialogues, graphiques…)
   js/views/             Une vue par module
 deploy/                 install-linux.sh (install-pi.sh = alias), corvus.service (systemd),
-                        windows/install-windows.ps1 et start-corvus.ps1
-agent/                  Agent Rust (cargo build / cargo test) ; deploy/agent/ : service systemd
-docs/                   securite.md, notifications.md, plan.md, protocole-agent.md, suite-pi.md
+                        windows/install-windows.ps1 et start-corvus.ps1, demo/fake-ransomware.sh
+agent/                  Agent Rust (cargo build / cargo test) ; deploy/agent/ : service et drop-ins systemd
+scripts/                check-pure-js.js, render-icons.js, captures.mjs (captures d'écran du README)
+docs/                   securite.md, notifications.md, plan.md, protocole-agent.md, suite-pi.md, img/ (captures)
 test/                   unit, e2e, ui + sshd de test
-Dockerfile, docker-compose.yml
+.github/workflows/      ci.yml (tests, OpenSSH réel, agent, Docker), release.yml (release + image ghcr.io)
+CHANGELOG.md, Dockerfile, docker-compose.yml
 ```
 
 ---
 
 ## Limites connues
 
-**Validation**
-- Les tests de bout en bout (85 tests unitaires + e2e) passent sous **Linux (Raspberry Pi, Node 24)**
-  face au **sshd de test pur JS**, pas face à un OpenSSH réel dans la suite automatique ; Corvus a
-  aussi été utilisé en vrai sur un Raspberry Pi (terminal, tmux, Claude Code, onglet Git).
-- `deploy/install-linux.sh` a été exécuté (dossiers temporaires, `--no-service`, commande `corvus`)
-  mais **pas l'installation systemd complète sur une machine vierge**, ni sur Fedora/Arch/openSUSE.
-- `deploy/windows/install-windows.ps1`, `Dockerfile` et `docker-compose.yml` n'ont **pas été
-  exécutés** (pas de Windows ni de Docker dans l'environnement de développement).
-- Les notifications push n'ont pas été testées contre un vrai service de push. La signature VAPID
-  est vérifiée par les tests, mais pas la réception sur un appareil.
+**Validation** (détail et dates : [`docs/suite-pi.md`](docs/suite-pi.md))
+- **Automatique** : plus de 170 tests Node (unitaires, bout en bout face à un sshd de test en pur JS, comptes, passkeys, interface
+  avec un vrai navigateur) et 33 tests Rust, exécutés par la CI sur Linux **x86_64 et ARM64**, plus un job contre un **vrai OpenSSH**.
+- **Sur un Raspberry Pi réel** (Ubuntu 24.04, Node 24) : suite complète, onglet Admin avec règle sudoers, sauvegarde / restauration /
+  redémarrage, agent sous systemd (enrôlement, `wss://` via Tailscale Serve, coupure et reconnexion sans doublon), passkey et
+  notification push sur un iPhone, démo du faux ransomware avec restauration complète.
+- **Isolement réseau** : validé avec une liaison Tailscale **directe** (le ping de l'iPhone passe, internet est coupé, levée
+  manuelle et automatique). Une liaison relayée (DERP) ou un hôte distant n'ont pas été essayés : testez d'abord sur un hôte
+  non critique, avec un accès console de secours.
+- **Pas encore éprouvés** : l'installation systemd complète sur une machine vierge ou sous Fedora / Arch / openSUSE ;
+  `deploy/windows/install-windows.ps1` ; un vrai SSD externe ; la migration d'une installation 0.1.
+- **Sans eBPF ni fanotify** : les fichiers sont surveillés par balayage (3 à 10 s) et les processus lus dans `/proc` toutes les
+  2 s ; un processus de moins de 2 s n'est pas vu et l'attribution des écritures à un processus est une estimation.
 
 **Usage**
 - **Certificats SSH de courte durée** : reportés — la bibliothèque `ssh2` (1.17) ne sait pas
@@ -662,6 +830,18 @@ Dockerfile, docker-compose.yml
   sont des sessions tmux : un `claude` qui se termine ferme la session.
 - **Host keys** : en TOFU, la toute première connexion fait confiance à la clé présentée. Comparez
   l'empreinte affichée par « Tester » avec celle de la machine.
+
+---
+
+## Contribuer et documentation
+
+- [`CHANGELOG.md`](CHANGELOG.md) : l'historique des versions.
+- [`docs/protocole-agent.md`](docs/protocole-agent.md) : le protocole de l'agent (enveloppe, enrôlement, événements, actions).
+- [`docs/securite.md`](docs/securite.md) et [`docs/notifications.md`](docs/notifications.md) : modèle de menaces, push.
+- [`docs/plan.md`](docs/plan.md) et [`docs/suite-pi.md`](docs/suite-pi.md) : décisions, validations en conditions réelles, reste à faire.
+- Règles du projet : une étape = un commit + tests + README ; zéro IA dans l'application ; dépendances du serveur 100 % JavaScript
+  (`npm run check:pure`) ; toute action destructive demande une confirmation explicite.
+- Régénérer les captures : `(cd agent && cargo build --release) && node scripts/captures.mjs` (navigateur Chrome/Edge/Chromium requis).
 
 ---
 
