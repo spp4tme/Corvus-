@@ -110,3 +110,21 @@ jobs:
           name: corvus-agent-${{ matrix.target }}
           path: agent/target/${{ matrix.target }}/release/corvus-agent
           if-no-files-found: warn
+
+  docker:
+    # L'image publiée à chaque version (ghcr.io) : on vérifie qu'elle se construit et démarre.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t corvus:ci .
+      - name: Démarrage et contrôle de santé
+        shell: bash
+        run: |
+          docker run -d --name corvus-ci corvus:ci
+          for i in $(seq 1 30); do
+            if docker exec corvus-ci wget -qO- http://127.0.0.1:7680/api/health >/dev/null 2>&1; then echo "Corvus répond (essai $i)"; exit 0; fi
+            sleep 1
+          done
+          docker logs corvus-ci
+          echo "::error::l'image Docker ne répond pas sur /api/health"
+          exit 1

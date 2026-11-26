@@ -1,6 +1,6 @@
 {
   "name": "corvus",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Corvus — passerelle SSH/SFTP/DevOps auto-hébergée pour réseaux Tailscale, en PWA.",
   "type": "module",
   "private": true,

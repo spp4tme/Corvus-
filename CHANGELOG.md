@@ -1,0 +1,49 @@
+# Changelog
+
+Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versions suivent [SemVer](https://semver.org/lang/fr/).
+Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
+(le workflow `.github/workflows/release.yml` fait le reste).
+
+## [0.2.0] - 2026-11-26
+
+La version « multi-comptes + agent » : Corvus ne se limite plus à un terminal, il surveille, protège et sait revenir en arrière.
+
+### Ajouté
+- **Agent Corvus** (Rust, binaire statique de 3 Mo, facultatif) : enrôlement par jeton à usage unique, authentification mutuelle
+  Ed25519, tampon local sans doublon après une coupure, protocole documenté (`docs/protocole-agent.md`).
+- **Rembobiner** : surveillance des fichiers, versions chiffrées côté serveur, curseur de temps, diff coloré, restauration
+  confirmée (jamais automatique).
+- **Prévisualiser** une commande risquée dans un bac à sable (OverlayFS, sans réseau, capacités abandonnées), puis appliquer le
+  diff seulement si rien n'a changé entre-temps.
+- **Radiographie** : processus et lignée, session SSH d'origine, connexions, gel / dégel / arrêt de processus validés.
+- **Empreinte du normal** : apprentissage de 14 jours, alerte sur tout programme, destination ou port jamais vu, alerte
+  critique en heure creuse. Statistiques et règles simples, aucune IA.
+- **Anti-ransomware** : fichiers pièges, détection de rafales de fichiers chiffrés (entropie), alertes critiques, isolement réseau
+  nftables optionnel (Tailscale et Corvus restent joignables, levée automatique), démonstration avec un faux ransomware.
+- **Comptes** nominatifs, TOTP obligatoire, passkeys (WebAuthn), rôles et droits par hôte, jetons d'API, journal d'audit
+  chaîné par SHA-256.
+- **Stockage SQLite** (option : disque externe), sauvegarde et restauration chiffrées en un bouton, rétention automatique.
+- **Supervision étendue** : état des hôtes en continu, CPU par cœur, E/S disque, TCP, historique de 1 h à 1 an.
+- **Enregistrement et relecture** des sessions, partage de terminal en direct (spectateur ou co-pilote).
+- **Productivité** : snippets, exécution sur plusieurs hôtes, routines, suggestions sans IA, analyse des commandes risquées,
+  mode annulable, administration façon Cockpit (services, journal, pare-feu, mises à jour, sudoers limité).
+- **Contrôle vocal** continu (dictée, commandes parlées, symboles).
+- **Installeurs** Linux et Windows, image Docker multi-architecture, CI GitHub (Node x86_64 et ARM64, OpenSSH réel, agent Rust).
+- Cette **release** : archive de Corvus, binaires de l'agent (x86_64 et aarch64), empreintes SHA-256 et image Docker publiée
+  sur `ghcr.io`.
+
+### Modifié
+- Interface refondue (« plumage ») : dock flottant, mobile d'abord, 320 px pris en charge.
+- Durcissements issus d'audits : limiteurs d'essais, HSTS, droits des connexions revérifiés, enregistrement SFTP atomique,
+  chemins git littéraux, capacités de l'agent bornées.
+
+### Limites connues
+- Pas d'eBPF ni de fanotify : les fichiers sont surveillés par balayage (3 à 10 s) et les processus lus dans `/proc` (2 s).
+- L'isolement réseau n'a été validé qu'avec une liaison Tailscale directe.
+- Voir « Limites connues » dans le README.
+
+## [0.1.0] - 2026-11-24
+
+### Ajouté
+- Première version : hôtes SSH, terminal à onglets (xterm.js), fichiers SFTP, git distant, supervision et Docker, PWA,
+  bouton Claude Code (sessions tmux), proxy de services web, notifications push.

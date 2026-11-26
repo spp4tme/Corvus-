@@ -1,6 +1,6 @@
 [package]
 name = "corvus-agent"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Agent Corvus : se connecte à Corvus (connexion sortante) et lui envoie métriques et événements"
 license = "MIT"

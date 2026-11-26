@@ -3,6 +3,14 @@
 # Aucune compilation native : les dépendances sont 100 % JavaScript.
 FROM node:24-alpine
 
+# Métadonnées OCI : relient l'image au dépôt GitHub (registre ghcr.io, page « Packages » du dépôt).
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="Corvus" \
+      org.opencontainers.image.description="Passerelle SSH/SFTP/DevOps auto-hébergée pour votre tailnet (PWA)" \
+      org.opencontainers.image.source="https://github.com/spp4tme/Corvus-" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${VERSION}"
+
 ENV NODE_ENV=production \
     CORVUS_DATA=/data \
     BIND=127.0.0.1 \
