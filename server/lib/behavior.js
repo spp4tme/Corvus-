@@ -81,16 +81,22 @@ export class Behavior {
     else return;
     if (kind) items.push([kind, item]);
 
-    if (this.startedAt(hostId) === null) this.db.setMeta(`behavior.start.${hostId}`, ts);
-    const learning = this.learning(hostId, ts);
-    const hour = new Date(ts).getHours();
+    // L'heure de l'AGENT ne décide jamais de l'apprentissage : un Pi sans horloge matérielle démarre en
+    // 1970 (apprentissage « déjà fini » → avalanche d'alertes), et un hôte compromis pourrait antidater
+    // ses événements pour qu'ils soient appris comme normaux. On se fie à l'heure du serveur ; celle de
+    // l'agent ne sert qu'à l'histogramme horaire, et seulement si elle est plausible (± 1 jour).
+    const now = Date.now();
+    const at = Number.isFinite(ts) && Math.abs(ts - now) <= DAY ? ts : now;
+    if (this.startedAt(hostId) === null) this.db.setMeta(`behavior.start.${hostId}`, now);
+    const learning = this.learning(hostId, now);
+    const hour = new Date(at).getHours();
     for (const [k, it] of items) {
       if (!it || String(it).length > 400) continue;
-      const isNew = this.#touch(hostId, k, it, ts, learning);
+      const isNew = this.#touch(hostId, k, it, at, learning);
       if (!learning && isNew && type !== 'proc.snapshot' && type !== 'conn.snapshot' && type !== 'port.snapshot') this.#anomaly(hostId, k, it, event, hour);
     }
     // Histogramme horaire : démarrages de programmes (pendant l'apprentissage seulement, sinon il se « laverait »).
-    if (type === 'proc.start' && learning) this.#touch(hostId, 'hour', String(hour), ts, true);
+    if (type === 'proc.start' && learning) this.#touch(hostId, 'hour', String(hour), at, true);
   }
 
   #anomaly(hostId, kind, item, event, hour) {

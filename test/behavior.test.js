@@ -89,6 +89,22 @@ describe('empreinte du normal', () => {
     assert.ok(j.includes('auto-freeze') && j.includes('anomaly'));
   });
 
+  test('l\'heure de l\'agent ne pilote pas l\'apprentissage (Pi resté en 1970, événements antidatés)', async () => {
+    const db = env.corvus.ctx.db;
+    // 1) Agent dont l'horloge est en 1970 au démarrage : l'apprentissage commence MAINTENANT, pas en 1970.
+    const fresh = (await api('POST', '/api/hosts', { name: 'SansRTC', hostname: '127.0.0.1', port: 22, username: 'u', authType: 'password', password: 'x' })).body.host.id;
+    behavior.ingest(fresh, start('/usr/bin/demarrage', {}, 5_000));
+    assert.ok(Math.abs(behavior.startedAt(fresh) - Date.now()) < 60_000, 'début = heure du serveur');
+    assert.equal(behavior.learning(fresh), true);
+    behavior.ingest(fresh, start('/usr/bin/autre', {}, 6_000));
+    assert.equal(alerts().filter((a) => a.message.includes('/usr/bin/autre')).length, 0, 'pas d\'avalanche d\'alertes');
+    // 2) Apprentissage terminé : un événement antidaté (dans la période d'apprentissage) n'est PAS appris comme normal.
+    db.setMeta(`behavior.start.${hostId}`, Date.now() - 20 * DAY);
+    behavior.ingest(hostId, start('/tmp/antidate', { pid: 9 }, Date.now() - 19 * DAY));
+    assert.ok(alerts().some((a) => a.message.includes('/tmp/antidate')), 'anomalie signalée');
+    assert.equal(db.get("SELECT allowed FROM behavior_profile WHERE host_id = ? AND item LIKE '/tmp/antidate|%'", hostId).allowed, 0);
+  });
+
   test('recommencer l\'apprentissage exige une confirmation', async () => {
     assert.equal((await api('POST', `/api/hosts/${hostId}/behavior/restart`, {})).status, 400);
     const r = await api('POST', `/api/hosts/${hostId}/behavior/restart`, { confirm: true, days: 7 });

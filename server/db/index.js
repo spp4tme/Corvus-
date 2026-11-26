@@ -22,6 +22,7 @@ export class Db {
     `);
     this.cache = new Map();
     this.depth = 0;
+    this.pendingAfterCommit = [];
     this.migrate();
   }
 
@@ -56,16 +57,30 @@ export class Db {
     }
     this.db.exec('BEGIN IMMEDIATE');
     this.depth = 1;
+    this.pendingAfterCommit = [];
+    let out;
     try {
-      const out = fn();
+      out = fn();
       this.db.exec('COMMIT');
-      return out;
     } catch (err) {
       this.db.exec('ROLLBACK');
       throw err;
     } finally {
       this.depth = 0;
     }
+    const after = this.pendingAfterCommit;
+    this.pendingAfterCommit = [];
+    for (const f of after) { try { f(); } catch { /* effet secondaire seulement */ } }
+    return out;
+  }
+
+  /**
+   * Effet hors base (ex. supprimer un fichier) qui ne doit avoir lieu que si la transaction en cours
+   * est VALIDÉE : après un ROLLBACK, la base dirait encore « ce fichier existe » alors qu'il serait parti.
+   * Hors transaction : exécuté tout de suite.
+   */
+  afterCommit(f) {
+    if (this.depth > 0) this.pendingAfterCommit.push(f); else f();
   }
 
   /** Lecture / écriture de la table clé → valeur JSON `meta`. */

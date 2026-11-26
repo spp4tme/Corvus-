@@ -581,6 +581,23 @@ describe('étape 0.3 : blobs, rétention, sauvegarde', () => {
     assert.equal(blobs.stats().count, 0);
   });
 
+  test('blobs : une libération dans une transaction ANNULÉE ne supprime pas le fichier', async () => {
+    const { BlobStore } = await import('../server/lib/blobs.js');
+    const db = new Db(':memory:');
+    const vault = new Vault(db, { token: 'cv_token_blobs_0123456789' });
+    const blobs = new BlobStore({ db, vault, dir: tmp() });
+    const content = Buffer.from('enregistrement précieux');
+    const sha = blobs.put(content, 'test');
+    assert.throws(() => db.tx(() => { blobs.release(sha); throw new Error('purge interrompue'); }), /purge interrompue/);
+    assert.deepEqual(blobs.get(sha), content, 'la base dit « présent » : le fichier doit l\'être aussi');
+    // Libéré puis ré-enregistré dans la même transaction : toujours là.
+    db.tx(() => { blobs.release(sha); blobs.put(content, 'test'); });
+    assert.deepEqual(blobs.get(sha), content);
+    // Libération validée : fichier supprimé après le COMMIT.
+    db.tx(() => blobs.release(sha));
+    assert.ok(!fs.existsSync(blobs.file(sha)));
+  });
+
   test('rétention : agrégation horaire puis purge des points bruts', async () => {
     const { Retention } = await import('../server/lib/retention.js');
     const db = new Db(':memory:');

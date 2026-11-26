@@ -61,7 +61,13 @@ export class BlobStore {
     const row = this.db.get('SELECT refs FROM blobs WHERE sha = ?', sha);
     if (row && row.refs <= 0) {
       this.db.run('DELETE FROM blobs WHERE sha = ?', sha);
-      try { fs.unlinkSync(this.file(sha)); } catch { /* déjà absent */ }
+      // Le fichier ne part qu'une fois la suppression validée (une purge annulée ne perd aucun contenu).
+      const file = this.file(sha);
+      this.db.afterCommit(() => {
+        // Entre-temps, le même contenu a pu être ré-enregistré : on ne supprime pas un blob de nouveau utilisé.
+        if (this.db.get('SELECT 1 AS x FROM blobs WHERE sha = ?', sha)) return;
+        try { fs.unlinkSync(file); } catch { /* déjà absent */ }
+      });
     }
   }
 
