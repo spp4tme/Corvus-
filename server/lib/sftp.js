@@ -150,13 +150,44 @@ export class SftpService {
       }
     }
     try {
-      await pipeline(bufferStream(Buffer.from(content, 'utf8')), sftp.createWriteStream(abs, { flags: 'w' }));
+      await this.#replaceContent(sftp, abs, Buffer.from(content, 'utf8'));
       const st = await call(sftp, 'stat', abs);
       this.log(hostId, 'edit', abs);
       return { path: abs, size: st.size, mtime: st.mtime };
     } catch (err) {
       this.log(hostId, 'edit', abs, false);
       throw mapSftpError(err, abs);
+    }
+  }
+
+  /**
+   * Enregistre un fichier sans jamais le laisser tronqué : écriture dans un fichier voisin puis renommage.
+   * Écriture directe seulement si le renommage changerait le propriétaire (fichier d'un autre compte) ou si le
+   * dossier est fermé en écriture ; un lien symbolique est suivi (c'est sa cible qui est remplacée).
+   */
+  async #replaceContent(sftp, abs, buf) {
+    const target = await call(sftp, 'realpath', abs).catch(() => abs);
+    const previous = await call(sftp, 'stat', target).catch(() => null);
+    const direct = () => pipeline(bufferStream(buf), sftp.createWriteStream(target, { flags: 'w' }));
+    const tmp = P.join(P.dirname(target), `.${P.basename(target).slice(0, 100)}.corvus-${crypto.randomBytes(4).toString('hex')}.part`);
+    try {
+      await pipeline(bufferStream(buf), sftp.createWriteStream(tmp, { flags: 'wx' }));
+    } catch (err) {
+      await call(sftp, 'unlink', tmp).catch(() => {});
+      if (err?.code === 3) return direct(); // dossier non modifiable, fichier modifiable
+      throw err;
+    }
+    try {
+      const mine = await call(sftp, 'stat', tmp);
+      if (previous && previous.uid != null && mine.uid != null && previous.uid !== mine.uid) {
+        await call(sftp, 'unlink', tmp).catch(() => {});
+        return direct();
+      }
+      const exists = () => call(sftp, 'lstat', target).then((st) => st, () => null);
+      await finalizeUpload(sftp, tmp, target, { overwrite: true, previous, exists });
+    } catch (err) {
+      await call(sftp, 'unlink', tmp).catch(() => {});
+      throw err;
     }
   }
 

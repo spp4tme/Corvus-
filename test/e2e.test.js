@@ -271,6 +271,8 @@ describe('fichiers (SFTP)', () => {
     assert.equal(wr.status, 200, JSON.stringify(wr.body));
     const rd2 = await c.api('GET', `${base()}/read?path=${encodeURIComponent(`${dir}/note.txt`)}`);
     assert.equal(rd2.body.content, 'modifié\n');
+    const after = await c.api('GET', `${base()}/list?path=${encodeURIComponent(dir)}`);
+    assert.ok(!after.body.entries.some((e) => e.name.endsWith('.part')), 'écriture atomique : aucun fichier temporaire ne reste');
     const bin = await c.api('GET', `${base()}/read?path=${encodeURIComponent(`${dir}/pixel.png`)}`);
     assert.equal(bin.status, 415);
   });
