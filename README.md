@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/icons/icon-192.png" alt="Logo Corvus" width="96" height="96">
+<img src="public/icons/icon-512.png" alt="Logo Corvus : un corbeau dans un médaillon" width="200" height="200">
 
 # Corvus
 
