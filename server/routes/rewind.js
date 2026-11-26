@@ -7,8 +7,9 @@ export function rewindRoutes(ctx) {
   const r = Router();
   const hid = (req) => v.id(req.params.id);
   const at = (raw) => {
-    const t = Date.parse(String(raw));
-    const n = Number.isFinite(t) ? t : Number(raw);
+    // Un nombre est un instant en millisecondes (Date.parse lirait « 5000 » comme l'an 5000) ; sinon une date ISO.
+    const s = String(raw ?? '');
+    const n = /^\d{1,16}$/.test(s) ? Number(s) : Date.parse(s);
     if (!Number.isFinite(n) || n < 0) throw new HttpError(400, 'BAD_TIME', 'Instant invalide');
     return n;
   };

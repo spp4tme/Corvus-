@@ -47,7 +47,9 @@ export function terminalRoutes(ctx) {
 
   r.get('/recordings/:id', (req, res) => {
     const { row, cast } = recorder.get(tid(req));
-    if (req.user.role !== 'admin' && row.user_id !== req.user.id) throw new HttpError(404, 'NOT_FOUND', 'Enregistrement introuvable');
+    // Comme la liste : ses propres sessions, et seulement sur un hôte qui lui est ENCORE accessible
+    // (un accès retiré coupe aussi la relecture de ce qui s'y affichait).
+    if (req.user.role !== 'admin' && (row.user_id !== req.user.id || !req.allowedHostIds()?.includes(row.host_id))) throw new HttpError(404, 'NOT_FOUND', 'Enregistrement introuvable');
     journal.add({ type: 'terminal', event: 'replay', host: hosts.find(row.host_id) || undefined, detail: `session ${row.id} de ${row.username || '?'}` });
     res.set({ 'Content-Type': 'application/x-asciicast; charset=utf-8', 'Cache-Control': 'no-store' });
     res.send(cast);

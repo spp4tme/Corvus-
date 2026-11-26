@@ -78,8 +78,9 @@ export class Recorder {
     const params = [];
     if (userId) { where.push('user_id = ?'); params.push(userId); }
     if (hostId) { where.push('host_id = ?'); params.push(hostId); }
-    let rows = this.db.all(`SELECT * FROM term_sessions WHERE ${where.join(' AND ')} ORDER BY started_at DESC LIMIT ?`, ...params, limit);
-    if (hostIds) rows = rows.filter((x) => hostIds.includes(x.host_id));
+    // Filtre des hôtes autorisés DANS la requête (filtré après le LIMIT, il pouvait vider la liste).
+    if (hostIds) { where.push(`host_id IN (SELECT value FROM json_each(?))`); params.push(JSON.stringify(hostIds)); }
+    const rows = this.db.all(`SELECT * FROM term_sessions WHERE ${where.join(' AND ')} ORDER BY started_at DESC LIMIT ?`, ...params, limit);
     return rows.map((x) => ({
       id: x.id, hostId: x.host_id, host: x.host_label, user: x.username, userId: x.user_id, title: x.title,
       startedAt: x.started_at, endedAt: x.ended_at, durationMs: x.duration_ms, bytes: x.recording_bytes,

@@ -46,3 +46,19 @@ test('droit sur l\'hôte retiré : la session du propriétaire est fermée', asy
   await t.waitFor((x) => x.closed, 5000);
   assert.equal(env.corvus.ctx.terminals.list().filter((s) => s.ownerId === u.id).length, 0);
 });
+
+test('droit sur l\'hôte retiré : ses enregistrements de session ne sont plus relisibles', async () => {
+  const { u, c, t } = await operatorWithTerminal('relecture');
+  t.send('echo trace-a-relire\n');
+  await t.waitFor((x) => x.output.includes('trace-a-relire'));
+  const sid = env.corvus.ctx.terminals.list().find((s) => s.ownerId === u.id).id;
+  t.ws.send(JSON.stringify({ t: 'close' }));
+  await t.waitFor((x) => x.closed, 5000);
+  const db = env.corvus.ctx.db;
+  for (let i = 0; i < 100 && !db.get('SELECT recording_sha FROM term_sessions WHERE id = ?', sid)?.recording_sha; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await c.api('GET', `/api/recordings/${sid}`)).status, 200);
+  assert.ok((await c.api('GET', '/api/recordings')).body.recordings.some((r) => r.id === sid));
+  assert.equal((await admin.api('PUT', `/api/users/${u.id}/grants`, { grants: [] })).status, 200);
+  assert.equal((await c.api('GET', `/api/recordings/${sid}`)).status, 404);
+  assert.ok(!(await c.api('GET', '/api/recordings')).body.recordings.some((r) => r.id === sid));
+});

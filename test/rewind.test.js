@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { startCorvus, waitFor } from './helpers/corvus.js';
-import { lineDiff } from '../server/lib/rewind.js';
+import { lineDiff, Rewind } from '../server/lib/rewind.js';
+import { Db } from '../server/db/index.js';
 
 const run = promisify(execFile);
 const AGENT_BIN = process.env.CORVUS_AGENT_BIN
@@ -24,6 +25,36 @@ describe('diff par lignes', () => {
     assert.deepEqual(d.hunks[0].lines.filter((l) => l.t !== ' ').map((l) => l.t + l.s), ['-c', '+C', '+i']);
     assert.equal(lineDiff('x', 'x').hunks.length, 0);
     assert.deepEqual(lineDiff('', 'nouveau').hunks[0].lines, [{ t: '+', s: 'nouveau' }]);
+  });
+});
+
+describe('état des fichiers à un instant T', () => {
+  test('un hôte très actif : les changements RÉCENTS restent visibles (plus de troncature aux anciens événements)', () => {
+    const db = new Db(':memory:');
+    const ins = (seq, ts, type, body) => db.run('INSERT INTO agent_events (agent_id, host_id, agent_seq, ts, type, body, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)', 'a', 'h1', seq, ts, type, JSON.stringify(body), ts);
+    const sha = (c) => c.repeat(64);
+    db.tx(() => {
+      ins(1, 1, 'file.baseline', { path: '/etc/app.conf', sha: sha('a'), mode: 420, uid: 0, gid: 0 });
+      // 200 001 événements de bruit (un journal qui bouge sans arrêt).
+      for (let i = 0; i < 200_001; i++) ins(i + 2, 2 + i, 'file.modified', { path: '/var/log/bruit.log', sha: sha(i % 2 ? 'b' : 'c'), mode: 420, uid: 0, gid: 0 });
+      ins(300_000, 300_000, 'file.modified', { path: '/etc/app.conf', sha: sha('d'), mode: 420, uid: 0, gid: 0 });
+      ins(300_001, 300_001, 'file.created', { path: '/tmp/charge.sh', sha: sha('e'), mode: 493, uid: 0, gid: 0 });
+    });
+    const rw = new Rewind({ db });
+    const now = rw.fileState('h1');
+    assert.equal(now.get('/etc/app.conf').sha, sha('d'), 'la dernière modification est vue');
+    assert.equal(now.get('/etc/app.conf').firstType, 'file.baseline');
+    assert.ok(now.has('/tmp/charge.sh'));
+    const ch = rw.changesSince('h1', 10, '/etc/').concat(rw.changesSince('h1', 10, '/tmp/'));
+    assert.deepEqual(ch.map((c) => `${c.action} ${c.path}`), ['restore /etc/app.conf', 'remove /tmp/charge.sh']);
+    assert.equal(rw.fileState('h1', 10, '/etc/').size, 1, 'préfixe respecté');
+  });
+
+  test('diff d\'un long fichier contre une ligne : mémoire bornée, résultat correct', () => {
+    const long = Array.from({ length: 300_000 }, (_, i) => `l${i}`).join('\n');
+    const d = lineDiff(long, 'x');
+    assert.equal(d.removed, 300_000);
+    assert.equal(d.added, 1);
   });
 });
 

@@ -7,7 +7,7 @@ import { HttpError } from './validate.js';
 import { MAX_VERSION_BYTES } from './agents.js';
 
 const FILE_TYPES = ['file.baseline', 'file.created', 'file.modified', 'file.meta', 'file.deleted'];
-const MAX_ROWS = 200_000;
+const MAX_PATHS = 200_000;
 const MAX_RESTORE_ITEMS = 200;
 
 const parse = (s) => { try { return JSON.parse(s); } catch { return {}; } };
@@ -26,17 +26,20 @@ export function lineDiff(aText, bText, context = 3) {
   const midB = b.slice(start, endB);
   if (midA.length * midB.length > 4_000_000) return { tooBig: true, hunks: [] };
 
-  // Tableau LCS (longueurs), puis reconstruction.
+  // Tableau LCS (longueurs) en UN seul bloc mémoire (≤ 16 Mo) : un tableau par ligne coûtait des
+  // centaines de milliers d'objets pour un fichier long face à une ou deux lignes. Puis reconstruction.
   const n = midA.length;
   const m = midB.length;
-  const L = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = midA[i] === midB[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const W = m + 1;
+  const T = new Uint32Array((n + 1) * W);
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) T[i * W + j] = midA[i] === midB[j] ? T[(i + 1) * W + j + 1] + 1 : Math.max(T[(i + 1) * W + j], T[i * W + j + 1]);
+  const L = (i, j) => T[i * W + j];
   const ops = a.slice(0, start).map((s) => ({ t: ' ', s }));
   let i = 0;
   let j = 0;
   while (i < n || j < m) {
     if (i < n && j < m && midA[i] === midB[j]) { ops.push({ t: ' ', s: midA[i] }); i++; j++; }
-    else if (i < n && (j === m || L[i + 1][j] >= L[i][j + 1])) { ops.push({ t: '-', s: midA[i++] }); }
+    else if (i < n && (j === m || L(i + 1, j) >= L(i, j + 1))) { ops.push({ t: '-', s: midA[i++] }); }
     else { ops.push({ t: '+', s: midB[j++] }); }
   }
   for (const s of a.slice(endA)) ops.push({ t: ' ', s });
@@ -73,19 +76,28 @@ export class Rewind {
 
   /** État des fichiers à l'instant `at` (ms) : Map chemin → { …métadonnées, deleted, firstType, firstTs }. */
   fileState(hostId, at = Infinity, prefix = '') {
+    // Regroupement par chemin DANS SQLite : seuls le premier et le dernier événement de chaque fichier
+    // remontent. (Avant : les 200 000 plus ANCIENS événements, ce qui rendait invisibles les changements
+    // récents d'un hôte actif — précisément ceux qu'on veut rembobiner.)
     const rows = this.db.all(
-      `SELECT type, ts, body FROM agent_events WHERE host_id = ? AND type IN (${FILE_TYPES.map(() => '?').join(',')}) AND ts <= ? ORDER BY id LIMIT ?`,
-      hostId, ...FILE_TYPES, Number.isFinite(at) ? at : 9e15, MAX_ROWS,
+      `SELECT e.type, e.ts, e.body, f.type AS first_type, f.ts AS first_ts
+       FROM (SELECT json_extract(body, '$.path') AS p, MAX(id) AS last_id, MIN(id) AS first_id
+             FROM agent_events WHERE host_id = ? AND type IN (${FILE_TYPES.map(() => '?').join(',')}) AND ts <= ?
+             GROUP BY p) g
+       JOIN agent_events e ON e.id = g.last_id
+       JOIN agent_events f ON f.id = g.first_id
+       WHERE typeof(g.p) = 'text' AND g.p <> '' AND substr(g.p, 1, length(?)) = ?
+       LIMIT ?`,
+      hostId, ...FILE_TYPES, Number.isFinite(at) ? at : 9e15, prefix, prefix, MAX_PATHS,
     );
     const state = new Map();
     for (const r of rows) {
       const b = parse(r.body);
-      if (!b.path || (prefix && !b.path.startsWith(prefix))) continue;
-      const prev = state.get(b.path);
+      if (typeof b.path !== 'string' || !b.path) continue;
       state.set(b.path, {
         path: b.path, sha: b.sha ?? null, size: b.size, mode: b.mode, uid: b.uid, gid: b.gid, noContent: !!b.noContent, reason: b.reason || '',
         deleted: r.type === 'file.deleted', ts: r.ts,
-        firstType: prev ? prev.firstType : r.type, firstTs: prev ? prev.firstTs : r.ts,
+        firstType: r.first_type, firstTs: r.first_ts,
       });
     }
     return state;
@@ -155,6 +167,8 @@ export class Rewind {
     const wanted = new Set(paths.map(String));
     const plan = this.changesSince(hostId, at).filter((c) => wanted.has(c.path));
     if (!plan.length) throw new HttpError(409, 'NOTHING_TO_DO', 'Aucune différence à restaurer pour ces chemins');
+    // État à T calculé UNE fois (avant : recalculé pour chaque chemin, jusqu'à 200 fois).
+    const thenState = this.fileState(hostId, at);
     const results = [];
     for (const c of plan) {
       const res = { path: c.path, action: c.action };
@@ -165,7 +179,7 @@ export class Rewind {
         } else {
           const buf = this.versionBuffer(hostId, c.then.sha);
           if (buf.length > MAX_VERSION_BYTES) throw new HttpError(422, 'TOO_BIG', 'version trop grosse');
-          const meta = this.fileState(hostId, at).get(c.path);
+          const meta = thenState.get(c.path);
           await this.agents.request(hostId, 'file.restore', { path: c.path, sha256: c.then.sha, data: buf.toString('base64'), mode: meta.mode, uid: meta.uid, gid: meta.gid });
         }
         res.ok = true;
