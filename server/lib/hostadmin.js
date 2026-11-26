@@ -167,6 +167,10 @@ export class HostAdmin {
   serviceAction(hostId, unit, action) {
     const name = unitName(unit);
     v.oneOf(action, ['start', 'stop', 'restart', 'reload', 'enable', 'disable'], 'action');
+    // Garde-fou : ne jamais couper le service SSH par lequel Corvus (et l'administrateur) accède à l'hôte.
+    if ((action === 'stop' || action === 'disable') && /^(ssh|sshd|openssh-server)(\.service|\.socket)?$/.test(name.replace(/\.(service|socket)$/, '') + (name.endsWith('.socket') ? '.socket' : ''))) {
+      throw new HttpError(409, 'LOCKOUT', `Refusé : ${action === 'stop' ? 'arrêter' : 'désactiver'} ${name} couperait l'accès SSH de Corvus à cet hôte.`);
+    }
     return this.sudo(hostId, ['systemctl', action, '--', name], { event: `service-${action}`, detail: name });
   }
 
@@ -284,7 +288,12 @@ export class HostAdmin {
     const lines = [];
     const alias = [];
     const add = (name, cmds) => { if (cmds.length) { lines.push(`Cmnd_Alias ${name} = ${cmds.join(', \\\n    ')}`); alias.push(name); } };
-    if (t.systemctl) add('CORVUS_SERVICES', ['start', 'stop', 'restart', 'reload', 'enable', 'disable'].map((a) => `${t.systemctl} ${a} -- *`));
+    // Le « * » de sudoers couvre aussi « / » : sans exclusion, `systemctl enable -- /tmp/x.service` installerait
+    // une unité écrite par l'utilisateur, donc du code exécuté en root. Toute cible contenant « / » est refusée.
+    if (t.systemctl) {
+      const acts = ['start', 'stop', 'restart', 'reload', 'enable', 'disable'];
+      add('CORVUS_SERVICES', [...acts.map((a) => `${t.systemctl} ${a} -- *`), ...acts.map((a) => `!${t.systemctl} ${a} -- */*`)]);
+    }
     if (t.ufw) add('CORVUS_UFW', [`${t.ufw} status numbered`, `${t.ufw} allow *`, `${t.ufw} deny *`, `${t.ufw} --force delete *`]);
     if (t.nft) add('CORVUS_NFT', [`${t.nft} list ruleset`]);
     if (t.usermod) add('CORVUS_USERS', [`${t.usermod} -L -- *`, `${t.usermod} -U -- *`]);

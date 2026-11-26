@@ -16,6 +16,7 @@ import { logger } from './log.js';
 
 const log = logger('proxy');
 const CAP_TTL_MS = 12 * 3600_000;
+const CAP_MAX_MS = 24 * 3600_000; // durée de vie absolue : l'expiration glissante ne rend pas un lien éternel
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'cookie']);
 const SANDBOX = 'sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-popups-to-escape-sandbox';
 
@@ -89,18 +90,19 @@ export class ProxyService {
     const now = Date.now();
     for (const [k, c] of this.caps) if (c.expires < now) this.caps.delete(k); // liens expirés jamais rouverts
     const cap = crypto.randomBytes(18).toString('base64url');
-    this.caps.set(cap, { serviceId: id, expires: Date.now() + CAP_TTL_MS });
+    this.caps.set(cap, { serviceId: id, expires: now + CAP_TTL_MS, hardExpires: now + CAP_MAX_MS });
     this.journal.add({ type: 'proxy', event: 'open', detail: `${svc.name} (${svc.url})` });
     return { url: `/proxy/${cap}/`, expiresIn: CAP_TTL_MS / 1000 };
   }
 
   resolveCap(cap) {
     const c = this.caps.get(cap);
-    if (!c || c.expires < Date.now()) {
+    const now = Date.now();
+    if (!c || c.expires < now || c.hardExpires < now) {
       this.caps.delete(cap);
       return null;
     }
-    c.expires = Date.now() + CAP_TTL_MS; // expiration glissante
+    c.expires = Math.min(now + CAP_TTL_MS, c.hardExpires); // expiration glissante, plafonnée
     const svc = this.list().find((s) => s.id === c.serviceId);
     return svc || null;
   }
@@ -139,7 +141,7 @@ export class ProxyService {
       delete headers.origin;
       delete headers.referer;
       // Un token Corvus ne doit jamais partir vers un service tiers.
-      if (/^Bearer\s+cv_/i.test(String(headers.authorization || ''))) delete headers.authorization;
+      if (/^Bearer\s+cvu?_/i.test(String(headers.authorization || ''))) delete headers.authorization;
       const lib = target.protocol === 'https:' ? https : http;
       const upstream = lib.request({
         protocol: target.protocol,
