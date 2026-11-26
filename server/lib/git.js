@@ -3,7 +3,9 @@
 import { HttpError } from './validate.js';
 import { q, qPath } from './shell.js';
 
-const ENV = "export GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat LC_ALL=C GIT_OPTIONAL_LOCKS=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes';";
+// GIT_LITERAL_PATHSPECS : un fichier nommé `:(exclude)x` ne doit jamais être lu comme une « magie » de pathspec
+// (indexer ce fichier indexerait sinon TOUS les autres).
+const ENV = "export GIT_LITERAL_PATHSPECS=1 GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat LC_ALL=C GIT_OPTIONAL_LOCKS=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes';";
 const SEP = '\x1f';
 const REC = '\x1e';
 

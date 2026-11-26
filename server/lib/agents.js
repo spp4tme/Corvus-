@@ -21,6 +21,12 @@ const SHA_RE = /^[0-9a-f]{64}$/;
 /** Actions nommées que Corvus peut demander (l'agent les valide à son tour). Jamais de commande shell. */
 export const ACTIONS = new Set(['file.restore', 'file.remove', 'preview.run', 'preview.apply', 'xray.live', 'proc.freeze', 'proc.thaw', 'proc.kill', 'net.status', 'net.isolate', 'net.release']);
 
+/** Capacités annoncées par l'agent : objet JSON de taille bornée (le reste est ignoré). */
+function capsJson(x) {
+  const text = JSON.stringify(x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  return text.length <= 4096 ? text : '{}';
+}
+
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const b64 = (buf) => Buffer.from(buf).toString('base64');
 
@@ -79,7 +85,7 @@ export class AgentService {
       this.db.run('UPDATE agent_enrollments SET used_at = ? WHERE token_hash = ?', Date.now(), sha256(token));
       this.db.run(
         'INSERT INTO agents (id, host_id, public_key, version, capabilities, enrolled_at) VALUES (?, ?, ?, ?, ?, ?)',
-        agentId, row.host_id, String(publicKey), String(version || '').slice(0, 40), JSON.stringify(capabilities && typeof capabilities === 'object' ? capabilities : {}), Date.now(),
+        agentId, row.host_id, String(publicKey), String(version || '').slice(0, 40), capsJson(capabilities), Date.now(),
       );
       return row;
     });
@@ -186,7 +192,7 @@ export class AgentService {
     switch (msg.type) {
       case 'ping': send('pong', {}, msg.id); break;
       case 'hello_agent': { // version et capacités annoncées après l'authentification
-        this.db.run('UPDATE agents SET version = ?, capabilities = ? WHERE id = ?', String(body.version || '').slice(0, 40), JSON.stringify(body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : {}), agent.id);
+        this.db.run('UPDATE agents SET version = ?, capabilities = ? WHERE id = ?', String(body.version || '').slice(0, 40), capsJson(body.capabilities), agent.id);
         break;
       }
       case 'events': {
@@ -259,7 +265,14 @@ export class AgentService {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pendingRequests.delete(id); reject(new HttpError(504, 'AGENT_TIMEOUT', 'L\'agent n\'a pas répondu')); }, timeoutMs);
       this.pendingRequests.set(id, { resolve, reject, timer, agentId: row.id });
-      ws.send(JSON.stringify({ v: PROTOCOL, id, type: 'action', ts: Date.now(), body: { name, args } }));
+      try {
+        ws.send(JSON.stringify({ v: PROTOCOL, id, type: 'action', ts: Date.now(), body: { name, args } }));
+      } catch {
+        // Canal fermé entre-temps : échec immédiat, sans laisser une requête en attente jusqu'au délai.
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(new HttpError(409, 'AGENT_OFFLINE', 'Aucun agent connecté sur cet hôte'));
+      }
     });
   }
 

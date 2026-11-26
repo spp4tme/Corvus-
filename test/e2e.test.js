@@ -374,6 +374,18 @@ describe('git distant', () => {
     assert.ok(all.body.files.every((f) => f.staged));
   });
 
+  test('chemins littéraux : un fichier « :(exclude)x » est indexé seul, sans entraîner les autres', async () => {
+    const dirRepo = path.join(sshd.root, 'litteral');
+    fs.mkdirSync(dirRepo);
+    git(dirRepo, 'init', '-q', '-b', 'main');
+    for (const f of [':(exclude)ab.txt', 'ab.txt', 'ac.txt']) fs.writeFileSync(path.join(dirRepo, f), 'x\n');
+    const r = `${dirRepo.replace(/\\/g, '/')}`;
+    const st = await c.api('POST', `${G()}/stage`, { repo: r, paths: [':(exclude)ab.txt'] });
+    assert.equal(st.status, 200, JSON.stringify(st.body));
+    const staged = st.body.files.filter((f) => f.staged).map((f) => f.path);
+    assert.deepEqual(staged, [':(exclude)ab.txt'], `seul ce fichier est indexé (obtenu : ${staged})`);
+  });
+
   test('commit : le message n\'est jamais interprété par le shell', async () => {
     const message = "Ajout d'un $(touch PWNED) `id` ; echo \"x\"";
     const r = await c.api('POST', `${G()}/commit`, { repo, message });
