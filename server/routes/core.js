@@ -58,6 +58,7 @@ export function hostRoutes(ctx) {
     hosts.get(id);
     for (const t of terminals.list()) if (t.hostId === id) terminals.close(t.id);
     pool.drop(id);
+    ctx.sftp?.forget(id);
     journal.add({ type: 'admin', event: 'host-delete', user: req.user, host: hosts.get(id), ip: req.ip });
     hosts.delete(id);
     res.json({ ok: true });

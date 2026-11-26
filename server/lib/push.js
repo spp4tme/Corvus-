@@ -64,8 +64,10 @@ export class PushService {
     return { count: this.count() };
   }
 
-  unsubscribe(endpoint) {
-    this.db.run('DELETE FROM push_subscriptions WHERE endpoint = ?', endpoint);
+  /** `userId` : ne retire que les abonnements de ce compte (absent : nettoyage interne). */
+  unsubscribe(endpoint, userId) {
+    if (userId) this.db.run('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?', endpoint, userId);
+    else this.db.run('DELETE FROM push_subscriptions WHERE endpoint = ?', endpoint);
   }
 
   count() {

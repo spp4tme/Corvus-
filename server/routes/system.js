@@ -51,7 +51,8 @@ export function systemRoutes(ctx) {
   });
 
   r.post('/alerts/:id/ack', (req, res) => {
-    alerts.ack(v.int(req.params.id, 'id', { min: 1 }), req.user);
+    // Un opérateur n'acquitte pas (ne fait pas taire) l'alerte d'un hôte qui ne lui est pas accordé.
+    alerts.ack(v.int(req.params.id, 'id', { min: 1 }), req.user, req.allowedHostIds?.() || null);
     res.json({ ok: true });
   });
 

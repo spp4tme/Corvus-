@@ -20,15 +20,22 @@ export class Alerts {
   }
 
   list({ limit = 100, open = false, hostIds } = {}) {
-    let rows = this.db.all(`SELECT * FROM alerts ${open ? 'WHERE ack_at IS NULL' : ''} ORDER BY id DESC LIMIT ?`, limit);
-    if (hostIds) rows = rows.filter((r) => !r.host_id || hostIds.includes(r.host_id));
+    const where = [];
+    const params = [];
+    if (open) where.push('ack_at IS NULL');
+    // Filtre des hôtes autorisés DANS la requête (après le LIMIT, les alertes d'autres hôtes pouvaient tout masquer).
+    if (hostIds) { where.push('(host_id IS NULL OR host_id IN (SELECT value FROM json_each(?)))'); params.push(JSON.stringify(hostIds)); }
+    const rows = this.db.all(`SELECT * FROM alerts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`, ...params, limit);
     return rows.map((r) => ({
       id: r.id, ts: r.ts, hostId: r.host_id, kind: r.kind, severity: r.severity, message: r.message,
       data: r.data ? JSON.parse(r.data) : null, ackAt: r.ack_at, ackBy: r.ack_by,
     }));
   }
 
-  ack(id, user) {
+  /** `hostIds` (null = tous) : on n'acquitte que ce qu'on peut voir. */
+  ack(id, user, hostIds = null) {
+    const row = this.db.get('SELECT host_id FROM alerts WHERE id = ?', id);
+    if (!row || (hostIds && row.host_id && !hostIds.includes(row.host_id))) throw new HttpError(404, 'NOT_FOUND', 'Alerte introuvable ou déjà acquittée');
     const r = this.db.run('UPDATE alerts SET ack_at = ?, ack_by = ? WHERE id = ? AND ack_at IS NULL', Date.now(), user?.username ?? null, id);
     if (!r.changes) throw new HttpError(404, 'NOT_FOUND', 'Alerte introuvable ou déjà acquittée');
   }
