@@ -121,3 +121,28 @@ describe('administration (façon Cockpit)', () => {
     assert.equal(lock.body.error.code, 'LOCKOUT');
   });
 });
+
+describe('durcissement : import d\'historique et annulation', () => {
+  test('réimporter l\'historique du shell remplace l\'import précédent (pas de doublons)', async () => {
+    fs.writeFileSync(path.join(sshd.root, '.bash_history'), 'ls -la\ndf -h\nuptime\n');
+    const count = () => env.corvus.ctx.db.get("SELECT COUNT(*) AS n FROM command_history WHERE host_id = ? AND source = 'import'", hostId).n;
+    assert.equal((await c.api('POST', `/api/hosts/${hostId}/history/import`, {})).body.imported, 3);
+    const first = count();
+    assert.ok(first >= 3);
+    await c.api('POST', `/api/hosts/${hostId}/history/import`, {});
+    await c.api('POST', `/api/hosts/${hostId}/history/import`, {});
+    assert.equal(count(), first, 'trois imports = les mêmes lignes qu\'un seul');
+  });
+
+  test('annulation : deux restaurations simultanées ne s\'appliquent qu\'une fois', async () => {
+    fs.mkdirSync(path.join(sshd.root, 'undo2'), { recursive: true });
+    fs.writeFileSync(path.join(sshd.root, 'undo2', 'f.txt'), 'avant');
+    const prep = await c.api('POST', `/api/hosts/${hostId}/undo/prepare`, { command: 'rm f.txt', cwd: '~/undo2' });
+    assert.ok(prep.body.op);
+    fs.rmSync(path.join(sshd.root, 'undo2', 'f.txt'));
+    const url = `/api/hosts/${hostId}/undo/${prep.body.op.id}`;
+    const [a, b] = await Promise.all([c.api('POST', url, { confirm: true }), c.api('POST', url, { confirm: true })]);
+    assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+    assert.equal(fs.readFileSync(path.join(sshd.root, 'undo2', 'f.txt'), 'utf8'), 'avant');
+  });
+});

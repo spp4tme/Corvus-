@@ -110,16 +110,20 @@ export function productivityRoutes(ctx) {
   // Reprend l'historique du shell de l'hôte (~/.bash_history, ~/.zsh_history), en lecture seule.
   r.post('/hosts/:id/history/import', async (req, res) => {
     const id = hid(req);
-    let imported = 0;
+    const items = [];
     for (const file of ['~/.bash_history', '~/.zsh_history']) {
       let text;
       try { text = (await sftp.readText(id, file)).content; } catch { continue; }
-      const items = parseShellHistory(text).slice(-5000);
+      items.push(...parseShellHistory(text).slice(-5000));
+    }
+    // Réimporter REMPLACE l'import précédent : sinon chaque clic ajouterait des milliers de doublons qui faussent les suggestions.
+    if (items.length) {
       db.tx(() => {
+        db.run("DELETE FROM command_history WHERE host_id = ? AND user_id = ? AND source = 'import'", id, req.user.id);
         for (const it of items) db.run('INSERT INTO command_history (host_id, user_id, cwd, command, ts, source) VALUES (?, ?, NULL, ?, ?, ?)', id, req.user.id, it.command, it.ts, 'import');
       });
-      imported += items.length;
     }
+    const imported = items.length;
     journal.add({ type: 'exec', event: 'history-import', host: hosts.get(id), detail: `${imported} commande(s)` });
     res.json({ imported });
   });

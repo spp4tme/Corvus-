@@ -121,7 +121,8 @@ done`;
     const row = this.db.get('SELECT * FROM undo_ops WHERE id = ? AND host_id = ?', opId, hostId);
     if (!row) throw new HttpError(404, 'NOT_FOUND', 'Opération introuvable (expirée ?)');
     if (user && user.role !== 'admin' && row.user_id && row.user_id !== user.id) throw new HttpError(403, 'FORBIDDEN', 'Cette annulation appartient à un autre compte');
-    if (row.state !== 'ready') throw new HttpError(409, 'ALREADY_DONE', 'Déjà annulée');
+    // Verrou atomique : deux clics (ou deux comptes) simultanés ne restaurent pas deux fois.
+    if (!this.db.run("UPDATE undo_ops SET state = 'running' WHERE id = ? AND state = 'ready'", opId).changes) throw new HttpError(409, 'ALREADY_DONE', 'Déjà annulée (ou en cours)');
     const files = JSON.parse(row.files);
     const sftp = await this.pool.sftp(hostId);
     const report = { restored: 0, removed: 0, errors: [] };
