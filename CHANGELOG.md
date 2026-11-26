@@ -4,6 +4,27 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [1.0.0] - 2026-11-26
+
+La première version stable : l'agent s'installe en une commande et sait désigner exactement qui écrit.
+
+### Ajouté
+- **Installation de l'agent en une commande** : l'écran Agents affiche `curl -fsSL …/api/agent/install.sh | sudo sh -s -- --server … --token …`.
+  Le script détecte x86_64 / aarch64, télécharge le binaire de la release de la même version, **vérifie son SHA-256**, installe
+  l'unité systemd (`--full` : droits complets), enrôle et démarre l'agent. `--dry-run` montre les étapes sans rien modifier.
+- **fanotify** dans l'agent (droits complets) : l'**écrivain exact** d'un fichier est désigné même s'il est déjà mort (alertes
+  ransomware), les **programmes de moins de 2 s** sont vus par l'empreinte du normal, et une écriture déclenche aussitôt un
+  balayage des fichiers surveillés. Sans les droits, l'agent retombe sur le balayage et `/proc` comme avant.
+- Nouvelle capacité annoncée : `procEvents` (en plus de `fanotify`).
+
+### Modifié
+- Numérotation : 1.0.0. Le protocole de l'agent et les données restent compatibles avec la 0.2.x.
+
+### Limites connues
+- Pas d'eBPF (Rust nightly et `bpf-linker` requis). À l'`exec`, les arguments ne sont pas encore connus.
+- Pas de certificats SSH courts (bloqués par la bibliothèque `ssh2`).
+- Voir « Limites connues » dans le README.
+
 ## [0.2.1] - 2026-11-26
 
 ### Modifié

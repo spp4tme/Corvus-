@@ -147,12 +147,22 @@ détectée, ✅ 4 alertes critiques et le journal (`canary`, `suspect`), ✅ Rem
 réaction automatique (gel et isolement désactivés par défaut). Pas encore essayé : les boutons de l'interface
 (Rembobiner), un hôte distant, les réactions automatiques activées.
 
-## Après la validation (à décider avec le propriétaire)
+## Après la validation
 
-1. **Version 1.0** (recommandé en premier) : numéro de version, binaire de l'agent publié par la CI, installation de
-   l'agent en une commande depuis l'écran Agents.
-2. **eBPF (Aya) / fanotify** : processus de moins de 2 s, attribution exacte des écritures (Rust nightly + `bpf-linker`).
-3. **Certificats SSH courts** : bloqués par `ssh2` ; seulement si le besoin est réel.
+1. ✅ **Version 1.0** (2026-11-26) : numéro de version, binaires de l'agent publiés par la CI (release), installation de l'agent en une
+   commande depuis l'écran Agents (`GET /api/agent/install.sh`, SHA-256 vérifié, `--full`, `--dry-run`).
+   Non testé en réel : l'exécution complète du script en root (il aurait remplacé l'agent en service) ; couvert par `sh -n`,
+   `--dry-run`, le refus sans root et l'identité des unités avec `deploy/agent/` (`test/agent-install.test.js`).
+2. ✅ **fanotify** (2026-11-26, `agent/src/kernel.rs`) : écrivain exact des fichiers (`FAN_CLOSE_WRITE`), programmes de moins de 2 s
+   (`FAN_OPEN_EXEC`), balayage immédiat à l'écriture. Vérifié en root sur le Pi avec le faux ransomware (écrivains désignés avec leur
+   exe, `source: "fanotify"`) et un programme de 0,3 s vu par l'empreinte. **eBPF (Aya) : non fait** (Rust nightly + `bpf-linker` ;
+   le noyau du Pi a BTF, mais fanotify répond au besoin sans sortir du Rust stable et statique). Le connecteur de processus netlink
+   a été essayé puis écarté : `CONFIG_PROC_EVENTS` est absent du noyau `raspi` (aucun événement reçu, même depuis un script Python).
+   Limites : à l'`exec` on connaît le programme mais pas ses arguments ; un `exec` du même processus garde son identité.
+3. **Certificats SSH courts** : bloqués par `ssh2` ; seulement si le besoin est réel (non demandé).
+4. **Image Docker** (2026-11-26, `ghcr.io/spp4tme/corvus:0.2.1`, linux/arm64) : pas de Docker sur le Pi ; calques tirés depuis ghcr.io
+   (anonyme) et décompressés, puis lancés dans un `chroot` (utilisateur non root, `PORT=7695`) : « Corvus 0.2.1 à l'écoute »,
+   `/api/health` OK, `logo.svg` et `sw.js` servis. Non testé : `docker run` réel (réseau, volume `/data`, `HEALTHCHECK`).
 
 Déjà vérifié sur le PC : écrans Agents, Rembobiner, Radiographie ouverts dans Edge (375 px et 1280 px) avec un agent
 simulé — aucune erreur JS, pas de débordement, cibles tactiles ≥ 44 px.
