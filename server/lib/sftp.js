@@ -83,7 +83,8 @@ export class SftpService {
     } catch (err) {
       throw mapSftpError(err, abs);
     }
-    if (items.length > MAX_ENTRIES) items = items.slice(0, MAX_ENTRIES);
+    const truncated = items.length > MAX_ENTRIES;
+    if (truncated) items = items.slice(0, MAX_ENTRIES);
     const entries = await Promise.all(items.filter((i) => i.filename !== '.' && i.filename !== '..').map(async (i) => {
       let type = typeOf(i.attrs.mode);
       let target;
@@ -105,7 +106,7 @@ export class SftpService {
     }));
     const isDir = (e) => e.type === 'dir' || e.target === 'dir';
     entries.sort((a, b) => (isDir(b) - isDir(a)) || a.name.localeCompare(b.name, 'fr', { numeric: true }));
-    return { path: abs, home: await this.home(hostId, sftp), entries, truncated: items.length >= MAX_ENTRIES };
+    return { path: abs, home: await this.home(hostId, sftp), entries, truncated };
   }
 
   async stat(hostId, p) {

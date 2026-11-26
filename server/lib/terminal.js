@@ -9,6 +9,7 @@ import { logger } from './log.js';
 
 const log = logger('term');
 const MAX_SESSIONS = 32;
+const MAX_PER_USER = 12; // un seul compte ne peut pas épuiser les 32 terminaux des autres
 // Un processus distant ne doit pas pouvoir inonder le journal et les appareils de notifications.
 const NOTIFY_MIN_INTERVAL_MS = 3000;
 // Contre-pression : au-delà de HIGH octets en attente côté WebSocket, on suspend la lecture SSH.
@@ -93,6 +94,7 @@ export class TerminalManager {
    */
   async create(hostId, { cols = 80, rows = 24, tmux, tmuxSession, claude, user = null } = {}) {
     if (this.sessions.size >= MAX_SESSIONS) throw new HttpError(429, 'TOO_MANY', 'Trop de terminaux ouverts');
+    if (user && [...this.sessions.values()].filter((x) => x.owner?.id === user.id).length >= MAX_PER_USER) throw new HttpError(429, 'TOO_MANY', 'Trop de terminaux ouverts pour ce compte');
     // Ouvrir un shell exige le rôle « operator » sur l'hôte.
     if (this.requireHost && user) this.requireHost(user, hostId, 'operator');
     const host = this.hosts.get(hostId);
