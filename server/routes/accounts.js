@@ -163,8 +163,19 @@ export function accountRoutes(ctx) {
   r.get('/me', (req, res) => res.json({ user: { ...req.user, grants: users.grants(req.user.id) } }));
 
   r.post('/me/password', (req, res) => {
-    users.changeOwnPassword(req.user.id, req.body?.current, req.body?.next);
-    journal.add({ type: 'account', event: 'password', user: req.user, ip: req.ip });
+    // Un cookie volé ne doit pas permettre de deviner le mot de passe actuel : essais limités, comme à la connexion.
+    const key = `pw:${req.user.id}`;
+    const wait = ctx.auth.limiter.blockedFor(key);
+    if (wait > 0) throw new HttpError(429, 'RATE_LIMITED', `Trop de tentatives. Réessayez dans ${Math.ceil(wait / 60000)} min.`);
+    try {
+      users.changeOwnPassword(req.user.id, req.body?.current, req.body?.next, req.sessionKey);
+    } catch (err) {
+      if (err.code === 'BAD_PASSWORD') ctx.auth.limiter.fail(key);
+      throw err;
+    }
+    ctx.auth.limiter.success(key);
+    ctx.revalidateTerminals?.();
+    journal.add({ type: 'account', event: 'password', user: req.user, ip: req.ip, detail: 'autres sessions coupées' });
     res.json({ ok: true });
   });
 

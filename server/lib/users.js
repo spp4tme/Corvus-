@@ -117,10 +117,14 @@ export class Users {
     });
   }
 
-  changeOwnPassword(id, current, next) {
+  /** Change son mot de passe ; les AUTRES sessions du compte sont coupées (celle de `keepSessionKey` reste). */
+  changeOwnPassword(id, current, next, keepSessionKey = null) {
     const u = this.row(id);
     if (!u || !verifyPassword(current, u.password_hash)) throw new HttpError(403, 'BAD_PASSWORD', 'Mot de passe actuel incorrect');
-    this.db.run('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', hashPassword(checkPassword(next)), id);
+    this.db.tx(() => {
+      this.db.run('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', hashPassword(checkPassword(next)), id);
+      this.db.run('DELETE FROM auth_sessions WHERE user_id = ? AND key <> ?', id, keepSessionKey ?? '');
+    });
   }
 
   revokeSessions(id) {

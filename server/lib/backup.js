@@ -129,6 +129,7 @@ export class BackupService {
   async stage(file, password, user) {
     checkPassword(password);
     const size = fs.statSync(file).size;
+    if (size < MAGIC.length + 16) throw new HttpError(400, 'NOT_A_BACKUP', 'Ce fichier n\'est pas une sauvegarde Corvus (.cvbk)');
     const fd = fs.openSync(file, 'r');
     let header;
     let tag;
@@ -144,7 +145,7 @@ export class BackupService {
     } finally {
       fs.closeSync(fd);
     }
-    const meta = JSON.parse(header.subarray(MAGIC.length).toString('utf8'));
+    const meta = parseHeader(header);
     const decipher = crypto.createDecipheriv('aes-256-gcm', deriveKey(password, Buffer.from(meta.kdf.salt, 'base64'), meta.kdf), Buffer.from(meta.iv, 'base64'));
     decipher.setAAD(header);
     decipher.setAuthTag(tag);
@@ -180,6 +181,22 @@ export class BackupService {
     this.journal.add({ type: 'backup', event: 'restore-staged', user, detail: `sauvegarde du ${new Date(meta.createdAt).toISOString()}` });
     return { ok: true, createdAt: meta.createdAt, restartRequired: true };
   }
+}
+
+/**
+ * En-tête d'une sauvegarde, lu depuis un fichier NON fiable : les paramètres du KDF sont bornés (un `N` géant
+ * ferait allouer des gigaoctets à scrypt) et toute forme inattendue est une erreur 400, jamais un plantage.
+ */
+export function parseHeader(header) {
+  const bad = (why) => new HttpError(400, 'NOT_A_BACKUP', `En-tête de sauvegarde invalide (${why})`);
+  let meta;
+  try { meta = JSON.parse(header.subarray(MAGIC.length).toString('utf8')); } catch { throw bad('JSON illisible'); }
+  const k = meta?.kdf;
+  if (meta?.v !== 1 || k?.alg !== 'scrypt' || typeof k.salt !== 'string' || typeof meta.iv !== 'string') throw bad('champs manquants');
+  const pow2 = (n) => Number.isInteger(n) && n >= 2 ** 14 && n <= 2 ** 17 && (n & (n - 1)) === 0;
+  if (!pow2(k.N) || k.r !== 8 || k.p !== 1) throw bad('paramètres de dérivation hors limites');
+  if (Buffer.from(k.salt, 'base64').length !== 16 || Buffer.from(meta.iv, 'base64').length !== 12) throw bad('sel ou vecteur invalide');
+  return meta;
 }
 
 /** Écrit les entrées de l'archive dans `dest` (noms strictement contrôlés : aucune évasion de dossier). */

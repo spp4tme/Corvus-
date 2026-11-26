@@ -130,6 +130,8 @@ export class Challenges {
   issue(data = {}) {
     const now = Date.now();
     for (const [k, c] of this.map) if (c.expires < now) this.map.delete(k);
+    // Plafond : /passkey/options est public, il ne doit pas permettre de remplir la mémoire.
+    while (this.map.size >= 1000) this.map.delete(this.map.keys().next().value);
     const challenge = b64u(crypto.randomBytes(32));
     const id = b64u(crypto.randomBytes(12));
     this.map.set(id, { ...data, challenge, expires: now + 5 * 60_000 });

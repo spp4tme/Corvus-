@@ -181,7 +181,7 @@ export function createCorvus(overrides = {}) {
     req.user = publicUser(who.user);
     req.sessionKey = who.sessionKey;
     // Mot de passe provisoire (créé par un admin) : seul le changement de mot de passe est permis.
-    if (req.user.mustChangePassword && !/^\/(me|auth)(\/|$)/.test(req.path)) {
+    if (req.user.mustChangePassword && !/^\/(me|me\/password|auth(\/.*)?)$/.test(req.path)) {
       return next(new HttpError(403, 'PASSWORD_CHANGE_REQUIRED', 'Changez votre mot de passe provisoire (Réglages → Mon compte).'));
     }
     req.allowedHostIds = () => {
