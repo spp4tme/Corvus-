@@ -63,8 +63,8 @@ export function tmuxCommand(sessionName) {
 }
 
 export class TerminalManager {
-  constructor({ pool, hosts, journal, config, onNotify, claude, requireHost, recorder }) {
-    Object.assign(this, { pool, hosts, journal, config, onNotify, claude, requireHost, recorder });
+  constructor({ pool, hosts, journal, config, onNotify, claude, requireHost, recorder, accountOk, sessionOk }) {
+    Object.assign(this, { pool, hosts, journal, config, onNotify, claude, requireHost, recorder, accountOk, sessionOk });
     this.sessions = new Map();
   }
 
@@ -271,6 +271,29 @@ export class TerminalManager {
     return [...this.sessions.values()].filter((s) => s.shares.has(userId)).map((s) => ({ ...this.view(s), mode: s.shares.get(userId).mode }));
   }
 
+  /**
+   * Revérifie les droits des connexions déjà ouvertes : un compte désactivé ou supprimé, une session
+   * fermée (déconnexion, jetons révoqués) ou un hôte qui n'est plus accessible ne gardent PAS un shell ouvert.
+   * Une connexion refusée est coupée ; une session dont le propriétaire a perdu ses droits est fermée.
+   */
+  revalidate() {
+    for (const s of [...this.sessions.values()]) {
+      if (s.owner && this.accountOk && !this.accountOk(s.owner.id, s.hostId, 'operator')) {
+        this.journal.add({ type: 'terminal', event: 'revoked', host: this.hosts.find(s.hostId), user: s.owner, detail: 'droits retirés : session fermée' });
+        for (const ws of s.clients) { sendCtl(ws, { t: 'error', code: 'REVOKED', message: 'Accès retiré' }); ws.close(4001, 'REVOKED'); }
+        this.close(s.id);
+        continue;
+      }
+      for (const ws of [...s.clients]) {
+        const guest = s.owner && ws.userId !== undefined && ws.userId !== s.owner.id;
+        const stillGuest = !guest || s.shares.has(ws.userId);
+        const accountFine = ws.userId === undefined || !this.accountOk || this.accountOk(ws.userId, s.hostId, guest ? 'none' : 'operator');
+        const sessionFine = !ws.sessionKey || !this.sessionOk || this.sessionOk(ws.sessionKey);
+        if (!stillGuest || !accountFine || !sessionFine) { sendCtl(ws, { t: 'error', code: 'REVOKED', message: 'Accès retiré' }); ws.close(4001, 'REVOKED'); }
+      }
+    }
+  }
+
   closeAll() {
     // Arrêt du serveur : les enregistrements sont sauvegardés avant la fermeture de la base.
     for (const s of this.sessions.values()) this.recorder?.finish(s);
@@ -317,6 +340,7 @@ export class TerminalManager {
     const sinceRaw = params.get('since');
     const since = sinceRaw !== null && /^\d{1,15}$/.test(sinceRaw) ? Number(sinceRaw) : undefined;
     ws.userId = user?.id;
+    ws.sessionKey = req.sessionKey;
     this.attach(s, ws, since);
     if (ws.guest) {
       this.journal.add({ type: 'share', event: 'join', user, host: this.hosts.find(s.hostId), detail: `${ws.guest === 'control' ? 'co-pilote' : 'spectateur'} du terminal de ${s.owner?.username}` });

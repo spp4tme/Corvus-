@@ -149,6 +149,7 @@ export function authRoutes(ctx) {
   r.post('/logout', (req, res) => {
     auth.destroySession(parseCookies(req.headers.cookie)[COOKIE]);
     res.clearCookie(COOKIE, { path: '/' });
+    ctx.revalidateTerminals?.();
     res.json({ ok: true });
   });
 
@@ -233,12 +234,14 @@ export function accountRoutes(ctx) {
     const { role, disabled, password } = req.body || {};
     const u = users.update(id, { role, disabled, password });
     journal.add({ type: 'account', event: 'update', user: req.user, detail: `${u.username} ${JSON.stringify({ role, disabled, password: password ? '(réinitialisé)' : undefined })}` });
+    ctx.revalidateTerminals?.();
     res.json({ user: u });
   });
   r.put('/users/:id/grants', (req, res) => {
     const id = uid(req);
     const grants = users.setGrants(id, req.body?.grants);
     journal.add({ type: 'account', event: 'grants', user: req.user, detail: `${users.get(id).username} : ${grants.map((g) => `${g.scope}:${g.target || '*'}=${g.role}`).join(', ') || 'aucun'}` });
+    ctx.revalidateTerminals?.();
     res.json({ grants });
   });
   r.post('/users/:id/reset-totp', (req, res) => {
@@ -252,6 +255,7 @@ export function accountRoutes(ctx) {
     if (id === req.user.id) throw new HttpError(409, 'SELF', 'Vous ne pouvez pas supprimer votre propre compte');
     const name = users.get(id).username;
     users.remove(id);
+    ctx.revalidateTerminals?.();
     journal.add({ type: 'account', event: 'delete', user: req.user, detail: name });
     res.json({ ok: true });
   });

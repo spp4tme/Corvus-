@@ -107,6 +107,16 @@ export function createCorvus(overrides = {}) {
     pool, hosts, journal, config, claude: ctx.claude,
     requireHost: (user, hostId, level) => ctx.requireHost(user, hostId, level),
     recorder: ctx.recorder,
+    // Revalidation des terminaux ouverts : compte actif, rôle suffisant sur l'hôte, session toujours valide.
+    accountOk: (userId, hostId, level) => {
+      const u = ctx.users.row(userId);
+      if (!u || u.disabled) return false;
+      if (level === 'none') return true;
+      const host = ctx.hosts.find(hostId);
+      const role = host && ctx.users.hostRole(publicUser(u), host);
+      return !!role && Users.atLeast(role, level);
+    },
+    sessionOk: (key) => !!db.get('SELECT 1 AS ok FROM auth_sessions WHERE key = ? AND expires_at > ?', key, Date.now()),
     onNotify: (n) => ctx.notify?.(n),
   });
   createServices(ctx);
@@ -278,6 +288,7 @@ export function createCorvus(overrides = {}) {
       ws.on('pong', () => { ws.isAlive = true; });
       ws.on('error', () => {});
       req.user = who ? publicUser(who.user) : null;
+      req.sessionKey = who?.sessionKey;
       req.clientIp = ip;
       Promise.resolve(requestContext.run({ user: req.user, ip }, () => handler(ws, url, req))).catch((err) => {
         log.error('WebSocket', err);
@@ -294,6 +305,10 @@ export function createCorvus(overrides = {}) {
     }
   }, 25_000);
   heartbeat.unref();
+  // Filet de sécurité : les droits des terminaux ouverts sont revérifiés régulièrement (et à chaque changement de compte).
+  const revalidation = setInterval(() => ctx.terminals.revalidate(), 10_000);
+  revalidation.unref();
+  ctx.revalidateTerminals = () => ctx.terminals.revalidate();
 
   async function listen(port = config.port, host = config.bind) {
     await new Promise((resolve, reject) => {
@@ -309,6 +324,7 @@ export function createCorvus(overrides = {}) {
 
   async function close() {
     clearInterval(heartbeat);
+    clearInterval(revalidation);
     ctx.terminals.closeAll();
     ctx.agents.closeAll();
     pool.closeAll();
