@@ -5,6 +5,7 @@ import path from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { AgentService } from './lib/agents.js';
+import { installScript } from './lib/agent-install.js';
 import { config as baseConfig } from './config.js';
 import { Auth, loadToken, originAllowed, isLoopback } from './lib/auth.js';
 import { Vault } from './lib/vault.js';
@@ -139,6 +140,10 @@ export function createCorvus(overrides = {}) {
   api.use(express.json({ limit: '4mb' }));
   api.get('/health', (req, res) => res.json({ ok: true }));
   api.use('/auth', authRoutes(ctx));
+  // Script d'installation de l'agent : public (il ne contient aucun secret, le jeton est passé en argument).
+  api.get('/agent/install.sh', (req, res) => {
+    res.type('text/x-shellscript; charset=utf-8').send(installScript(ctx.version));
+  });
   // Enrôlement d'un agent : public, protégé par le jeton à usage unique (et le limiteur d'échecs par IP).
   api.post('/agent/enroll', (req, res, next) => {
     const wait = auth.limiter.blockedFor(req.ip);

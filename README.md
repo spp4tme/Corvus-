@@ -592,16 +592,30 @@ validées une à une. Protocole complet : [`docs/protocole-agent.md`](docs/proto
 
 ### Installation de l'agent
 
+**En une commande** : écran Agents → « Installer un agent » → choisir l'hôte (et cocher « Droits complets » si vous voulez
+Prévisualiser, la restauration, le gel de processus et l'isolement). Corvus affiche une commande à coller sur l'hôte :
+
 ```bash
-# 1. Le binaire : depuis la dernière release (x86_64 ou aarch64), vérifié par SHA256SUMS…
-V=0.2.0; A=$(uname -m)      # x86_64 ou aarch64
+curl -fsSL https://<corvus>/api/agent/install.sh | sudo sh -s -- --server https://<corvus> --token <jeton> [--full]
+```
+
+Le script (lisible à l'adresse `/api/agent/install.sh`, sans aucun secret : le jeton est à usage unique et valable 15 minutes)
+détecte x86_64 / aarch64, télécharge le binaire de la release **correspondant à la version de votre Corvus**, **vérifie son
+SHA-256** (`SHA256SUMS`), installe l'unité systemd (et `full.conf` avec `--full`), enrôle l'agent et le démarre. Essayez
+d'abord avec `--dry-run` : il affiche ce qui serait fait sans rien modifier.
+
+<details><summary>Installation manuelle (sans le script)</summary>
+
+```bash
+# 1. Le binaire : depuis la release (x86_64 ou aarch64), vérifié par SHA256SUMS…
+V=0.2.1; A=$(uname -m)      # x86_64 ou aarch64
 curl -fLO https://github.com/spp4tme/Corvus-/releases/download/v$V/corvus-agent-$V-linux-$A
 curl -fLO https://github.com/spp4tme/Corvus-/releases/download/v$V/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing && sudo install -m 755 corvus-agent-$V-linux-$A /usr/local/bin/corvus-agent
 #    … ou compilé soi-même (Rust) :
 #    cd agent && cargo build --release        # binaire statique avec la cible *-unknown-linux-musl
 
-# 2. Dans Corvus : écran Agents → « Installer un agent » → choisir l'hôte : un jeton à usage unique (15 min) s'affiche.
+# 2. Dans Corvus : écran Agents → « Installer un agent » → un jeton à usage unique (15 min) s'affiche.
 #    (API équivalente : POST /api/agents/enrollments {"hostId":"…"} avec un jeton d'API administrateur.)
 
 # 3. Sur l'hôte : enrôler, puis démarrer le service
@@ -609,8 +623,10 @@ sudo corvus-agent enroll --server https://<machine>.<tailnet>.ts.net --token <je
 sudo cp deploy/agent/corvus-agent.service /etc/systemd/system/ && sudo systemctl enable --now corvus-agent
 ```
 
+</details>
+
 > **Agent sur la machine qui héberge Corvus** : une machine ne résout pas toujours son propre nom MagicDNS. Utilisez alors
-> `--server http://127.0.0.1:7680` (le trafic ne quitte pas la machine).
+> `--server http://127.0.0.1:7680` (le trafic ne quitte pas la machine) ; avec le script : `CORVUS_AGENT_SERVER=http://127.0.0.1:7680 sudo -E sh install.sh …`.
 
 ### Droits : tout est opt-in
 

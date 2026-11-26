@@ -13,6 +13,7 @@ async function copy(text) {
 /** Crée un jeton et affiche la commande à coller sur l'hôte (le jeton n'est montré qu'une fois). */
 async function installDialog(hosts, onDone) {
   const sel = select(hosts.map((x) => ({ value: x.id, label: `${x.name} (${x.hostname})` })), { value: hosts[0]?.id });
+  const full = h('input', { type: 'checkbox', id: 'ag-full' });
   const out = h('div', { class: 'stack' });
   const make = button({
     label: 'Créer le jeton', variant: 'primary',
@@ -20,11 +21,11 @@ async function installDialog(hosts, onDone) {
       try {
         const t = await post('/api/agents/enrollments', { hostId: sel.value });
         const server = location.origin;
-        const cmd = `sudo corvus-agent enroll --server ${server} --token ${t.token}`;
+        const cmd = `curl -fsSL ${server}/api/agent/install.sh | sudo sh -s -- --server ${server} --token ${t.token}${full.checked ? ' --full' : ''}`;
         replace(out,
-          h('p', { class: 'dim' }, `Valable 15 minutes, à usage unique. Sur l'hôte « ${t.host.name} », une fois le binaire installé (voir README, « Agent Corvus ») :`),
+          h('p', { class: 'dim' }, `Valable 15 minutes, à usage unique. Collez cette commande sur l'hôte « ${t.host.name} » (Linux, x86_64 ou aarch64) : elle télécharge l'agent, vérifie son empreinte SHA-256, installe le service et enrôle :`),
           h('pre', { class: 'code' }, cmd),
-          h('p', { class: 'dim' }, 'Puis : sudo systemctl enable --now corvus-agent'),
+          h('p', { class: 'dim' }, `Le script est lisible avant exécution : ${server}/api/agent/install.sh`),
           button({ label: 'Copier la commande', icon: 'copy', onClick: () => copy(cmd) }));
         onDone();
       } catch (err) { toastError(err); }
@@ -32,7 +33,10 @@ async function installDialog(hosts, onDone) {
   });
   const d = openDialog({
     title: 'Installer un agent',
-    body: h('div', { class: 'stack' }, h('label', null, 'Hôte', sel), out),
+    body: h('div', { class: 'stack' }, h('label', null, 'Hôte', sel),
+      h('label', { class: 'row', for: 'ag-full' }, full, h('span', null, 'Droits complets (prévisualisation, restauration, gel de processus, isolement réseau)')),
+      h('p', { class: 'dim' }, 'Sans cette case, l\'agent n\'a aucun privilège : métriques, surveillance de fichiers, radiographie des processus de root.'),
+      out),
     actions: [button({ label: 'Fermer', variant: 'ghost', onClick: () => d.close() }), make],
   });
 }
