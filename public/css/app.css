@@ -54,7 +54,7 @@ code, pre, .mono { font-family: var(--font-mono); font-size: var(--fs-sm); }
   position: relative; z-index: 3;
 }
 .app-header .brand { display: flex; align-items: center; gap: var(--s-2); min-height: var(--tap); color: var(--c-text); text-decoration: none; }
-.app-header .brand svg { width: 28px; height: 28px; flex: none; }
+.app-header .brand svg, .app-header .brand img { width: 32px; height: 32px; flex: none; }
 .app-header .brand-name {
   font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; font-size: var(--fs-sm);
   background: var(--holo); -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -394,7 +394,7 @@ dialog.dlg[open] { animation: dlg-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .login { min-height: var(--app-height, 100dvh); display: grid; place-items: center; padding: calc(var(--s-6) + var(--safe-top)) var(--s-4) calc(var(--s-6) + var(--safe-bottom)); }
 .login-card { width: min(440px, 100%); padding: var(--s-8) var(--s-6); display: flex; flex-direction: column; gap: var(--s-4); box-shadow: var(--shadow-2), 0 0 80px rgba(183, 148, 255, 0.12); }
 .login-logo { display: flex; align-items: center; gap: var(--s-3); }
-.login-logo svg { width: 56px; height: 56px; filter: drop-shadow(0 6px 18px rgba(183, 148, 255, 0.4)); }
+.login-logo svg, .login-logo img { width: 72px; height: 72px; filter: drop-shadow(0 6px 18px rgba(183, 148, 255, 0.4)); }
 .login-logo .brand-name { font-size: 28px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; background: var(--holo); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
 /* ---------- Terminal ---------- */

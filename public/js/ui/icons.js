@@ -101,35 +101,15 @@ export function icon(name, { size, label } = {}) {
   return svg;
 }
 
-/** Logo Corvus : silhouette géométrique de corbeau + curseur d'invite. */
-let logoSeq = 0;
+/** Logo Corvus : le corbeau détaillé de public/icons/logo.svg (généré par scripts/make-logo.mjs). */
 export function logo() {
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 64 64');
-  svg.setAttribute('aria-hidden', 'true');
-  const add = (tag, attrs) => {
-    const el = document.createElementNS(NS, tag);
-    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-    svg.appendChild(el);
-    return el;
-  };
-  // Dégradé « huile sur plume » (identifiant unique : plusieurs logos peuvent coexister dans la page).
-  const gid = `cv-holo-${++logoSeq}`;
-  const defs = add('defs', {});
-  const g = document.createElementNS(NS, 'linearGradient');
-  for (const [k, v] of Object.entries({ id: gid, x1: 0, y1: 0, x2: 1, y2: 1 })) g.setAttribute(k, v);
-  for (const [o, c] of [[0, '#7df9d0'], [0.4, '#b794ff'], [0.75, '#ff8fcf'], [1, '#ffd27a']]) {
-    const stop = document.createElementNS(NS, 'stop');
-    stop.setAttribute('offset', String(o)); stop.setAttribute('stop-color', c);
-    g.appendChild(stop);
-  }
-  defs.appendChild(g);
-  add('rect', { x: 2, y: 2, width: 60, height: 60, rx: 18, fill: '#0a090c' });
-  add('rect', { x: 2.75, y: 2.75, width: 58.5, height: 58.5, rx: 17.25, fill: 'none', stroke: `url(#${gid})`, 'stroke-width': 1.5, opacity: 0.8 });
-  add('path', { d: 'M14 44 L22 24 L34 16 L50 20 L40 26 L42 34 L30 46 Z', fill: `url(#${gid})` });
-  add('path', { d: 'M34 16 L50 20 L40 26 Z', fill: '#fff', opacity: 0.35 });
-  add('circle', { cx: 35, cy: 22, r: 2.2, fill: '#0a090c' });
-  return svg;
+  const img = document.createElement('img');
+  img.src = '/icons/logo.svg';
+  img.alt = '';
+  img.width = 64; img.height = 64;
+  img.decoding = 'async';
+  img.setAttribute('aria-hidden', 'true');
+  return img;
 }
 
 export const HOST_ICONS = ['server', 'desktop', 'laptop', 'pi', 'cloud', 'database', 'router', 'nas', 'container', 'globe', 'phone', 'shield'];
