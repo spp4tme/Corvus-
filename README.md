@@ -685,7 +685,7 @@ de fichiers « devient aléatoire » (entropie), et nomme le processus qui écri
 par défaut** : geler cet écrivain (SIGSTOP), **isoler l'hôte du réseau** (nftables ; Tailscale et le serveur Corvus
 restent toujours joignables ; levée automatique après 15 min). La restauration se fait ensuite par **Rembobiner**.
 Essai sans risque : `bash deploy/demo/fake-ransomware.sh prepare` puis `attack` (le script refuse tout dossier autre que
-celui qu'il crée dans `/tmp`). **Limites** : sans eBPF/fanotify, l'attribution au processus est une estimation ; les fichiers
+celui qu'il crée dans `/tmp`). **Limites** : l'écrivain est désigné exactement par fanotify (droits complets) et sinon estimé ; les fichiers
 > 512 Ko sont détectés mais pas restaurables ; l'isolement dépend du marquage `0x80000` de tailscaled et n'a pas été
 éprouvé avec un vrai tailscaled — gardez un accès console et testez d'abord sur un hôte non critique.
 
@@ -810,8 +810,11 @@ CHANGELOG.md, Dockerfile, docker-compose.yml
   non critique, avec un accès console de secours.
 - **Pas encore éprouvés** : l'installation systemd complète sur une machine vierge ou sous Fedora / Arch / openSUSE ;
   `deploy/windows/install-windows.ps1` ; un vrai SSD externe ; la migration d'une installation 0.1.
-- **Sans eBPF ni fanotify** : les fichiers sont surveillés par balayage (3 à 10 s) et les processus lus dans `/proc` toutes les
-  2 s ; un processus de moins de 2 s n'est pas vu et l'attribution des écritures à un processus est une estimation.
+- **fanotify, pas eBPF** : avec les droits complets (`CAP_SYS_ADMIN`), l'agent utilise **fanotify** : il nomme l'écrivain exact d'un
+  fichier (même mort depuis) et voit les programmes lancés en moins de 2 s ; une écriture déclenche aussitôt un balayage. Sans ces
+  droits, il retombe sur le balayage (3 à 10 s) et la lecture de `/proc` toutes les 2 s (un programme de moins de 2 s n'est pas vu,
+  l'écrivain est une estimation). eBPF n'est pas utilisé : il exigerait Rust nightly et `bpf-linker`. À l'`exec`, on connaît le
+  programme mais pas encore ses arguments.
 
 **Usage**
 - **Certificats SSH de courte durée** : reportés — la bibliothèque `ssh2` (1.17) ne sait pas

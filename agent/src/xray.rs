@@ -1,8 +1,8 @@
 //! Radiographie de l'hôte (étape 7.1) : processus, connexions réseau et « lignée » (qui a lancé quoi,
 //! y compris via quelle session SSH), lus dans /proc.
 //!
-//! Repli /proc plutôt qu'eBPF : sondage toutes les 2 s. Limite honnête : un processus qui naît ET meurt
-//! entre deux sondages (moins de 2 s) n'est pas vu ; eBPF (étape optionnelle) lèverait cette limite.
+//! Sondage de /proc toutes les 2 s, complété par le connecteur de processus du noyau (`kernel.rs`) quand il est
+//! disponible : les `exec` arrivent alors tout de suite et un processus de moins de 2 s est vu (sans lui, il ne l'est pas).
 
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -159,7 +159,34 @@ pub struct Xray {
 
 const MAX_PER_TICK: usize = 100;
 
+/// Événement « processus démarré » (avec sa lignée et la session SSH d'origine éventuelle).
+fn start_event(p: &Proc, all: &HashMap<u32, Proc>) -> Event {
+    let via = ssh_session(all, p.pid).map(|(u, s)| json!({ "ssh": u, "sshd": s }));
+    Event { kind: "proc.start", body: json!({
+        "pid": p.pid, "ppid": p.ppid, "uid": p.uid, "start": p.start, "exe": p.exe, "comm": p.comm, "cmd": p.cmd,
+        "lineage": lineage(all, p.pid), "via": via,
+    }) }
+}
+
 impl Xray {
+    /// Un `exec` annoncé par le noyau (connecteur de processus) : l'événement part tout de suite, et le sondage de /proc
+    /// ne le répétera pas (le processus est déjà connu). Rien avant le premier instantané : il fera foi.
+    pub fn note_exec(&mut self, p: &Proc) -> Option<Event> {
+        let procs = self.procs.as_mut()?;
+        if p.exe.is_empty() || procs.contains_key(&(p.pid, p.start)) { return None; }
+        procs.insert((p.pid, p.start), p.clone());
+        // Ancêtres lus à la demande (pas tout /proc) : de quoi remonter la lignée et la session SSH.
+        let mut all = HashMap::new();
+        let mut cur = Some(p.clone());
+        while let Some(q) = cur {
+            let parent = q.ppid;
+            all.insert(q.pid, q);
+            if parent == 0 || all.len() >= 14 || all.contains_key(&parent) { break; }
+            cur = read_proc(parent);
+        }
+        Some(start_event(p, &all))
+    }
+
     /// Processus : instantané la première fois, puis démarrages / arrêts. `all` est réutilisé par `sample_conns`.
     pub fn sample_procs(&mut self, all: &HashMap<u32, Proc>) -> Vec<Event> {
         let now: HashMap<(u32, u64), Proc> = all.values().map(|p| ((p.pid, p.start), p.clone())).collect();
@@ -175,11 +202,7 @@ impl Xray {
                     if before.contains_key(k) || p.exe.is_empty() { continue; } // exe vide = thread noyau
                     started += 1;
                     if started > MAX_PER_TICK { continue; }
-                    let via = ssh_session(all, p.pid).map(|(u, s)| json!({ "ssh": u, "sshd": s }));
-                    out.push(Event { kind: "proc.start", body: json!({
-                        "pid": p.pid, "ppid": p.ppid, "uid": p.uid, "start": p.start, "exe": p.exe, "comm": p.comm, "cmd": p.cmd,
-                        "lineage": lineage(all, p.pid), "via": via,
-                    }) });
+                    out.push(start_event(p, all));
                 }
                 if started > MAX_PER_TICK { out.push(Event { kind: "proc.burst", body: json!({ "count": started }) }); }
                 for (k, p) in before { if !now.contains_key(k) && !p.exe.is_empty() { out.push(Event { kind: "proc.exit", body: json!({ "pid": p.pid, "exe": p.exe }) }); } }

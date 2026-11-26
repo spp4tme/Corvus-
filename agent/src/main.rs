@@ -9,6 +9,7 @@
 mod actions;
 mod buffer;
 mod identity;
+mod kernel;
 mod metrics;
 mod preview;
 mod protocol;
@@ -24,7 +25,7 @@ use ed25519_dalek::SigningKey;
 use identity::{websocket_url, Identity};
 use rand::rngs::OsRng;
 use serde_json::{json, Value};
-use std::{collections::HashSet, env, path::PathBuf, process, thread, time::{Duration, Instant}};
+use std::{collections::{HashSet, VecDeque}, env, path::PathBuf, process, thread, time::{Duration, Instant}};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -52,8 +53,9 @@ fn data_dir(args: &[String]) -> PathBuf {
     PathBuf::from(opt(args, "--dir").or_else(|| env::var("CORVUS_AGENT_DIR").ok()).unwrap_or_else(|| "/var/lib/corvus-agent".into()))
 }
 
-fn capabilities(allow_preview: bool) -> Value {
-    // eBPF et fanotify : pas encore (étape 7) ; les fichiers sont suivis par balayage régulier.
+fn capabilities(allow_preview: bool, fanotify: bool, exec_events: bool) -> Value {
+    // fanotify (écrivain exact) et connecteur de processus (exec instantanés) si le noyau et les droits le permettent ;
+    // sinon balayage régulier et sondage de /proc. eBPF : non (Rust nightly requis).
     json!({
         "metrics": true, "files": true, "ports": true,
         "services": sys::systemd_available(),
@@ -61,7 +63,7 @@ fn capabilities(allow_preview: bool) -> Value {
         "actions": actions::names(allow_preview),
         "preview": allow_preview && preview::available(),
         "ransom": true, "isolation": ransom::available(), "xray": true,
-        "fanotify": false, "ebpf": false,
+        "fanotify": fanotify, "procEvents": exec_events, "ebpf": false,
     })
 }
 
@@ -91,6 +93,14 @@ struct Collector {
     next_pkgs: Instant,
     next_xray: Instant,
     next_conns: Instant,
+    // Sources noyau (kernel.rs) : écrivains exacts et exec instantanés.
+    kernel_rx: std::sync::mpsc::Receiver<kernel::KernelEvent>,
+    fanotify: bool,
+    exec_events: bool,
+    writes: VecDeque<(Instant, kernel::WriteEv)>,
+    // Programmes vus à l'`exec` (pid, start) → Proc : un écrivain très court est déjà mort quand on lit /proc, mais on connaît son exe.
+    recent_exec: std::collections::HashMap<(u32, u64), xray::Proc>,
+    last_scan: Instant,
 }
 
 impl Collector {
@@ -99,7 +109,7 @@ impl Collector {
         let path = body["path"].as_str().unwrap_or("");
         if self.canaries.contains(path) && matches!(kind, "file.modified" | "file.deleted") {
             let dirs: Vec<String> = ransom::parent_dir(path).into_iter().collect();
-            let writers = self.io.top(3, &xray::read_all(), &dirs);
+            let writers = self.writers(&dirs);
             let _ = buffer.push(ts, "canary.touched", &json!({ "path": path, "change": kind, "writers": writers }));
         }
         if let Some(mut ev) = self.detector.feed(Instant::now(), kind, body) {
@@ -107,9 +117,51 @@ impl Collector {
             dirs.extend(ransom::parent_dir(path));
             dirs.sort();
             dirs.dedup();
-            ev["writers"] = json!(self.io.top(3, &xray::read_all(), &dirs));
+            ev["writers"] = json!(self.writers(&dirs));
             let _ = buffer.push(ts, "ransom.suspect", &ev);
         }
+    }
+
+    /// Les écrivains probables dans ces dossiers : d'abord ceux que fanotify a VUS fermer un fichier après écriture
+    /// (attribution exacte, même si le processus est déjà mort), sinon l'estimation par les octets écrits (/proc/PID/io).
+    fn writers(&self, dirs: &[String]) -> Vec<Value> {
+        let mut count: std::collections::HashMap<(u32, u64), (u64, &xray::Proc)> = std::collections::HashMap::new();
+        for (_, w) in &self.writes {
+            if !dirs.iter().any(|d| w.path.starts_with(d.as_str())) || ransom::never_auto(&w.proc.comm) { continue; }
+            count.entry((w.proc.pid, w.proc.start)).or_insert((0, &w.proc)).0 += 1;
+        }
+        let mut v: Vec<(u64, &xray::Proc)> = count.into_values().collect();
+        v.sort_by_key(|x| std::cmp::Reverse(x.0));
+        let exact: Vec<Value> = v.into_iter().take(3).map(|(n, p)| json!({ "pid": p.pid, "start": p.start, "exe": p.exe, "comm": p.comm, "uid": p.uid, "writes": n, "source": "fanotify" })).collect();
+        if !exact.is_empty() { return exact; }
+        self.io.top(3, &xray::read_all(), dirs)
+    }
+
+    /// Vide le canal des sources noyau : `exec` → événement de processus tout de suite ; écriture → mémorisée
+    /// (30 s) et balayage immédiat (au plus un par seconde) au lieu d'attendre le prochain tour.
+    fn drain_kernel(&mut self, buffer: &Buffer, ts: i64) {
+        let now = Instant::now();
+        let (mut execs, mut wrote) = (0, false);
+        while let Ok(ev) = self.kernel_rx.try_recv() {
+            match ev {
+                kernel::KernelEvent::Exec(p) => {
+                    execs += 1;
+                    if execs > 200 { continue; } // rafale (compilation, `find -exec`) : le sondage de /proc prendra le relais
+                    if let Some(e) = self.xray.note_exec(&p) { let _ = buffer.push(ts, e.kind, &e.body); }
+                    if !p.exe.is_empty() {
+                        if self.recent_exec.len() >= 3000 { self.recent_exec.clear(); } // simple : on repart de zéro
+                        self.recent_exec.entry((p.pid, p.start)).or_insert(p); // le 1er `exec` est le programme ; le suivant est son chargeur (ld.so)
+                    }
+                }
+                kernel::KernelEvent::Write(mut w) => {
+                    if let Some(known) = self.recent_exec.get(&(w.proc.pid, w.proc.start)) { w.proc.exe = known.exe.clone(); w.proc.comm = known.comm.clone(); }
+                    self.writes.push_back((now, w));
+                    wrote = true;
+                }
+            }
+        }
+        while self.writes.len() > 5000 || self.writes.front().is_some_and(|(t, _)| now.duration_since(*t) > Duration::from_secs(30)) { self.writes.pop_front(); }
+        if wrote && now.duration_since(self.last_scan) >= Duration::from_secs(1) { self.next_scan = now; }
     }
 
     /// Fin automatique de l'isolement (filet de sécurité : on ne reste jamais coupé du réseau indéfiniment).
@@ -159,8 +211,10 @@ impl Collector {
         let now = Instant::now();
         let ts = protocol::now_ms() as i64;
         self.check_isolation_expiry(buffer);
+        self.drain_kernel(buffer, ts);
         if now >= self.next_scan {
             self.next_scan = now + self.scan_every;
+            self.last_scan = now;
             let baseline = self.state.get("baseline.files").is_none();
             match self.watcher.scan(&self.state, baseline) {
                 Ok(changes) => {
@@ -212,7 +266,7 @@ fn enroll(args: &[String]) -> Result<(), String> {
             "publicKey": B64.encode(key.verifying_key().to_bytes()),
             "version": VERSION,
             "hostname": hostname,
-            "capabilities": capabilities(false),
+            "capabilities": capabilities(false, false, false),
         }))
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => format!("enrôlement refusé ({code}) : {}", r.into_string().unwrap_or_default()),
@@ -245,6 +299,7 @@ fn run(args: &[String]) -> Result<(), String> {
     let canaries: HashSet<String> = ransom::create_canaries(&canary_dirs).into_iter().collect();
     for d in &canary_dirs { if !roots.contains(d) { roots.push(d.clone()); } }
     let now = Instant::now();
+    let sources = kernel::start(&roots);
     let mut collector = Collector {
         agent_dir: dir.clone(),
         allow_preview: args.iter().any(|a| a == "--allow-preview"),
@@ -259,6 +314,7 @@ fn run(args: &[String]) -> Result<(), String> {
         extra_allow: opt(args, "--isolate-allow").map(|v| v.split(',').map(|x| x.trim().to_string()).collect()).unwrap_or_default(),
         isolation_until: None,
         next_scan: now, next_ports: now, next_services: now, next_pkgs: now, next_xray: now, next_conns: now,
+        kernel_rx: sources.rx, fanotify: sources.fanotify, exec_events: sources.exec, writes: VecDeque::new(), recent_exec: Default::default(), last_scan: now,
     };
     // Démarrage prudent : un isolement oublié (agent redémarré, minuteur perdu) ne doit jamais durer.
     if ransom::available() && ransom::active() {
@@ -271,7 +327,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
     }
     buffer.push(protocol::now_ms() as i64, "agent.start", &json!({ "version": VERSION, "watch": roots })).map_err(|e| e.to_string())?;
-    eprintln!("surveillance : {roots:?}");
+    eprintln!("surveillance : {roots:?} (fanotify : {}, exec instantanés : {})", if collector.fanotify { "oui" } else { "non" }, if collector.exec_events { "oui" } else { "non" });
 
     // Reconnexion automatique : 1 s, 2 s, 4 s… jusqu'à 30 s. L'observation continue pendant l'attente.
     let mut wait = 1u64;
@@ -338,7 +394,7 @@ fn session(identity: &Identity, buffer: &Buffer, collector: &mut Collector, inte
     if let Some(last) = ok["body"]["lastSeq"].as_i64() { let _ = buffer.ack(last); } // déjà reçu avant la coupure
     eprintln!("connecté à Corvus (agent {})", identity.agent_id);
 
-    send(&mut ws, "hello_agent", json!({ "version": VERSION, "capabilities": capabilities(collector.allow_preview) }))?;
+    send(&mut ws, "hello_agent", json!({ "version": VERSION, "capabilities": capabilities(collector.allow_preview, collector.fanotify, collector.exec_events) }))?;
 
     set_read_timeout(&ws, Duration::from_secs(1));
     let mut sampler = metrics::Sampler::default();

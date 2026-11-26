@@ -62,9 +62,11 @@ Tout message invalide ferme la connexion (4001) : l'agent se reconnecte (1 s, 2 
 
 ## 5. Surveillance des fichiers et rembobinage (étape 6)
 L'agent surveille des dossiers (`--watch /etc,/var/spool/cron` par défaut) par **balayage toutes les 10 s**
-(date, taille, inode ; empreinte SHA-256 seulement si le fichier a changé). Pas d'inotify/fanotify : aucune
-dépendance au noyau, aucune limite de « watches » ; en contrepartie, un fichier modifié puis remis à
-l'identique entre deux balayages passe inaperçu.
+(date, taille, inode ; empreinte SHA-256 seulement si le fichier a changé). Un fichier modifié puis remis à
+l'identique entre deux balayages passe inaperçu. Si l'agent a `CAP_SYS_ADMIN`, **fanotify** (`kernel.rs`) s'y ajoute :
+`FAN_CLOSE_WRITE` désigne l'écrivain exact (`writers[].source = "fanotify"`) et déclenche un balayage immédiat,
+`FAN_OPEN_EXEC` signale chaque lancement de programme (`proc.start` sans attendre le sondage de 2 s). Capacités
+annoncées : `fanotify`, `procEvents`.
 
 Événements `events` produits (corps : `path, sha, prevSha, size, mode, uid, gid, noContent, reason`) :
 `file.baseline` (état initial), `file.created`, `file.modified`, `file.meta` (droits seuls), `file.deleted`,
