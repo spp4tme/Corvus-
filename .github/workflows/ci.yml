@@ -136,6 +136,38 @@ jobs:
           path: agent/target/${{ matrix.target }}/release/corvus-agent
           if-no-files-found: warn
 
+  agent-os:
+    # Jalon 1.2 : l'agent est COMPILÉ ET TESTÉ sur Windows et macOS (le test Linux est le job « agent » ci-dessus).
+    # macOS reste EXPÉRIMENTAL : ce job prouve que ça compile et que les tests passent sur un runner, pas que ça marche sur un Mac réel.
+    strategy:
+      fail-fast: false
+      matrix:
+        # windows-2022 : x86_64-pc-windows-msvc ; macos-15 : Apple Silicon (aarch64) ; macos-15-intel : x86_64.
+        os: [windows-2022, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche « stable »
+      - name: Tests de l'agent (cargo test)
+        working-directory: agent
+        shell: bash
+        # Les journaux GitHub demandent une connexion ; les annotations ::error:: sont lisibles par tous. On y met les
+        # erreurs de compilation (message + fichier:ligne) puis les tests en échec, pour corriger sans accès aux journaux.
+        run: |
+          set +e
+          cargo test 2>&1 | tee test.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" != 0 ]; then
+            awk '/^error(\[E[0-9]+\])?:/ && !/could not compile/ {msg=$0; next} /^ *--> / && msg {loc=$2; gsub(/\\/,"/",loc); n=split(loc,a,":"); printf "::error file=agent/%s,line=%s::%s\n", a[1], a[2], substr(msg,1,300); msg=""}' test.log | head -10
+            grep -E "^test .* FAILED$" test.log | head -5 | while IFS= read -r l; do echo "::error::${l:0:300}"; done
+            grep -A1 "panicked at" test.log | grep -v '^--$' | paste -sd' ' | head -c 1500 | while IFS= read -r l; do echo "::error::${l}"; done
+            grep -E "^(error|warning: unused)" test.log | sort -u | head -8 | while IFS= read -r l; do echo "::error::${l:0:300}"; done
+          fi
+          exit $code
+      - name: Compilation de publication (release)
+        working-directory: agent
+        run: cargo build --release
+
   docker:
     # L'image publiée à chaque version (ghcr.io) : on vérifie qu'elle se construit et démarre.
     runs-on: ubuntu-24.04

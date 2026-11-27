@@ -1,6 +1,6 @@
 # Publication d'une version : pousser une étiquette « vX.Y.Z » (git tag v0.2.0 && git push origin v0.2.0).
 #  1. vérifie que l'étiquette correspond à la version de package.json et de l'agent ;
-#  2. compile l'agent Rust (binaires statiques x86_64 et aarch64) ;
+#  2. compile l'agent Rust (Linux statique x86_64 et aarch64 ; Windows x64 ; macOS aarch64 et x86_64, expérimental) ;
 #  3. crée la release GitHub : archive de Corvus, binaires de l'agent, empreintes SHA-256, notes du CHANGELOG ;
 #  4. publie l'image Docker multi-architecture (amd64 + arm64) dans le registre GitHub (ghcr.io).
 # Aucun secret à configurer : tout passe par le GITHUB_TOKEN du dépôt.
@@ -59,8 +59,62 @@ jobs:
           path: corvus-agent-*
           if-no-files-found: error
 
+  agent-windows:
+    # Jalon 1.2 : binaire Windows x64 (MSVC). Testé avant d'être publié ; nommé corvus-agent-<version>-windows-x86_64.exe
+    # (c'est ce nom EXACT que cherche install.ps1 dans SHA256SUMS).
+    needs: verifier
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche « stable »
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Tests puis compilation
+        working-directory: agent
+        shell: bash
+        run: |
+          cargo test --target x86_64-pc-windows-msvc
+          cargo build --release --target x86_64-pc-windows-msvc
+      - name: Nommer le binaire
+        shell: bash
+        run: cp agent/target/x86_64-pc-windows-msvc/release/corvus-agent.exe "corvus-agent-${{ needs.verifier.outputs.version }}-windows-x86_64.exe"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: agent-windows
+          path: corvus-agent-*
+          if-no-files-found: error
+
+  agent-macos:
+    # Jalon 1.2 : binaires macOS (Apple Silicon et Intel), EXPÉRIMENTAUX : testés sur un runner, jamais sur un Mac réel.
+    # Non signés : macOS les met en quarantaine à l'ouverture (voir les notes de version).
+    needs: verifier
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { runner: macos-15, target: aarch64-apple-darwin, arch: aarch64 }
+          - { runner: macos-15-intel, target: x86_64-apple-darwin, arch: x86_64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche « stable »
+        with:
+          targets: ${{ matrix.target }}
+      - name: Tests puis compilation
+        working-directory: agent
+        run: |
+          cargo test --target ${{ matrix.target }}
+          cargo build --release --target ${{ matrix.target }}
+      - name: Nommer le binaire
+        run: cp "agent/target/${{ matrix.target }}/release/corvus-agent" "corvus-agent-${{ needs.verifier.outputs.version }}-macos-${{ matrix.arch }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: agent-macos-${{ matrix.arch }}
+          path: corvus-agent-*
+          if-no-files-found: error
+
   publier:
-    needs: [verifier, agent]
+    needs: [verifier, agent, agent-windows, agent-macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -90,6 +144,8 @@ jobs:
           ### Téléchargements
           - \`corvus-$v.tar.gz\` : Corvus (Node.js 22.13+) ; \`sudo ./deploy/install-linux.sh\` après extraction.
           - \`corvus-agent-$v-linux-x86_64\` et \`-aarch64\` : agent facultatif (binaire statique).
+          - \`corvus-agent-$v-windows-x86_64.exe\` : agent Windows (installez-le avec \`install.ps1\`, qui vérifie son empreinte).
+          - \`corvus-agent-$v-macos-aarch64\` et \`-x86_64\` : agent macOS, **EXPÉRIMENTAL** (jamais essayé sur un Mac réel) et **non signé**.
           - Image Docker : \`ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/corvus:$v\` (amd64 et arm64).
           - \`SHA256SUMS\` : \`sha256sum -c SHA256SUMS\` pour vérifier les fichiers.
           NOTES

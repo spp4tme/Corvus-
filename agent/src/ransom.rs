@@ -188,10 +188,17 @@ fn nft(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
     if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into_owned()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
 }
 
+#[cfg(target_os = "linux")]
 pub fn available() -> bool {
     // SAFETY : geteuid sans effet de bord.
     let root = unsafe { libc::geteuid() } == 0;
     root && std::env::var("PATH").unwrap_or_default().split(':').any(|d| std::path::Path::new(d).join("nft").exists())
+}
+
+/// nftables n'existe que sous Linux : Windows et macOS n'ont pas d'isolement réseau (annoncé `isolation: false`).
+#[cfg(not(target_os = "linux"))]
+pub fn available() -> bool {
+    false
 }
 
 pub fn active() -> bool {

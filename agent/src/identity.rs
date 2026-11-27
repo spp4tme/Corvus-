@@ -1,5 +1,5 @@
 //! Identité de l'agent : sa clé privée Ed25519 (qui ne quitte jamais cette machine), la clé
-//! publique de Corvus (reçue à l'enrôlement) et l'adresse du serveur. Fichier 0600.
+//! publique de Corvus (reçue à l'enrôlement) et l'adresse du serveur. Fichier 0600 (Unix) ou à ACL restrictive (Windows).
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use ed25519_dalek::SigningKey;
@@ -29,10 +29,11 @@ impl Identity {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let tmp = path.with_extension("tmp");
         fs::write(&tmp, serde_json::to_vec_pretty(self).map_err(io::Error::other)?)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
+        // 0600 (Linux, macOS) ou ACL restrictive (Windows) AVANT le renommage : la clé privée n'est jamais, même un instant,
+        // lisible sous son nom définitif. Échec = erreur : on ne garde pas une clé qu'on n'a pas pu protéger.
+        if let Err(e) = crate::platform::harden_secret(&tmp) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
         }
         fs::rename(tmp, path) // écriture atomique : jamais de fichier à moitié écrit
     }

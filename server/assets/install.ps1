@@ -194,11 +194,14 @@ $account = "NT SERVICE\$ServiceName"
 try {
   Invoke-Native 'sc.exe' @('config', $ServiceName, 'obj=', $account)
   Invoke-Native 'icacls.exe' @($DataDir, '/grant:r', "${account}:(OI)(CI)M")
+  # L'identité a une ACL restrictive SANS héritage (posée par l'agent) : le compte du service doit y être nommé, en lecture seule.
+  Invoke-Native 'icacls.exe' @((Join-Path $DataDir 'identity.json'), '/grant:r', "${account}:(R)")
 } catch {
   Write-Warning "Compte de service dedie indisponible ($($_.Exception.Message)) : repli sur LocalService."
   $account = 'NT AUTHORITY\LocalService'
   Invoke-Native 'sc.exe' @('config', $ServiceName, 'obj=', $account)
   Invoke-Native 'icacls.exe' @($DataDir, '/grant:r', "${SidLocalService}:(OI)(CI)M")
+  Invoke-Native 'icacls.exe' @((Join-Path $DataDir 'identity.json'), '/grant:r', "${SidLocalService}:(R)")
 }
 Invoke-Native 'sc.exe' @('failure', $ServiceName, 'reset=', '86400', 'actions=', 'restart/5000/restart/5000/restart/30000')
 Say "Service $ServiceName configure (compte : $account)"

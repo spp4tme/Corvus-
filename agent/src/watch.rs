@@ -15,7 +15,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 /// Au-delà, on suit le fichier (taille, date) mais on n'en garde pas le contenu.
@@ -26,8 +25,11 @@ const MAX_FILES: usize = 20_000;
 /// Fichiers dont le CONTENU n'est jamais copié vers le serveur (secrets) : on détecte leur
 /// modification (empreinte) sans jamais en transmettre le texte.
 pub fn is_secret(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or("");
-    path.starts_with("/etc/ssl/private")
+    // Sous Windows « \ » sépare aussi les dossiers ; sous Unix c'est un caractère de nom comme un autre.
+    let seps: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+    let name = path.rsplit(seps).next().unwrap_or("");
+    crate::platform::is_secret_extra(path) // secrets propres au système (Windows : clés SSH, certificats ; macOS : trousseaux)
+        || path.starts_with("/etc/ssl/private")
         || (path.starts_with("/etc/ssh/ssh_host_") && !path.ends_with(".pub"))
         || path.contains("/private/")
         || name.starts_with("shadow")
@@ -72,11 +74,34 @@ fn entropy_of_file(path: &Path, data: &Option<Vec<u8>>) -> Option<f64> {
     entropy(&buf[..n])
 }
 
+/// Métadonnées d'un fichier, lues de la même façon sur tous les systèmes. Hors Unix, ce qui n'a pas d'équivalent vaut 0
+/// (inode) ou `u32::MAX` (propriétaire : « non fourni ») ; les droits se réduisent à « lecture seule » ou non.
+struct Meta {
+    mtime_ns: i64,
+    inode: i64,
+    mode: u32,
+    uid: u32,
+    gid: u32,
+}
+
+#[cfg(unix)]
+fn meta_of(md: &fs::Metadata) -> Meta {
+    use std::os::unix::fs::MetadataExt;
+    Meta { mtime_ns: md.mtime() * 1_000_000_000 + md.mtime_nsec(), inode: md.ino() as i64, mode: md.mode() & 0o7777, uid: md.uid(), gid: md.gid() }
+}
+
+#[cfg(not(unix))]
+fn meta_of(md: &fs::Metadata) -> Meta {
+    let mtime_ns = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as i64).unwrap_or(0);
+    let mode = if md.permissions().readonly() { 0o444 } else { 0o666 };
+    Meta { mtime_ns, inode: 0, mode, uid: u32::MAX, gid: u32::MAX }
+}
+
 fn info_of(path: &Path, md: &fs::Metadata, sha: Option<String>, entropy: Option<f64>) -> FileInfo {
+    let m = meta_of(md);
     FileInfo {
         path: path.to_string_lossy().into_owned(), sha, size: md.len() as i64,
-        mtime_ns: md.mtime() * 1_000_000_000 + md.mtime_nsec(), inode: md.ino() as i64,
-        mode: md.mode() & 0o7777, uid: md.uid(), gid: md.gid(), entropy,
+        mtime_ns: m.mtime_ns, inode: m.inode, mode: m.mode, uid: m.uid, gid: m.gid, entropy,
     }
 }
 
@@ -114,8 +139,9 @@ impl Watcher {
             let key = p.to_string_lossy().into_owned();
             seen.insert(key.clone());
             let prev = known.get(&key);
-            let unchanged = prev.is_some_and(|k| k.size == md.len() as i64 && k.mtime_ns == md.mtime() * 1_000_000_000 + md.mtime_nsec() && k.inode == md.ino() as i64
-                && k.mode == md.mode() & 0o7777 && k.uid == md.uid() && k.gid == md.gid());
+            let m = meta_of(&md);
+            let unchanged = prev.is_some_and(|k| k.size == md.len() as i64 && k.mtime_ns == m.mtime_ns && k.inode == m.inode
+                && k.mode == m.mode && k.uid == m.uid && k.gid == m.gid);
             if unchanged { continue; }
 
             // Relecture + empreinte (sauf fichier trop gros : suivi sans contenu).
@@ -228,6 +254,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // les droits 0600/0644 n'existent pas sous Windows
     fn un_changement_de_droits_est_un_evenement_meta() {
         use std::os::unix::fs::PermissionsExt;
         let racine = dossier("m");

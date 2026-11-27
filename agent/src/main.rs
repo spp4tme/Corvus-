@@ -6,18 +6,23 @@
 //!   corvus-agent enroll --server https://corvus.exemple.ts.net --token <jeton>   (une seule fois)
 //!   corvus-agent run                                                              (service)
 
+// Actions de fichiers, signaux et prévisualisation : propres à Linux. Ailleurs, `platform` fournit les remplaçants (lecture seule).
+#[cfg(target_os = "linux")]
 mod actions;
 mod buffer;
 mod identity;
-mod kernel;
-mod metrics;
+mod platform;
+#[cfg(target_os = "linux")]
 mod preview;
 mod protocol;
 mod ransom;
 mod state;
-mod sys;
 mod watch;
 mod xray;
+
+#[cfg(not(target_os = "linux"))]
+use platform::{actions, preview};
+use platform::{kernel, metrics, sys};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use buffer::Buffer;
@@ -25,23 +30,44 @@ use ed25519_dalek::SigningKey;
 use identity::{websocket_url, Identity};
 use rand::rngs::OsRng;
 use serde_json::{json, Value};
-use std::{collections::{HashSet, VecDeque}, env, path::PathBuf, process, thread, time::{Duration, Instant}};
+use std::{collections::{HashSet, VecDeque}, env, path::PathBuf, process, sync::atomic::{AtomicBool, Ordering}, thread, time::{Duration, Instant}};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Arrêt demandé (service Windows : le gestionnaire de services). Lu à chaque tour de boucle ; jamais levé sous Linux.
+static STOP: AtomicBool = AtomicBool::new(false);
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn request_stop() {
+    STOP.store(true, Ordering::SeqCst);
+}
+
+fn stop_requested() -> bool {
+    STOP.load(Ordering::SeqCst)
+}
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("enroll") => enroll(&args[1..]),
-        Some("run") => run(&args[1..]),
+        Some("run") => run_command(&args[1..]),
         Some("version") | Some("--version") => { println!("corvus-agent {VERSION}"); Ok(()) }
-        _ => Err("usage : corvus-agent enroll --server URL --token JETON | run | version\n  option commune : --dir DOSSIER (défaut : $CORVUS_AGENT_DIR ou /var/lib/corvus-agent)".into()),
+        _ => Err(format!("usage : corvus-agent enroll --server URL --token JETON | run | version\n  option commune : --dir DOSSIER (défaut : $CORVUS_AGENT_DIR ou {})", platform::default_data_dir().display())),
     };
     if let Err(e) = result {
         eprintln!("erreur : {e}");
         process::exit(1);
     }
+}
+
+/// `run` ordinaire, ou `run --service` sous Windows (le gestionnaire de services lance alors le programme et attend sa réponse).
+fn run_command(args: &[String]) -> Result<(), String> {
+    #[cfg(windows)]
+    if args.iter().any(|a| a == "--service") {
+        return platform::service::dispatch(args.to_vec());
+    }
+    run(args)
 }
 
 /// Valeur d'une option « --nom valeur ».
@@ -50,27 +76,31 @@ fn opt(args: &[String], name: &str) -> Option<String> {
 }
 
 fn data_dir(args: &[String]) -> PathBuf {
-    PathBuf::from(opt(args, "--dir").or_else(|| env::var("CORVUS_AGENT_DIR").ok()).unwrap_or_else(|| "/var/lib/corvus-agent".into()))
+    opt(args, "--dir").or_else(|| env::var("CORVUS_AGENT_DIR").ok()).map(PathBuf::from).unwrap_or_else(platform::default_data_dir)
 }
 
-fn capabilities(allow_preview: bool, fanotify: bool, exec_events: bool) -> Value {
+/// Ce que cet agent SAIT FAIRE sur CE système. Corvus grise dans l'interface tout ce qui manque ici : être honnête est donc
+/// la seule façon de ne pas proposer une fonction qui échouerait. (Sous Windows et macOS : métriques, fichiers, processus.)
+fn capabilities(allow_preview: bool, fanotify: bool, exec_events: bool, fsnotify: bool) -> Value {
     // fanotify (écrivain exact) et connecteur de processus (exec instantanés) si le noyau et les droits le permettent ;
     // sinon balayage régulier et sondage de /proc. eBPF : non (Rust nightly requis).
+    let linux = cfg!(target_os = "linux");
     json!({
-        "metrics": true, "files": true, "ports": true,
+        "metrics": true, "files": true, "ports": linux,
         "services": sys::systemd_available(),
         "packages": std::path::Path::new("/var/log/dpkg.log").exists(),
         "actions": actions::names(allow_preview),
         "preview": allow_preview && preview::available(),
-        "ransom": true, "isolation": ransom::available(), "xray": true,
-        "fanotify": fanotify, "procEvents": exec_events, "ebpf": false,
+        "ransom": linux, "isolation": ransom::available(), "xray": true,
+        "fanotify": fanotify, "procEvents": exec_events, "fsnotify": fsnotify, "ebpf": false,
     })
 }
 
-/// Dossiers surveillés : --watch a,b (ou $CORVUS_AGENT_WATCH), par défaut /etc et les crontabs.
+/// Dossiers surveillés : --watch a,b (ou $CORVUS_AGENT_WATCH), par défaut ceux du système (Linux : /etc et les crontabs).
+/// Chaque chemin est validé POUR CE SYSTÈME (platform::is_root_path : ni `..`, ni UNC, ni flux de données…).
 fn watch_roots(args: &[String]) -> Vec<PathBuf> {
-    let raw = opt(args, "--watch").or_else(|| env::var("CORVUS_AGENT_WATCH").ok()).unwrap_or_else(|| "/etc,/var/spool/cron".into());
-    raw.split(',').map(str::trim).filter(|p| p.starts_with('/') && std::path::Path::new(p).exists()).map(PathBuf::from).collect()
+    let raw = opt(args, "--watch").or_else(|| env::var("CORVUS_AGENT_WATCH").ok()).unwrap_or_else(platform::default_watch_roots);
+    raw.split(',').map(str::trim).filter(|p| platform::is_root_path(p) && std::path::Path::new(p).exists()).map(PathBuf::from).collect()
 }
 
 /// Tout ce que l'agent observe, même hors connexion : les événements vont dans le tampon SQLite.
@@ -97,6 +127,8 @@ struct Collector {
     kernel_rx: std::sync::mpsc::Receiver<kernel::KernelEvent>,
     fanotify: bool,
     exec_events: bool,
+    // Surveillance de fichiers par évènements du système (Windows, macOS) : déclenche le balayage sans attendre le tour suivant.
+    fs: platform::FsWatch,
     writes: VecDeque<(Instant, kernel::WriteEv)>,
     // Programmes vus à l'`exec` (pid, start) → Proc : un écrivain très court est déjà mort quand on lit /proc, mais on connaît son exe.
     recent_exec: std::collections::HashMap<(u32, u64), xray::Proc>,
@@ -161,6 +193,8 @@ impl Collector {
             }
         }
         while self.writes.len() > 5000 || self.writes.front().is_some_and(|(t, _)| now.duration_since(*t) > Duration::from_secs(30)) { self.writes.pop_front(); }
+        // Évènement du système de fichiers (ReadDirectoryChangesW, FSEvents) : même règle, au plus un balayage par seconde.
+        while self.fs.rx.try_recv().is_ok() { wrote = true; }
         if wrote && now.duration_since(self.last_scan) >= Duration::from_secs(1) { self.next_scan = now; }
     }
 
@@ -259,14 +293,15 @@ fn enroll(args: &[String]) -> Result<(), String> {
 
     // La clé privée est créée ICI et n'est jamais envoyée : seule la clé publique part.
     let key = SigningKey::generate(&mut OsRng);
-    let hostname = std::fs::read_to_string("/etc/hostname").unwrap_or_default().trim().to_string();
+    let hostname = platform::hostname();
     let resp: Value = ureq::post(&format!("{}/api/agent/enroll", server.trim_end_matches('/')))
         .send_json(json!({
             "token": token,
             "publicKey": B64.encode(key.verifying_key().to_bytes()),
             "version": VERSION,
             "hostname": hostname,
-            "capabilities": capabilities(false, false, false),
+            "platform": platform::NAME, // informatif : Corvus s'en sert pour l'affichage, jamais pour une décision de sécurité
+            "capabilities": capabilities(false, false, false, platform::FSNOTIFY),
         }))
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => format!("enrôlement refusé ({code}) : {}", r.into_string().unwrap_or_default()),
@@ -295,11 +330,12 @@ fn run(args: &[String]) -> Result<(), String> {
     let buffer = Buffer::open(&dir.join("buffer.db")).map_err(|e| format!("tampon : {e}"))?;
     let mut roots = watch_roots(args);
     // Fichiers pièges : --canary dossier1,dossier2 (ajoutés aux dossiers surveillés).
-    let canary_dirs: Vec<PathBuf> = opt(args, "--canary").map(|v| v.split(',').map(str::trim).filter(|p| p.starts_with('/') && std::path::Path::new(p).is_dir()).map(PathBuf::from).collect()).unwrap_or_default();
+    let canary_dirs: Vec<PathBuf> = opt(args, "--canary").map(|v| v.split(',').map(str::trim).filter(|p| platform::is_root_path(p) && std::path::Path::new(p).is_dir()).map(PathBuf::from).collect()).unwrap_or_default();
     let canaries: HashSet<String> = ransom::create_canaries(&canary_dirs).into_iter().collect();
     for d in &canary_dirs { if !roots.contains(d) { roots.push(d.clone()); } }
     let now = Instant::now();
     let sources = kernel::start(&roots);
+    let fs_watch = platform::fs_events(&roots);
     let mut collector = Collector {
         agent_dir: dir.clone(),
         allow_preview: args.iter().any(|a| a == "--allow-preview"),
@@ -314,7 +350,7 @@ fn run(args: &[String]) -> Result<(), String> {
         extra_allow: opt(args, "--isolate-allow").map(|v| v.split(',').map(|x| x.trim().to_string()).collect()).unwrap_or_default(),
         isolation_until: None,
         next_scan: now, next_ports: now, next_services: now, next_pkgs: now, next_xray: now, next_conns: now,
-        kernel_rx: sources.rx, fanotify: sources.fanotify, exec_events: sources.exec, writes: VecDeque::new(), recent_exec: Default::default(), last_scan: now,
+        kernel_rx: sources.rx, fanotify: sources.fanotify, exec_events: sources.exec, fs: fs_watch, writes: VecDeque::new(), recent_exec: Default::default(), last_scan: now,
     };
     // Démarrage prudent : un isolement oublié (agent redémarré, minuteur perdu) ne doit jamais durer.
     if ransom::available() && ransom::active() {
@@ -327,20 +363,28 @@ fn run(args: &[String]) -> Result<(), String> {
         }
     }
     buffer.push(protocol::now_ms() as i64, "agent.start", &json!({ "version": VERSION, "watch": roots })).map_err(|e| e.to_string())?;
-    eprintln!("surveillance : {roots:?} (fanotify : {}, exec instantanés : {})", if collector.fanotify { "oui" } else { "non" }, if collector.exec_events { "oui" } else { "non" });
+    eprintln!("surveillance : {roots:?} (système : {}, fanotify : {}, exec instantanés : {}, évènements du système de fichiers : {})", platform::NAME,
+        if collector.fanotify { "oui" } else { "non" }, if collector.exec_events { "oui" } else { "non" }, if collector.fs.active { "oui" } else { "non" });
 
     // Reconnexion automatique : 1 s, 2 s, 4 s… jusqu'à 30 s. L'observation continue pendant l'attente.
     let mut wait = 1u64;
-    loop {
+    while !stop_requested() {
         let started = Instant::now();
         match session(&identity, &buffer, &mut collector, interval) {
             Ok(()) => eprintln!("connexion fermée par Corvus"),
             Err(e) => eprintln!("connexion perdue : {e}"),
         }
+        if stop_requested() { break; }
         wait = if started.elapsed() > Duration::from_secs(60) { 1 } else { (wait * 2).min(30) };
         eprintln!("nouvelle tentative dans {wait} s");
-        for _ in 0..wait { collector.tick(&buffer); thread::sleep(Duration::from_secs(1)); }
+        for _ in 0..wait {
+            if stop_requested() { break; }
+            collector.tick(&buffer);
+            thread::sleep(Duration::from_secs(1));
+        }
     }
+    eprintln!("arrêt demandé : l'agent s'arrête");
+    Ok(())
 }
 
 type Socket = WebSocket<MaybeTlsStream<std::net::TcpStream>>;
@@ -394,7 +438,7 @@ fn session(identity: &Identity, buffer: &Buffer, collector: &mut Collector, inte
     if let Some(last) = ok["body"]["lastSeq"].as_i64() { let _ = buffer.ack(last); } // déjà reçu avant la coupure
     eprintln!("connecté à Corvus (agent {})", identity.agent_id);
 
-    send(&mut ws, "hello_agent", json!({ "version": VERSION, "capabilities": capabilities(collector.allow_preview, collector.fanotify, collector.exec_events) }))?;
+    send(&mut ws, "hello_agent", json!({ "version": VERSION, "platform": platform::NAME, "capabilities": capabilities(collector.allow_preview, collector.fanotify, collector.exec_events, collector.fs.active) }))?;
 
     set_read_timeout(&ws, Duration::from_secs(1));
     let mut sampler = metrics::Sampler::default();
@@ -404,6 +448,7 @@ fn session(identity: &Identity, buffer: &Buffer, collector: &mut Collector, inte
     let mut uploaded: HashSet<String> = HashSet::new(); // contenus déjà envoyés pendant cette connexion
 
     loop {
+        if stop_requested() { return Ok(()); }
         collector.tick(buffer);
         // Événements du tampon (envoyés tant que Corvus ne les a pas confirmés).
         if !in_flight {
