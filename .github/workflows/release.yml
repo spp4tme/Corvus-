@@ -53,7 +53,7 @@ jobs:
         run: |
           arch="${{ matrix.target }}"; arch="${arch%%-*}"
           cp "agent/target/${{ matrix.target }}/release/corvus-agent" "corvus-agent-${{ needs.verifier.outputs.version }}-linux-${arch}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-${{ matrix.target }}
           path: corvus-agent-*
@@ -78,7 +78,7 @@ jobs:
       - name: Nommer le binaire
         shell: bash
         run: cp agent/target/x86_64-pc-windows-msvc/release/corvus-agent.exe "corvus-agent-${{ needs.verifier.outputs.version }}-windows-x86_64.exe"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-windows
           path: corvus-agent-*
@@ -107,7 +107,7 @@ jobs:
           cargo build --release --target ${{ matrix.target }}
       - name: Nommer le binaire
         run: cp "agent/target/${{ matrix.target }}/release/corvus-agent" "corvus-agent-${{ needs.verifier.outputs.version }}-macos-${{ matrix.arch }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-macos-${{ matrix.arch }}
           path: corvus-agent-*
