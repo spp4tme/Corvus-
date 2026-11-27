@@ -110,7 +110,7 @@ export function renderStorageSettings(slot) {
     });
 
     replace(box,
-      s.low ? h('div', { class: 'test-result ko', role: 'alert' }, 'Espace disque faible : libérez de la place, ou déplacez le stockage sur un SSD (variable CORVUS_STORAGE, voir README).') : null,
+      s.low ? h('div', { class: 'test-result ko', role: 'alert' }, 'Espace disque faible : libérez de la place, ou déplacez le stockage sur un SSD (variable CORVUS_STORAGE, voir le wiki, page Stockage et sauvegardes).') : null,
       ...spaceRows,
       h('p', { class: 'dim' }, `Base : ${formatBytes(s.db)} · enregistrements et sauvegardes de fichiers : ${s.blobs.count} élément(s), ${formatBytes(s.blobs.stored)} sur disque${s.custom ? '' : ' · stockage sur le même disque que la configuration (CORVUS_STORAGE non défini)'}.`),
       h('div', { class: 'row wrap' }, createBtn, fromFile, fileInput),

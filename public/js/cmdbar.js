@@ -89,7 +89,7 @@ export function createCommandBar({ active }) {
     const agent = state.host(t.hostId)?.agent;
     const canPreview = !!(analysis.preview && agent?.online && agent.capabilities?.preview);
     const choice = await riskDialog(cwdUnknown && analysis.undoable
-      ? { ...analysis, undoable: false, notUndoable: [...analysis.notUndoable, 'dossier courant inconnu (chemins relatifs) : voir « OSC 7 » dans le README'] }
+      ? { ...analysis, undoable: false, notUndoable: [...analysis.notUndoable, 'dossier courant inconnu (chemins relatifs) : voir « OSC 7 » dans le wiki (page Barre de commande)'] }
       : analysis, {
       previewHint: canPreview ? 'Vous pouvez d\'abord prévisualiser la commande dans un bac à sable (rien n\'est modifié).' : undefined,
       actions: [

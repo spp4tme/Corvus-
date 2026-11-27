@@ -4,6 +4,12 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [1.0.2] - 2026-11-27
+
+### Modifié
+- Documentation : le README est minimaliste, la documentation complète est dans le **wiki** du dépôt (37 pages : installation,
+  utilisation, agent, sécurité, dépannage). Deux messages de l'interface renvoient désormais au wiki au lieu du README.
+
 ## [1.0.1] - 2026-11-27
 
 ### Corrigé
