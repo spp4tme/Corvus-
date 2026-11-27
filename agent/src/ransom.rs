@@ -84,9 +84,12 @@ pub fn create_canaries(dirs: &[PathBuf]) -> Vec<String> {
 
 // --- Qui écrit le plus ? -----------------------------------------------------------------------------------
 
+// Un instantané : pour chaque pid, (starttime, octets écrits).
+type Snapshot = HashMap<u32, (u64, u64)>;
+
 #[derive(Default)]
 pub struct IoTracker {
-    snaps: VecDeque<(Instant, HashMap<u32, (u64, u64)>)>, // pid → (starttime, write_bytes)
+    snaps: VecDeque<(Instant, Snapshot)>,
 }
 
 fn write_bytes(pid: u32) -> Option<u64> {
@@ -278,10 +281,10 @@ mod tests {
     fn leurres_non_ecrases() {
         let d = std::env::temp_dir().join(format!("corvus-leurre-{}", rand::random::<u64>()));
         fs::create_dir_all(&d).unwrap();
-        let l = create_canaries(&[d.clone()]);
+        let l = create_canaries(std::slice::from_ref(&d));
         assert_eq!(l.len(), 3);
         fs::write(d.join("!corvus-leurre.txt"), "modifié par l'utilisateur").unwrap();
-        create_canaries(&[d.clone()]);
+        create_canaries(std::slice::from_ref(&d));
         assert_eq!(fs::read_to_string(d.join("!corvus-leurre.txt")).unwrap(), "modifié par l'utilisateur");
     }
 

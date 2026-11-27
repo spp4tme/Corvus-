@@ -303,7 +303,7 @@ mod tests {
         let ev = x.sample_procs(&all2);
         let started = ev.iter().find(|e| e.kind == "proc.start" && e.body["pid"] == child.id()).expect("le sleep est vu");
         assert!(started.body["exe"].as_str().unwrap().ends_with("sleep"));
-        assert!(started.body["lineage"].as_array().unwrap().len() >= 1);
+        assert!(!started.body["lineage"].as_array().unwrap().is_empty());
         let mut child = child;
         child.kill().unwrap();
         child.wait().unwrap();
