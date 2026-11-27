@@ -1,7 +1,9 @@
 # Corvus — image multi-architecture (linux/amd64, linux/arm64).
 # Construction multi-arch : docker buildx build --platform linux/amd64,linux/arm64 -t corvus .
 # Aucune compilation native : les dépendances sont 100 % JavaScript.
-FROM node:24-alpine
+# Image épinglée par empreinte (index multi-arch amd64 + arm64) : un tag mobile ne peut plus changer sous nos pieds.
+# Dependabot (écosystème « docker », .github/dependabot.yml) propose chaque mise à jour, à relire avant fusion.
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5
 
 # Métadonnées OCI : relient l'image au dépôt GitHub (registre ghcr.io, page « Packages » du dépôt).
 ARG VERSION=dev
