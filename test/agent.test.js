@@ -260,7 +260,8 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
     }
   });
 
-  test('un fichier créé dans un dossier surveillé est détecté bien avant le balayage périodique (évènements du système)', async () => {
+  // Linux : pas de signal du système de fichiers (FSNOTIFY = false, balayage périodique seul) ; ce signal n'existe que sous Windows et macOS.
+  test('un fichier créé dans un dossier surveillé est détecté bien avant le balayage périodique (évènements du système)', { skip: process.platform === 'linux' && 'Linux : balayage périodique seulement' }, async () => {
     const d = dir();
     const watched = dir();
     fs.writeFileSync(path.join(watched, 'existant.txt'), 'x');
