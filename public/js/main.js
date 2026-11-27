@@ -135,9 +135,12 @@ async function checkSystem() {
     if (st.alerts.open) parts.push(`${st.alerts.open} alerte${st.alerts.open > 1 ? 's' : ''}`);
     // Administrateurs : avertissement permanent tant qu'aucune passphrase maître ne protège les secrets des hôtes.
     const noPass = state.me?.role === 'admin' && st.security && !st.security.masterPassphrase;
-    if (noPass) parts.push('Aucune passphrase maître : les secrets des hôtes sont mal protégés (CORVUS_MASTER_PASSPHRASE)');
-    shell.banner.textContent = parts.length ? `⚠ ${parts.join(' · ')}` : '';
-    shell.banner.hidden = !parts.length;
+    // Sur petit écran, l'avertissement de passphrase se réduit à « ⚠ » (le titre et la page Réglages donnent le détail).
+    shell.banner.replaceChildren(
+      document.createTextNode(parts.length || noPass ? `⚠${parts.length ? ` ${parts.join(' · ')}` : ''}` : ''),
+      ...(noPass ? [h('span', { class: 'banner-long' }, `${parts.length ? ' · ' : ' '}Passphrase manquante`)] : []));
+    shell.banner.hidden = !parts.length && !noPass;
+    shell.banner.title = noPass ? 'Aucune passphrase maître : les secrets des hôtes sont chiffrés avec une clé stockée à côté de la base (voir Réglages → Stockage). Définissez CORVUS_MASTER_PASSPHRASE.' : '';
     shell.banner.href = noPass ? '#/settings' : st.storage.low ? '#/settings' : '#/journal';
   } catch { /* hors ligne : on réessaiera */ }
 }

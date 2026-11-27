@@ -449,8 +449,9 @@ dialog.dlg[open] { animation: dlg-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .term-stage, .term-pane, .term-pane * { touch-action: none; overscroll-behavior: none; }
 
 /* Signal d'état dans l'en-tête (espace disque, alertes) */
-.app-banner { margin-left: auto; padding: var(--s-1) var(--s-3); border-radius: 999px; background: var(--c-warn-soft); color: var(--c-warn); font-size: var(--fs-sm); text-decoration: none; white-space: nowrap; }
+.app-banner { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; min-height: var(--tap); min-width: var(--tap); padding: var(--s-1) var(--s-3); border-radius: 999px; background: var(--c-warn-soft); color: var(--c-warn); font-size: var(--fs-sm); text-decoration: none; white-space: nowrap; flex: 0 1 auto; max-width: 55vw; overflow: hidden; text-overflow: ellipsis; }
 .app-banner[hidden] { display: none; }
+@media (max-width: 520px) { .app-banner .banner-long { display: none; } }
 
 /* CPU par cœur : une barre fine par cœur */
 .cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: var(--s-1) var(--s-3); margin-top: var(--s-2); }

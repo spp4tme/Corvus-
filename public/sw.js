@@ -1,7 +1,7 @@
 // Service worker Corvus : coquille de l'app disponible hors ligne.
 // L'API, les WebSockets, les téléchargements et le proxy ne sont JAMAIS mis en cache.
 importScripts('/sw-actions.js', '/sw-share.js'); // actions des notifications et « Partager vers Corvus » (logique pure, testée à part)
-const VERSION = 'corvus-v29';
+const VERSION = 'corvus-v30';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest',
   '/css/tokens.css', '/css/app.css',
