@@ -13,14 +13,16 @@ import { startCorvus } from './helpers/corvus.js';
 import { installScriptWindows } from '../server/lib/agent-install-windows.js';
 
 function findPowerShell() {
-  for (const exe of process.platform === 'win32' ? ['powershell.exe', 'pwsh'] : ['pwsh']) {
+  // install.ps1 est un script WINDOWS (%ProgramFiles%, icacls, sc.exe) : même si `pwsh` existe sous Linux (runners CI),
+  // il n'a aucun sens d'y exécuter ces tests. Ils tournent donc sous Windows seulement.
+  for (const exe of process.platform === 'win32' ? ['powershell.exe', 'pwsh'] : []) {
     const r = spawnSync(exe, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { encoding: 'utf8' });
     if (!r.error && r.status === 0) return exe;
   }
   return null;
 }
 const PS = findPowerShell();
-const skip = PS ? false : 'PowerShell introuvable sur cette machine';
+const skip = PS ? false : 'script Windows : exécuté sous Windows (PowerShell) seulement';
 const ps = (args, env = {}) => spawnSync(PS, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args], { encoding: 'utf8', env: { ...process.env, ...env }, timeout: 60_000 });
 
 describe('install.ps1 : le serveur le sert', () => {
