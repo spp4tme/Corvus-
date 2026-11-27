@@ -9,25 +9,28 @@ const ANY = '*';
 
 // Routes globales réservées : [méthode, motif, rôle global minimal].
 const GLOBAL_RULES = [
-  ['POST', /^\/hosts$/, 'admin'],
-  ['POST', /^\/hosts\/test$/, 'admin'],
-  [ANY, /^\/tailscale\//, 'admin'],
-  [ANY, /^\/users(\/|$)/, 'admin'],
-  [ANY, /^\/backups(\/|$)/, 'admin'],
-  [ANY, /^\/system\/(usage|config|restart)$/, 'admin'],
-  ['POST', /^\/services$/, 'admin'],
-  ['DELETE', /^\/services\//, 'admin'],
-  ['POST', /^\/services\/[^/]+\/open$/, 'operator'],
-  ['GET', /^\/journal\/verify$/, 'admin'],
-  ['POST', /^\/alerts\//, 'operator'],
-  [ANY, /^\/exec(\/|$)/, 'operator'],
-  [ANY, /^\/agents(\/|$)/, 'admin'],
+  ['POST', /^\/hosts\/?$/i, 'admin'],
+  ['POST', /^\/hosts\/test\/?$/i, 'admin'],
+  [ANY, /^\/tailscale\//i, 'admin'],
+  [ANY, /^\/users(\/|$)/i, 'admin'],
+  [ANY, /^\/backups(\/|$)/i, 'admin'],
+  [ANY, /^\/system\/(usage|config|restart)\/?$/i, 'admin'],
+  ['POST', /^\/services\/?$/i, 'admin'],
+  ['DELETE', /^\/services\//i, 'admin'],
+  ['POST', /^\/services\/[^/]+\/open\/?$/i, 'operator'],
+  ['GET', /^\/journal\/verify\/?$/i, 'admin'],
+  ['POST', /^\/alerts\//i, 'operator'],
+  [ANY, /^\/exec(\/|$)/i, 'operator'],
+  [ANY, /^\/agents(\/|$)/i, 'admin'],
 ];
 
 const forbidden = (msg) => new HttpError(403, 'FORBIDDEN', msg);
 
 /** Rôle nécessaire sur un hôte pour `méthode + sous-chemin`. */
 export function hostLevel(method, sub, body) {
+  // Express route sans tenir compte de la casse (/Admin/… atteint /admin/…) ni du « / » final : on décide sur
+  // la forme canonique (minuscules, sans « / » final), sinon une variante contournerait le niveau exigé.
+  sub = String(sub || '').toLowerCase().replace(/\/+$/, '');
   const read = method === 'GET' || method === 'HEAD';
   if (!sub) {
     if (read) return 'viewer';
@@ -61,7 +64,7 @@ export function accessGuard(ctx) {
   };
 
   return (req, res, next) => {
-    const m = /^\/hosts\/([^/]+)(\/.*)?$/.exec(req.path);
+    const m = /^\/hosts\/([^/]+)(\/.*)?$/i.exec(req.path);
     if (m && ID_RE.test(m[1])) {
       try {
         req.hostRole = ctx.requireHost(req.user, m[1], hostLevel(req.method, m[2] || '', req.body)).role;

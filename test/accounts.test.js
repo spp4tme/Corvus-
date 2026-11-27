@@ -111,6 +111,37 @@ describe('rôles et droits par hôte / groupe', () => {
     assert.equal(ctl.code, 'FORBIDDEN');
   });
 
+  test('variantes de casse et « / » final : mêmes refus que le chemin canonique', async () => {
+    // Express route sans tenir compte de la casse ni du « / » final : le contrôle de rôle doit en faire autant.
+    const ro = env.corvus.ctx.users.byName('lecteur');
+    const c = await asUser({ ...ro, password: 'mot-de-passe-lecteur', secret: env.corvus.ctx.users.totpSecret(ro.id) });
+    const H = ids.labo;
+    for (const [m, u, b] of [
+      ['GET', '/api/Users'], ['GET', '/api/USERS/'], ['POST', '/api/Users', { username: 'pirate', password: 'un-mot-de-passe-long-12', role: 'admin' }],
+      ['GET', '/api/Agents'], ['GET', '/api/Journal/Verify'], ['GET', '/api/journal/verify/'], ['GET', '/api/Backups'],
+      ['POST', '/api/hosts/', { name: 'z', hostname: 'z', username: 'pi' }], ['POST', '/api/Hosts', { name: 'z', hostname: 'z', username: 'pi' }],
+      ['GET', '/api/system/config/'], ['GET', '/api/System/Config'],
+      ['GET', `/api/hosts/${H}/Sudoers`], ['POST', `/api/hosts/${H}/Admin/firewall/ufw`, { action: 'allow', port: '8080' }],
+      ['POST', `/api/hosts/${H}/hostkey/`, {}], ['POST', `/api/Hosts/${H}/admin/firewall/ufw`, { action: 'allow', port: '8080' }],
+      ['PATCH', `/api/hosts/${H}/`, { name: 'x' }],
+    ]) {
+      const r = await c.api(m, u, b);
+      assert.ok(r.status === 403 || r.status === 404, `${m} ${u} → ${r.status} (attendu 403/404)`);
+    }
+    assert.equal(env.corvus.ctx.users.byName('pirate'), undefined, 'aucun compte créé par un lecteur');
+    // Un opérateur ne franchit pas non plus le niveau « admin de l'hôte » par une variante de casse.
+    const opU = env.corvus.ctx.users.byName('ops');
+    const o = await asUser({ ...opU, password: 'mot-de-passe-operateur', secret: env.corvus.ctx.users.totpSecret(opU.id) });
+    const M = ids.maison;
+    for (const [m, u, b] of [
+      ['POST', `/api/hosts/${M}/Admin/firewall/ufw`, { action: 'allow', port: '8080' }], ['POST', `/api/hosts/${M}/HostKey`, {}],
+      ['GET', '/api/Users'], ['PATCH', `/api/hosts/${M}/`, { name: 'x' }],
+    ]) {
+      const r = await o.api(m, u, b);
+      assert.ok(r.status === 403 || r.status === 404, `opérateur : ${m} ${u} → ${r.status} (attendu 403/404)`);
+    }
+  });
+
   test('journal : un compte restreint ne voit que ses hôtes et ses actions', async () => {
     const op = env.corvus.ctx.users.byName('ops');
     const c = await asUser({ ...op, password: 'mot-de-passe-operateur', secret: env.corvus.ctx.users.totpSecret(op.id) });
