@@ -86,7 +86,7 @@ function longname(name, st) {
  * Démarre un sshd de test.
  * @returns {Promise<{port, root, rootVirtual, user, password, clientKey, hostKey, close, sessions}>}
  */
-export async function startFakeSshd({ port = 0, hostKey, root, fakeTmux = false, fakeClaude = fakeTmux } = {}) {
+export async function startFakeSshd({ port = 0, hostKey, root, fakeTmux = false, fakeClaude = fakeTmux, windowsLike = false } = {}) {
   const { bash, extraPath } = findBash();
   const hk = hostKey || utils.generateKeyPairSync('ed25519').private;
   const workdir = root || fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-sshd-'));
@@ -205,6 +205,19 @@ export async function startFakeSshd({ port = 0, hostKey, root, fakeTmux = false,
         };
         session.on('exec', (a, _r, info) => {
           stats.execs.push(info.command);
+          if (windowsLike) {
+            // SIMULATION de cmd.exe (OpenSSH Server pour Windows, shell par défaut) : `echo` affiche la ligne avec %VAR%
+            // développé ; tout autre programme est « non reconnu ». SFTP et shell interactif restent ceux du faux serveur
+            // (bash) : ceci ne prouve RIEN sur un vrai OpenSSH Windows, seulement la logique de détection et de refus.
+            const stream = a();
+            const m = /^echo (.*)$/.exec(info.command);
+            if (m) { stream.write(`${m[1].replaceAll('%OS%', 'Windows_NT')}\r\n`); stream.exit(0); } else {
+              stream.stderr.write(`'${info.command.split(/\s+/)[0]}' n'est pas reconnu en tant que commande interne\r\nou externe, un programme exécutable ou un fichier de commandes.\r\n`);
+              stream.exit(1);
+            }
+            stream.end();
+            return;
+          }
           run(['-c', info.command], a());
         });
         session.on('shell', (a) => {

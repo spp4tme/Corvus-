@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import ssh2 from 'ssh2';
 import * as v from './validate.js';
+import { effectiveOs } from './hostos.js';
 
 const AUTH_TYPES = ['password', 'key', 'agent'];
 export const newId = () => crypto.randomBytes(8).toString('hex');
@@ -60,6 +61,7 @@ export class HostRegistry {
     const secret = this.vault.get(h.id) || {};
     return {
       ...h,
+      osEffective: effectiveOs(h), // posix | windows | null (pas encore sondé) — l'interface s'en sert pour griser
       hasPassword: !!secret.password,
       hasKey: !!secret.privateKey,
       hasPassphrase: !!secret.passphrase,
@@ -74,7 +76,16 @@ export class HostRegistry {
       id: newId(), icon: 'server', group: '', pinned: false, tmux: false, tmuxSession: 'corvus',
       claudeDir: '', claudeCmd: 'claude', repos: [], createdAt: Date.now(),
     };
-    if (!existing || has('hostname')) base.hostname = v.hostname(input.hostname);
+    if (!existing || has('hostname')) {
+      const hostname = v.hostname(input.hostname);
+      if (existing && hostname !== existing.hostname) delete base.osDetected; // autre machine : on resondera
+      base.hostname = hostname;
+    }
+    // Système de l'hôte : « auto » (détection), « posix » ou « windows » (réglage de l'administrateur).
+    if (has('os')) {
+      const os = v.oneOf(input.os ?? 'auto', ['auto', 'posix', 'windows'], 'système');
+      if (os === 'auto') delete base.os; else base.os = os;
+    }
     if (!existing || has('username')) base.username = v.username(input.username);
     if (!existing || has('port')) base.port = v.port(input.port);
     if (!existing || has('name')) {
@@ -141,6 +152,14 @@ export class HostRegistry {
       JSON.stringify(host.repos || []), JSON.stringify(extraOf(host)), host.createdAt || Date.now(), host.updatedAt || Date.now());
       if (secrets) this.vault.set(host.id, secrets);
     });
+  }
+
+  /** Mémorise le système détecté (posix|windows) par la sonde du pool SSH. Informatif : voir hostos.js. */
+  setDetectedOs(id, os) {
+    if (os !== 'posix' && os !== 'windows') return;
+    const host = this.find(id);
+    if (!host || host.osDetected === os) return;
+    this.save({ ...host, osDetected: os }); // updatedAt inchangé : ce n'est pas une modification de l'utilisateur
   }
 
   create(input) {

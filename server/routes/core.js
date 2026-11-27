@@ -70,6 +70,7 @@ export function hostRoutes(ctx) {
     const h = hosts.get(v.id(req.params.id));
     try {
       const result = await pool.test(hosts.connectConfig(h));
+      if (result.os) hosts.setDetectedOs(h.id, result.os);
       journal.add({ type: 'test', event: 'test', host: h, ok: result.ok, detail: result.uname });
       res.json(result);
     } catch (err) {

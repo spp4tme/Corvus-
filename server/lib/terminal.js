@@ -6,6 +6,7 @@ import { HttpError } from './validate.js';
 import * as v from './validate.js';
 import { q, shWrap } from './shell.js';
 import { logger } from './log.js';
+import { posixOnly } from './hostos.js';
 
 const log = logger('term');
 const MAX_SESSIONS = 32;
@@ -98,7 +99,10 @@ export class TerminalManager {
     // Ouvrir un shell exige le rôle « operator » sur l'hôte.
     if (this.requireHost && user) this.requireHost(user, hostId, 'operator');
     const host = this.hosts.get(hostId);
-    let useTmux = tmux ?? host.tmux;
+    // Hôte Windows : le terminal interactif fonctionne (shell de l'hôte), mais tmux et Claude Code supposent un shell POSIX.
+    const windows = (await this.pool.os?.(hostId)) === 'windows';
+    if (windows && claude) throw posixOnly();
+    let useTmux = windows ? false : (tmux ?? host.tmux);
     let name = v.tmuxName(tmuxSession ?? host.tmuxSession);
     let command = useTmux ? tmuxCommand(name) : undefined;
     let claudeInfo = null;
