@@ -21,8 +21,8 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -30,7 +30,7 @@ jobs:
       - run: npm run check:pure
       # L'agent Rust est compilé AVANT les tests : sinon les tests d'interopérabilité (vrai binaire contre vrai serveur)
       # sont ignorés. Les runners GitHub ont sudo sans mot de passe : la prévisualisation (agent root) est testée aussi.
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche « stable »
       - name: Compiler l'agent (tests d'interopérabilité)
         working-directory: agent
         run: cargo build
@@ -47,17 +47,42 @@ jobs:
           exit $code
       - name: Captures d'écran des tests d'interface
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: captures-${{ matrix.os }}
           path: test-results/
           if-no-files-found: ignore
 
+  qualite:
+    # Vérifications de sécurité et de qualité : dépendances (npm, cargo) et lints Rust sans avertissement.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Dépendances npm de production (vulnérabilités hautes ou critiques)
+        run: npm audit --omit=dev --audit-level=high
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche « stable »
+        with:
+          components: clippy
+      - name: Lints Rust sans avertissement
+        working-directory: agent
+        run: cargo clippy --all-targets -- -D warnings
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2.90.11
+        with:
+          tool: cargo-audit
+      - name: Dépendances Rust (RustSec)
+        working-directory: agent
+        run: cargo audit
+
   real-openssh:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -84,12 +109,12 @@ jobs:
         target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: check
         run: |
           if [ -f agent/Cargo.toml ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "Pas encore d'agent, rien à compiler."; fi
       - if: steps.check.outputs.present == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche « stable »
         with:
           targets: ${{ matrix.target }}
       - if: steps.check.outputs.present == 'true'
@@ -105,7 +130,7 @@ jobs:
           if [ "$code" != 0 ]; then grep -E "^error|panicked|FAILED|failed|left|right|assert" test.log | head -25 | while IFS= read -r l; do echo "::error::${l:0:400}"; done; exit $code; fi
           cross build --release --target ${{ matrix.target }}
       - if: steps.check.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: corvus-agent-${{ matrix.target }}
           path: agent/target/${{ matrix.target }}/release/corvus-agent
@@ -115,7 +140,7 @@ jobs:
     # L'image publiée à chaque version (ghcr.io) : on vérifie qu'elle se construit et démarre.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: docker build -t corvus:ci .
       - name: Démarrage et contrôle de santé
         shell: bash

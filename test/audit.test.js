@@ -187,3 +187,29 @@ describe('« Partager vers Corvus » : un autre site ne peut pas déposer de fic
     assert.ok(sw.indexOf('sourceAllowed') > 0 && sw.indexOf('sourceAllowed') < sw.indexOf('req.formData()'));
   });
 });
+
+describe('chaîne de livraison (audit 1.1.0, point 11)', () => {
+  const dir = new URL('../.github/workflows/', import.meta.url);
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.yml'));
+
+  test('chaque action GitHub est épinglée par empreinte de commit (pas par étiquette modifiable)', () => {
+    for (const f of files) {
+      for (const m of fs.readFileSync(new URL(f, dir), 'utf8').matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)) {
+        assert.match(m[1], /@[0-9a-f]{40}$/, `${f} : ${m[1]}`);
+      }
+    }
+  });
+
+  test('permissions minimales : lecture seule par défaut dans chaque workflow', () => {
+    for (const f of files) assert.match(fs.readFileSync(new URL(f, dir), 'utf8'), /^permissions:/m, f);
+  });
+
+  test('l\'installation des paquets ignore les scripts (.npmrc) et la CI vérifie npm audit et cargo audit', () => {
+    assert.match(fs.readFileSync(new URL('../.npmrc', import.meta.url), 'utf8'), /^ignore-scripts=true/m);
+    const ci = fs.readFileSync(new URL('ci.yml', dir), 'utf8');
+    assert.match(ci, /npm audit --omit=dev --audit-level=high/);
+    assert.match(ci, /cargo audit/);
+    assert.match(ci, /cargo clippy --all-targets -- -D warnings/);
+    assert.ok(fs.existsSync(new URL('codeql.yml', dir)) && fs.existsSync(new URL('../.github/dependabot.yml', import.meta.url)));
+  });
+});
