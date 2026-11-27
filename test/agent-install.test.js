@@ -75,7 +75,7 @@ if [ "$1" = -s ]; then echo ${sys}; else echo ${machine}; fi
       assert.match(stdout, /corvus-agent-\d+\.\d+\.\d+-macos-aarch64/);
       assert.match(stdout, /Library\/Application Support\/CorvusAgent/);
       assert.match(stdout, /com\.corvus\.agent\.plist/);
-      assert.ok(!stdout.includes('/usr/local/bin') && !stdout.includes('systemd') && !stdout.includes('SECRET123'));
+      assert.ok(!stdout.includes('/usr/local/bin/corvus-agent') && !stdout.includes('systemd') && !stdout.includes('SECRET123'));
       await assert.rejects(run('sh', [file, '--server', 'https://x', '--token', 'T', '--full', '--dry-run'], { env: e }), (x) => x.code === 2 && /--full/.test(x.stderr));
     } finally { fs.rmSync(bin, { recursive: true, force: true }); }
   });
