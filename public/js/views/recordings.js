@@ -7,9 +7,6 @@ import { button, openDialog, loadingState, emptyState, errorState, badge, input,
 import { terminalTheme } from '../terminal-themes.js';
 import { termSettings } from './terminal.js';
 
-// Séquences ANSI retirées pour la recherche de texte.
-const ANSI = new RegExp('\\u001b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\u0007\\u001b]*(?:\\u0007|\\u001b\\\\)|[@-Z\\\\-_])', 'g');
-
 /** asciicast v2 → { header, events: [[t, type, data]] } */
 export function parseCast(text) {
   const lines = text.split('\n').filter(Boolean);
@@ -33,7 +30,7 @@ export function compressTimes(events, maxIdle) {
   });
 }
 
-function player(rec, cast) {
+function player(rec, cast, startAt = null) {
   const host = h('div', { class: 'player-term' });
   const term = new window.Terminal({
     cols: cast.header.width, rows: cast.header.height, disableStdin: true, cursorBlink: false,
@@ -112,25 +109,36 @@ function player(rec, cast) {
     seek(ratio * total());
   });
 
-  // Recherche : texte affiché (sans séquences ANSI) → liste des instants où il apparaît.
-  const q = input({ type: 'search', placeholder: 'Rechercher dans la sortie…', 'aria-label': 'Rechercher dans la sortie', class: 'input search' });
+  // Recherche faite par le serveur (déchiffrement à la volée, séquences d'échappement retirées, journalisée) :
+  // renvoie les instants où le texte apparaît ; un clic saute à cet instant.
+  const q = input({ type: 'search', placeholder: 'Rechercher dans la sortie…', 'aria-label': 'Rechercher dans la sortie', class: 'input search', maxlength: '200' });
   const hits = h('div', { class: 'row wrap' });
-  q.addEventListener('change', () => {
-    const needle = q.value.trim().toLowerCase();
+  const jump = (rawT) => {
+    const i = cast.events.findIndex((e) => e[0] >= rawT - 1e-6);
+    pause();
+    seek(times[i < 0 ? times.length - 1 : i] ?? 0);
+  };
+  q.addEventListener('change', async () => {
+    const needle = q.value.trim();
     if (!needle) return replace(hits);
-    const found = [];
-    cast.events.forEach((e, i) => { if (e[1] === 'o' && e[2].replace(ANSI, '').toLowerCase().includes(needle)) found.push(i); });
-    replace(hits, found.length ? found.slice(0, 30).map((i) => button({ label: fmt(times[i]), variant: 'ghost', onClick: () => { pause(); seek(times[i]); } }))
-      : h('span', { class: 'dim' }, 'Aucune occurrence'), found.length > 30 ? h('span', { class: 'dim' }, `… ${found.length} occurrences`) : null);
+    replace(hits, h('span', { class: 'dim' }, 'Recherche…'));
+    try {
+      const r = await get(`/api/recordings/${rec.id}/search?${new URLSearchParams({ q: needle, limit: '30' })}`);
+      replace(hits, r.matches.length ? r.matches.map((m) => button({ label: fmt(m.t), title: m.snippet, variant: 'ghost', onClick: () => jump(m.t) }))
+        : h('span', { class: 'dim' }, 'Aucune occurrence'),
+      r.total > r.matches.length ? h('span', { class: 'dim' }, `… ${r.total}${r.capped ? '+' : ''} occurrences`) : null,
+      r.timedOut ? h('span', { class: 'dim' }, ' (recherche interrompue : enregistrement très long)') : null);
+    } catch (err) { replace(hits, h('span', { class: 'dim' }, err.message)); }
   });
+  const exportLink = h('a', { class: 'btn btn-ghost', href: `/api/recordings/${rec.id}/export`, download: '', rel: 'noopener' }, icon('download', { size: 16 }), ' Exporter (.cast)');
 
   const el = h('div', { class: 'stack' },
     h('p', { class: 'dim' }, `${rec.host} · ${rec.user || '?'} · ${formatDate(rec.startedAt)} · ${formatDuration((rec.durationMs || 0) / 1000)}`),
     host,
     h('div', { class: 'row wrap' }, playBtn, slider, timeEl),
     h('div', { class: 'row wrap' }, h('label', { class: 'check' }, skip, h('span', null, 'Sauter les pauses (> 2 s)')), speedSel),
-    q, hits);
-  setTimeout(() => { term.open(host); seek(0); }, 0);
+    q, hits, h('div', { class: 'row wrap' }, exportLink));
+  setTimeout(() => { term.open(host); seek(startAt == null ? 0 : (times[Math.max(0, cast.events.findIndex((e) => e[0] >= startAt - 1e-6))] ?? 0)); }, 0);
   return { el, dispose: () => { pause(); term.dispose(); } };
 }
 
@@ -138,17 +146,33 @@ export default {
   mount(el) {
     const list = h('div', null, loadingState());
     el.append(h('p', { class: 'dim' }, 'Sessions de terminal enregistrées (sortie uniquement, jamais les frappes). Conservation : 90 jours par défaut.'), list);
-    async function open(rec) {
+    async function open(rec, startAt = null) {
       const body = h('div', null, loadingState('Chargement…'));
       let p = null;
       openDialog({ title: rec.title || 'Enregistrement', body, wide: true, onClose: () => p?.dispose() });
       try {
         const res = await fetch(`/api/recordings/${rec.id}`, { credentials: 'same-origin' });
         if (!res.ok) throw new Error((await res.json().catch(() => null))?.error?.message || `Erreur ${res.status}`);
-        p = player(rec, parseCast(await res.text()));
+        p = player(rec, parseCast(await res.text()), startAt);
         replace(body, p.el);
       } catch (err) { replace(body, errorState(err)); }
     }
+    const found = h('div', { class: 'stack' });
+    const all = input({ type: 'search', placeholder: 'Rechercher dans toutes les sessions visibles…', 'aria-label': 'Rechercher dans toutes les sessions', class: 'input search', maxlength: '200' });
+    all.addEventListener('change', async () => {
+      const needle = all.value.trim();
+      if (!needle) return replace(found);
+      replace(found, loadingState('Recherche…'));
+      try {
+        const r = await get(`/api/recordings/search?${new URLSearchParams({ q: needle })}`);
+        replace(found, r.results.length ? h('ul', { class: 'list' }, r.results.map((x) => h('li', null, h('div', { class: 'list-item' },
+          h('span', { class: 'grow' }, h('span', { class: 'file-name ellipsis' }, x.host), h('span', { class: 'file-meta' }, `${x.user || '?'} · ${formatDate(x.startedAt)} · ${x.total}${x.capped ? '+' : ''} occurrence(s)`),
+            h('div', { class: 'row wrap' }, x.matches.map((m) => button({ label: `${Math.floor(m.t / 60)}:${String(Math.floor(m.t % 60)).padStart(2, '0')} — ${m.snippet.slice(Math.max(0, m.start - 12), m.start + 28)}`, variant: 'ghost', onClick: () => open(x, m.t) }))))))))
+          : h('p', { class: 'dim' }, `Aucun résultat dans ${r.scanned} session(s).`),
+        r.next ? h('p', { class: 'dim' }, `Recherche limitée à ${r.scanned} sessions récentes ; affinez la requête pour remonter plus loin.`) : null);
+      } catch (err) { replace(found, errorState(err)); }
+    });
+    el.prepend(all, found);
     get('/api/recordings').then(({ recordings }) => {
       if (!recordings.length) return replace(list, emptyState({ icon: 'history', title: 'Aucun enregistrement', text: 'Les sessions de terminal fermées apparaîtront ici.' }));
       replace(list, h('ul', { class: 'list' }, recordings.map((r) => h('li', null, h('button', { type: 'button', class: 'list-item clickable list-button', onclick: () => open(r) },

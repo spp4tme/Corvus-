@@ -5,6 +5,7 @@
 // affiché, il n'apparaît donc pas). L'enregistrement est stocké chiffré à la fermeture (blobs).
 import { HttpError } from './validate.js';
 import { logger } from './log.js';
+import { parseCast, plainText, findInPlain } from './castsearch.js';
 
 const log = logger('rec');
 
@@ -91,5 +92,47 @@ export class Recorder {
     const row = this.db.get('SELECT * FROM term_sessions WHERE id = ?', id);
     if (!row?.recording_sha) throw new HttpError(404, 'NOT_FOUND', 'Enregistrement introuvable (expiré ou session sans enregistrement)');
     return { row, cast: this.blobs.get(row.recording_sha) };
+  }
+
+  /**
+   * Recherche dans UN enregistrement (déchiffré à la volée, aucun index). Bornes : temps (`budgetMs`) et taille
+   * (celle d'un enregistrement, limitée à l'écriture par RECORDING_MAX_MB).
+   */
+  search(row, cast, needle, { offset = 0, limit = 50, budgetMs = 3000 } = {}) {
+    const deadline = Date.now() + budgetMs;
+    const plain = plainText(parseCast(cast).events, { deadline });
+    const r = findInPlain(plain, needle, { offset, limit, deadline });
+    return { ...r, timedOut: r.timedOut || plain.timedOut };
+  }
+
+  /**
+   * Recherche dans plusieurs sessions visibles (liste déjà filtrée par les droits). Curseur : `before` = date de
+   * début de la dernière session examinée. Temps total borné ; `next` indique où reprendre.
+   */
+  searchMany(rows, needle, { perSession = 5, budgetMs = 4000, maxSessions = 40 } = {}) {
+    const deadline = Date.now() + budgetMs;
+    const results = [];
+    let scanned = 0;
+    let next = null;
+    for (const row of rows) {
+      if (scanned >= maxSessions || Date.now() > deadline) { next = row.started_at; break; }
+      scanned++;
+      let cast;
+      try { cast = this.blobs.get(row.recording_sha); } catch { continue; }
+      const r = this.search(row, cast, needle, { limit: perSession, budgetMs: Math.max(200, deadline - Date.now()) });
+      if (r.total) results.push({ row, ...r });
+    }
+    return { results, scanned, next };
+  }
+
+  /** Lignes brutes des sessions visibles (même filtre que `list`), plus récentes d'abord, à partir de `before`. */
+  rowsFor({ userId, hostIds, hostId, before, limit = 200 } = {}) {
+    const where = ['recording_sha IS NOT NULL'];
+    const params = [];
+    if (userId) { where.push('user_id = ?'); params.push(userId); }
+    if (hostId) { where.push('host_id = ?'); params.push(hostId); }
+    if (hostIds) { where.push('host_id IN (SELECT value FROM json_each(?))'); params.push(JSON.stringify(hostIds)); }
+    if (before) { where.push('started_at < ?'); params.push(before); }
+    return this.db.all(`SELECT * FROM term_sessions WHERE ${where.join(' AND ')} ORDER BY started_at DESC LIMIT ?`, ...params, limit);
   }
 }
