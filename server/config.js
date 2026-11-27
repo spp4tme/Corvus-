@@ -12,6 +12,11 @@ function int(v, def) {
 function list(v) {
   return (v || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
+/** Entier >= 1, sinon la valeur par défaut : un plafond ne peut pas être désactivé (0, négatif, texte). */
+function positive(v, def) {
+  const n = int(v, def);
+  return n >= 1 ? n : def;
+}
 function bool(v, def) {
   if (v === undefined || v === '') return def;
   return ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase());
@@ -28,6 +33,11 @@ export const config = Object.freeze({
   // Données lourdes (base SQLite, blobs, sauvegardes) : ex. un SSD externe. Vide = CORVUS_DATA.
   storageDir: env.CORVUS_STORAGE ? path.resolve(env.CORVUS_STORAGE) : '',
   minFreeMb: int(env.CORVUS_MIN_FREE_MB, 2048),
+  // Limiteur de débit des routes authentifiées de /api (requêtes par minute). Généreux : seul l'abus l'atteint.
+  // Plafond par compte, par IP, et plafond plus strict (par compte ET par IP) pour les sauvegardes.
+  rateAccountPerMin: positive(env.CORVUS_RATE_ACCOUNT_PER_MIN, 1200),
+  rateIpPerMin: positive(env.CORVUS_RATE_IP_PER_MIN, 2400),
+  rateBackupPerMin: positive(env.CORVUS_RATE_BACKUP_PER_MIN, 10),
   // Tâches de fond (0 = désactivé) : sonde d'état des hôtes, collecte des métriques.
   hostProbeSec: int(env.HOST_PROBE_SEC, 60),
   hostDownAlertMin: int(env.HOST_DOWN_ALERT_MIN, 5),

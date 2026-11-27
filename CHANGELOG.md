@@ -4,6 +4,21 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [Non publié] - jalon 1.2 (agent Windows et macOS)
+
+### Sécurité
+- **Limiteur de débit** des routes authentifiées de `/api` (JavaScript pur, sans dépendance) : un seau à jetons **par compte** (1200 requêtes/min) et
+  **par IP** (2400/min), et un plafond **plus strict pour les sauvegardes** (10/min, par compte et par IP, variantes de casse et « // » comprises).
+  Réglables (`CORVUS_RATE_ACCOUNT_PER_MIN`, `CORVUS_RATE_IP_PER_MIN`, `CORVUS_RATE_BACKUP_PER_MIN`) mais **jamais désactivables**. Un dépassement répond **429** + `Retry-After`
+  et laisse **une** entrée de journal par minute et par compte/IP (jamais une par requête refusée, jamais de secret). Mémoire bornée.
+
+### Corrigé
+- Alerte « programme jamais vu » : tous les `|` du chemin sont remplacés (`replaceAll`), côté serveur et interface.
+
+### Modifié
+- Image Docker de base **épinglée par empreinte** (`node:24-alpine@sha256:…`, amd64 + arm64) ; Dependabot propose les mises à jour. *Non reconstruite localement.*
+- Tests : portabilité Windows (3 tests sautés avec raison écrite sur une machine sans symlinks ni noms avec « : »).
+
 ## [1.1.0] - 2026-11-27
 
 Cinq fonctions nouvelles, et un audit de sécurité complet (rapport : `docs/audit-1.1.0.md`).
