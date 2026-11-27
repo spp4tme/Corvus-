@@ -1,5 +1,10 @@
 # Jalon 1.2 — passation (agent Windows et macOS)
 
+> **MISE À JOUR (2026-11-27, fin du jalon) : le jalon 1.2 est terminé et fusionné dans `main`.** `cargo test` et `npm test` ont été rejoués sur un PC Windows
+> (Rust installé), la branche est fusionnée, la CI est verte sur les 10 jobs. Restent **à la main** (jamais observés sur une vraie machine) : le service Windows
+> (`run --service`, administrateur), `install.ps1` de bout en bout, un vrai OpenSSH Server pour Windows, et **tout** sur un Mac réel. Le détail est dans le CHANGELOG
+> (`## [1.2.0]`) et le wiki (« Limites connues »). Le reste du document est conservé comme historique.
+
 Document de passation pour un autre Claude Code qui reprend le jalon **1.2** sur une autre machine. Lisez d'abord `CLAUDE.md` (il prime) puis ce fichier.
 État au moment de l'écriture : **jalon 1.2 non terminé, non publié, rien n'est fusionné dans `main`**. Tout le travail est sur la branche **`jalon-1.2`**.
 
