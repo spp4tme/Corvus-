@@ -2,7 +2,8 @@
 //   curl -fsSL https://<corvus>/api/agent/install.sh | sudo sh -s -- --server https://<corvus> --token <jeton> [--full]
 // Le script ne contient AUCUN secret : le jeton à usage unique est passé en argument. Il télécharge le binaire de la
 // release GitHub correspondant à la version de ce Corvus, vérifie son SHA-256, installe l'unité systemd puis enrôle.
-// Les deux fichiers systemd ci-dessous sont des copies EXACTES de deploy/agent/ (un test le vérifie) : l'image Docker
+// macOS (EXPÉRIMENTAL, jamais essayé sur un Mac réel) : même script, branche Darwin, LaunchDaemon à la place de systemd.
+// Les fichiers systemd et le plist ci-dessous sont des copies EXACTES de deploy/agent/ (un test le vérifie) : l'image Docker
 // n'embarque pas le dossier deploy/, d'où la copie.
 export const UNIT = `# Service systemd de l'agent Corvus.
 #   sudo install -m 755 corvus-agent /usr/local/bin/corvus-agent
@@ -76,6 +77,40 @@ ProtectHome=no
 MemoryDenyWriteExecute=no
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 `;
+export const PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- LaunchDaemon de l'agent Corvus (macOS, EXPÉRIMENTAL : jamais essayé sur un Mac réel).
+     Le binaire et l'identité vivent dans un dossier appartenant à root (jamais /usr/local/bin, souvent inscriptible par
+     l'utilisateur avec Homebrew : il pourrait y remplacer un programme exécuté en root).
+       sudo install -d -m 755 -o root -g wheel "/Library/Application Support/CorvusAgent"
+       sudo install -m 755 -o root -g wheel corvus-agent "/Library/Application Support/CorvusAgent/corvus-agent"
+       sudo "/Library/Application Support/CorvusAgent/corvus-agent" enroll --server https://<corvus>.<tailnet>.ts.net --token <jeton>
+       sudo install -m 644 -o root -g wheel com.corvus.agent.plist /Library/LaunchDaemons/
+       sudo launchctl bootstrap system /Library/LaunchDaemons/com.corvus.agent.plist
+     Retrait : sudo launchctl bootout system/com.corvus.agent && sudo rm /Library/LaunchDaemons/com.corvus.agent.plist
+     L'agent n'exécute jamais de commande reçue du serveur ; hors Linux il ne fait que lire (métriques, processus, fichiers). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.corvus.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Application Support/CorvusAgent/corvus-agent</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardErrorPath</key>
+  <string>/var/log/corvus-agent.log</string>
+  <key>StandardOutPath</key>
+  <string>/var/log/corvus-agent.log</string>
+</dict>
+</plist>
+`;
 
 /** Dépôt des releases (peut être remplacé pour un fork, ou contourné avec CORVUS_AGENT_URL côté hôte). */
 export const RELEASES = 'https://github.com/spp4tme/Corvus-/releases/download';
@@ -105,25 +140,36 @@ done
 say() { printf '==> %s\\n' "$*"; }
 run() { if [ "$DRY" = 1 ]; then echo "    (simulation) $*"; else "$@"; fi; }
 
-[ "$(uname -s)" = Linux ] || { echo "L'agent ne fonctionne que sous Linux." >&2; exit 1; }
+case "$(uname -s)" in
+  Linux) OSN=linux ;;
+  Darwin) OSN=macos ;;
+  *) echo "Système non pris en charge : $(uname -s) (Linux et macOS ; sous Windows, utilisez install.ps1)." >&2; exit 1 ;;
+esac
 case "$(uname -m)" in
   x86_64|amd64) ARCH=x86_64 ;;
   aarch64|arm64) ARCH=aarch64 ;;
   *) echo "Architecture non prise en charge : $(uname -m) (x86_64 et aarch64 seulement)." >&2; exit 1 ;;
 esac
+if [ "$OSN" = macos ] && [ "$FULL" = 1 ]; then
+  echo "--full n'existe pas sous macOS : hors Linux, l'agent ne fait que lire (aucune restauration, gel ni isolement)." >&2; exit 2
+fi
 if [ "$DRY" = 0 ]; then
-  [ "$(id -u)" = 0 ] || { echo "Lancez ce script avec sudo (root est nécessaire pour installer l'unité systemd)." >&2; exit 1; }
-  command -v systemctl >/dev/null 2>&1 || { echo "systemd est requis." >&2; exit 1; }
+  [ "$(id -u)" = 0 ] || { echo "Lancez ce script avec sudo (root est nécessaire pour installer le service)." >&2; exit 1; }
+  if [ "$OSN" = linux ]; then command -v systemctl >/dev/null 2>&1 || { echo "systemd est requis." >&2; exit 1; }
+  else command -v launchctl >/dev/null 2>&1 || { echo "launchctl est requis." >&2; exit 1; }; fi
 fi
 if command -v curl >/dev/null 2>&1; then GET() { curl -fsSL "$1" -o "$2"; }
 elif command -v wget >/dev/null 2>&1; then GET() { wget -q "$1" -O "$2"; }
 else echo "curl ou wget est requis." >&2; exit 1; fi
-command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum est requis pour vérifier le binaire." >&2; exit 1; }
+# Linux : sha256sum ; macOS : shasum (livré avec le système).
+if command -v sha256sum >/dev/null 2>&1; then SHA() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then SHA() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else echo "sha256sum (ou shasum) est requis pour vérifier le binaire." >&2; exit 1; fi
 
-NAME="corvus-agent-$VERSION-linux-$ARCH"
+NAME="corvus-agent-$VERSION-$OSN-$ARCH"
 URL="\${CORVUS_AGENT_URL:-$BASE/$NAME}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-say "Agent Corvus $VERSION pour $ARCH"
+say "Agent Corvus $VERSION pour $OSN/$ARCH"
 if [ "$DRY" = 1 ]; then
   echo "    (simulation) télécharger $URL"
   echo "    (simulation) vérifier le SHA-256 avec $BASE/SHA256SUMS"
@@ -133,7 +179,7 @@ else
   if [ -z "\${CORVUS_AGENT_URL:-}" ]; then
     GET "$BASE/SHA256SUMS" "$TMP/sums" || { echo "SHA256SUMS introuvable : installation refusée." >&2; exit 1; }
     WANT="$(grep " $NAME\\$" "$TMP/sums" | cut -d' ' -f1)"
-    GOT="$(sha256sum "$TMP/agent" | cut -d' ' -f1)"
+    GOT="$(SHA "$TMP/agent")"
     [ -n "$WANT" ] && [ "$WANT" = "$GOT" ] || { echo "Empreinte SHA-256 incorrecte : installation refusée." >&2; exit 1; }
     say "Empreinte SHA-256 vérifiée"
   else
@@ -141,6 +187,39 @@ else
   fi
   chmod 755 "$TMP/agent"
   "$TMP/agent" version >/dev/null 2>&1 || { echo "Le binaire téléchargé ne s'exécute pas sur cette machine." >&2; exit 1; }
+fi
+
+if [ "$OSN" = macos ]; then
+MDIR="/Library/Application Support/CorvusAgent"
+BIN="$MDIR/corvus-agent"
+PLIST_PATH=/Library/LaunchDaemons/com.corvus.agent.plist
+say "Installation dans $MDIR (dossier de root : jamais /usr/local/bin, que l'utilisateur peut posséder)"
+if [ "$DRY" = 1 ]; then
+  echo "    (simulation) install -d -m 755 -o root -g wheel $MDIR"
+  echo "    (simulation) install -m 755 -o root -g wheel agent $BIN"
+  echo "    (simulation) écrire $PLIST_PATH (root:wheel 644)"
+else
+  launchctl bootout system/com.corvus.agent >/dev/null 2>&1 || true
+  install -d -m 755 -o root -g wheel "$MDIR"
+  install -m 755 -o root -g wheel "$TMP/agent" "$BIN"
+  xattr -d com.apple.quarantine "$BIN" >/dev/null 2>&1 || true
+  cat > "$PLIST_PATH" <<'CORVUS_PLIST_EOF'
+${PLIST}CORVUS_PLIST_EOF
+  chown root:wheel "$PLIST_PATH"; chmod 644 "$PLIST_PATH"
+fi
+
+say "Enrôlement auprès de $SERVER"
+if [ "$DRY" = 1 ]; then echo "    (simulation) corvus-agent enroll --server $SERVER --token ********"; else
+  "$BIN" enroll --server "\${CORVUS_AGENT_SERVER:-$SERVER}" --token "$TOKEN" || {
+    echo "Enrôlement refusé : jeton expiré ou déjà utilisé (créez-en un autre), ou Corvus injoignable depuis cette machine." >&2
+    exit 1
+  }
+fi
+
+say "Démarrage"
+run launchctl bootstrap system "$PLIST_PATH"
+say "Terminé (macOS, EXPÉRIMENTAL) : l'agent apparaît « en ligne » dans l'écran Agents de Corvus. Journal : /var/log/corvus-agent.log"
+exit 0
 fi
 
 say "Installation dans /usr/local/bin/corvus-agent"

@@ -120,3 +120,28 @@ test('hôtes : badge « Windows » sur la carte et champ « Système de l\'hôte
   await page.locator('dialog').waitFor({ state: 'detached' });
   assert.equal(env.corvus.ctx.hosts.find(hostId).os, 'windows', 'réglage enregistré côté serveur');
 });
+
+test('vue Agents : la commande d\'installation suit le système choisi (Linux, macOS expérimental, Windows sans Invoke-Expression)', async (t) => {
+  if (!browser) return t.skip('aucun navigateur Chromium/Edge disponible');
+  const page = await (await browser.newContext({ viewport: { width: 1100, height: 900 } })).newPage();
+  await uiLogin(page);
+  await page.goto(`${env.base}/#/agents`);
+  const commande = async (systeme) => {
+    await page.getByRole('button', { name: /Installer un agent/ }).first().click();
+    await page.getByLabel('Système de l\'hôte').selectOption(systeme);
+    if (systeme !== 'linux') await page.getByLabel(/Droits complets/).check(); // doit être ignoré hors Linux
+    await page.getByRole('button', { name: 'Créer le jeton' }).click();
+    const cmd = await page.locator('pre.code').innerText();
+    await page.keyboard.press('Escape');
+    await page.locator('dialog').waitFor({ state: 'detached' });
+    return cmd;
+  };
+  const linux = await commande('linux');
+  assert.match(linux, /^curl -fsSL .*\/api\/agent\/install\.sh \| sudo sh -s -- --server /);
+  const mac = await commande('macos');
+  assert.match(mac, /install\.sh/);
+  assert.ok(!mac.includes('--full'), 'pas de droits complets sous macOS');
+  const win = await commande('windows');
+  assert.match(win, /^Invoke-WebRequest .*\/api\/agent\/install\.ps1 -OutFile install\.ps1; \.\\install\.ps1 -Server .* -Token /);
+  assert.ok(!/Invoke-Expression|iex|\| *sh/i.test(win), 'jamais d\'exécution directe de contenu distant');
+});
