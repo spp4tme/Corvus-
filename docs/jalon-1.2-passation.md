@@ -53,11 +53,17 @@ Dernier état connu, run `https://github.com/spp4tme/Corvus-/actions/runs/460252
 | `agent (x86_64-unknown-linux-musl)`, `agent (aarch64-unknown-linux-musl)` | **succès** (l'agent Linux n'a pas régressé) |
 | `qualite` (clippy `-D warnings`, `npm audit`, `cargo audit`) | **succès** |
 | `real-openssh`, `docker` | **succès** |
-| `node (ubuntu-24.04)`, `node (ubuntu-24.04-arm)` | encore en cours quand on a regardé |
+| `node (ubuntu-24.04)`, `node (ubuntu-24.04-arm)` | **échec** : `test/agent-install-windows.test.js` s'exécutait avec `pwsh` sous Linux, où `install.ps1` (script Windows) échoue (`$env:ProgramFiles` vide). Défaut du test, pas de l'agent |
 | `agent-os (windows-2022)`, `(macos-15)`, `(macos-15-intel)` | **échec — un seul test** : `ransom::tests::un_processus_sans_lien_avec_les_dossiers_touches_nest_pas_accuse` |
 
-Point important : **le code compile sur Windows et sur les deux macOS**, et tous les autres tests Rust y passent (dont l'ACL de l'identité sous Windows). Le seul échec était un test qui lit
-`/proc/PID/fd` (propre à Linux). **Correction déjà poussée : `2785e75`** (test isolé par `#[cfg(target_os = "linux")]`). Un nouveau run CI est donc lancé sur `2785e75` : **vérifiez qu'il est vert**.
+Point important : **le code compile sur Windows et sur les deux macOS**, et tous les autres tests Rust y passent (dont l'ACL de l'identité sous Windows). Le seul échec Rust était un test qui lit
+`/proc/PID/fd` (propre à Linux).
+
+**Deux corrections déjà poussées sur `jalon-1.2`** :
+- `2785e75` : ce test Rust est isolé par `#[cfg(target_os = "linux")]` ;
+- `81f61c3` : les tests PowerShell d'`install.ps1` ne s'exécutent que sous Windows (sautés avec raison écrite ailleurs).
+
+Un nouveau run CI est lancé sur `81f61c3` : **son résultat n'est pas connu au moment de l'écriture, vérifiez qu'il est vert** (§3). Les jobs `qualite`, `real-openssh`, `docker` et les deux jobs `agent` Linux étaient déjà verts.
 
 ## 3. Lire la CI sans accès aux journaux (API publique, sans jeton)
 
