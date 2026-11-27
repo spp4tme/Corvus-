@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { startCorvus, CorvusClient, makeUser } from './helpers/corvus.js';
 
 describe('droits de lecture trop larges (audit 1.1.0, point 9)', () => {
@@ -116,7 +117,7 @@ describe('journal d\'audit : empreinte de tête exportable (audit 1.1.0, point 8
   let env;
   before(async () => { env = await startCorvus(); await env.client.login(); await env.client.api('POST', '/api/hosts', { name: 'h', hostname: 'h.example', username: 'pi', password: 'x' }); });
   after(() => env.close());
-  const cli = (...args) => spawnSync(process.execPath, ['server/cli.js', ...args], { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, CORVUS_DATA: env.dataDir, CORVUS_STORAGE: '' }, encoding: 'utf8' });
+  const cli = (...args) => spawnSync(process.execPath, ['server/cli.js', ...args], { cwd: fileURLToPath(new URL('..', import.meta.url)), env: { ...process.env, CORVUS_DATA: env.dataDir, CORVUS_STORAGE: '' }, encoding: 'utf8' });
 
   test('node server/cli.js journal-head : empreinte, nombre d\'entrées et état de la chaîne', () => {
     const r = cli('journal-head');
@@ -159,7 +160,7 @@ describe('passphrase maître : avertissement visible (audit 1.1.0, point 7)', ()
     const sh = fs.readFileSync(new URL('../deploy/install-linux.sh', import.meta.url), 'utf8');
     assert.match(sh, /AVERTISSEMENT[^\n]*passphrase/i);
     assert.match(sh, /--accept-no-passphrase/);
-    const check = spawnSync('bash', ['-n', new URL('../deploy/install-linux.sh', import.meta.url).pathname]);
+    const check = spawnSync('bash', ['-n', fileURLToPath(new URL('../deploy/install-linux.sh', import.meta.url))]);
     assert.equal(check.status, 0, String(check.stderr));
   });
 });

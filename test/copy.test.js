@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { startFakeSshd } from './helpers/fake-sshd.js';
+import { skipUnlessSymlink } from './helpers/platform.js';
 import { startCorvus, CorvusClient, makeUser, waitFor } from './helpers/corvus.js';
 
 describe('copie d\'hôte à hôte', () => {
@@ -71,7 +72,7 @@ describe('copie d\'hôte à hôte', () => {
     assert.equal((await copy(admin, body('~/src/note.txt', { name: 'vide-ou-non', overwrite: true, confirm: true }))).status, 409);
   });
 
-  test('copie d\'un dossier : arborescence, dossiers vides, liens symboliques ignorés (jamais suivis)', async () => {
+  test('copie d\'un dossier : arborescence, dossiers vides, liens symboliques ignorés (jamais suivis)', { skip: skipUnlessSymlink }, async () => {
     put(a, 'tree/a.txt', 'A');
     put(a, 'tree/sous/b.txt', 'B');
     put(a, 'tree/sous/profond/c.txt', 'C');
@@ -91,7 +92,7 @@ describe('copie d\'hôte à hôte', () => {
     assert.deepEqual(listing(b, 'dest').filter((n) => n.endsWith('.part')), []);
   });
 
-  test('source = lien symbolique : refusée ; source absente : 404 ; même endroit : refusé', async () => {
+  test('source = lien symbolique : refusée ; source absente : 404 ; même endroit : refusé', { skip: skipUnlessSymlink }, async () => {
     fs.symlinkSync('/etc', at(a, 'lien-etc'));
     assert.equal((await copy(admin, body('~/lien-etc'))).status, 400);
     assert.equal((await copy(admin, body('~/n-existe-pas'))).status, 404);
