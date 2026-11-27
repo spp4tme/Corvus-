@@ -38,6 +38,14 @@ w('sauvegardes/2026-11-24.tar.zst', 'x'.repeat(4096));
 w('config/nginx.conf', 'server {\n  listen 80;\n  server_name pi.local;\n  root /var/www;\n}\n');
 w('config/app.env', 'MODE=production\nPORT=8080\n');
 w('config/hosts.allow', 'sshd: 100.64.0.0/10\n');
+w('config/sshd_config', 'Port 22\nPermitRootLogin no\nPasswordAuthentication no\nX11Forwarding no\nClientAliveInterval 300\nAllowUsers antho\n');
+// Second faux serveur (le « NAS de la cave ») : sa configuration diffère un peu, pour la capture « Comparer ».
+const HOME2 = '/tmp/corvus-demo-home2';
+fs.rmSync(HOME2, { recursive: true, force: true });
+fs.mkdirSync(HOME2);
+const sshd2 = await startFakeSshd({ root: HOME2 });
+fs.mkdirSync(path.join(HOME2, 'config'), { recursive: true });
+fs.writeFileSync(path.join(HOME2, 'config', 'sshd_config'), 'Port 2222\nPermitRootLogin yes\nPasswordAuthentication yes\nX11Forwarding no\nClientAliveInterval 300\nAllowUsers antho nas\nPassword nas-secret-demo\n');
 const git = (...a) => execFileSync('git', ['-C', path.join(home, 'projet-web'), '-c', 'user.name=Antho', '-c', 'user.email=antho@example.org', ...a], { stdio: 'ignore' });
 fs.mkdirSync(path.join(home, 'projet-web'), { recursive: true });
 git('init', '-q', '-b', 'main');
@@ -48,7 +56,8 @@ git('add', '.'); git('commit', '-q', '-m', 'Ajoute la feuille de style');
 w('projet-web/index.html', '<h1>Bonjour le tailnet</h1>\n<p>Servi depuis un Raspberry Pi.</p>\n');
 
 // ---------- Corvus de démonstration ----------
-const env = await startCorvus({ hostProbeSec: 4, metricsIntervalSec: 3 });
+// Une passphrase maître est définie : sans elle, Corvus affiche (à raison) un bandeau d'avertissement sur chaque écran.
+const env = await startCorvus({ hostProbeSec: 4, metricsIntervalSec: 3, masterPassphrase: 'phrase-de-demonstration-pour-les-captures' });
 const auth = { authorization: `Bearer ${env.token}`, 'content-type': 'application/json' };
 const api = async (method, url, body) => {
   const r = await fetch(env.base + url, { method, headers: auth, body: body ? JSON.stringify(body) : undefined });
@@ -56,7 +65,7 @@ const api = async (method, url, body) => {
 };
 const mkHost = async (name, extra = {}) => (await api('POST', '/api/hosts', { name, hostname: '127.0.0.1', port: sshd.port, username: sshd.user, authType: 'password', password: sshd.password, ...extra })).body.host.id;
 const hPi = await mkHost('Pi du salon', { group: 'Maison' });
-await mkHost('NAS de la cave', { group: 'Maison' });
+await api('POST', '/api/hosts', { name: 'NAS de la cave', group: 'Maison', hostname: '127.0.0.1', port: sshd2.port, username: sshd2.user, authType: 'password', password: sshd2.password });
 await mkHost('Serveur web', { group: 'Travail' });
 await api('PATCH', `/api/hosts/${hPi}`, { repos: [path.join(home, 'projet-web')] });
 await api('POST', `/api/hosts/${hPi}/test`);
@@ -103,6 +112,14 @@ try {
   await login(page);
   await page.waitForTimeout(6000); // sondes d'état + premières mesures
   await shot(page, 'hotes');
+
+  // Comparer une configuration entre deux hôtes (les valeurs sensibles sont masquées)
+  await go(page, 'compare', 1500);
+  await page.getByLabel('Fichier à comparer').fill('~/config/sshd_config');
+  for (const n of ['Pi du salon', 'NAS de la cave']) { const box = page.locator('label.check', { hasText: n }).locator('input'); if (!(await box.isChecked())) await box.check(); }
+  await page.getByRole('button', { name: 'Comparer', exact: true }).click();
+  await page.waitForTimeout(2500); await shot(page, 'comparer');
+  await go(page, 'hosts', 1500);
 
   // Terminal : quelques commandes réelles dans le faux sshd
   await page.locator('.card, .list-item', { hasText: 'Pi du salon' }).getByRole('button', { name: 'Terminal' }).first().click();
@@ -178,5 +195,6 @@ try {
   if (ransomDir) { try { execFileSync('rm', ['-rf', ransomDir]); } catch { /* tant pis */ } }
   await env.close();
   await sshd.close();
+  await sshd2.close();
   fs.rmSync(HOME_DIR, { recursive: true, force: true });
 }
