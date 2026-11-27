@@ -59,9 +59,13 @@ export default {
           const host = state.host(a.hostId);
           return h('li', { class: 'list-item' },
             h('div', { class: 'grow' },
-              h('div', { class: 'host-name' }, host?.name || 'hôte supprimé', ' ', badge(a.online ? 'en ligne' : 'hors ligne', a.online ? 'ok' : 'warn'), ' ', badge(`v${a.version || '?'}`)),
+              h('div', { class: 'host-name' }, host?.name || 'hôte supprimé', ' ', badge(a.online ? 'en ligne' : 'hors ligne', a.online ? 'ok' : 'warn'), ' ', badge(`v${a.version || '?'}`), ' ',
+                badge(a.platformLabel), ' ', a.experimental ? badge('expérimental', 'warn') : null),
               h('div', { class: 'dim' }, `Enrôlé le ${when(a.enrolledAt)} · vu le ${when(a.lastSeenAt)}`),
-              h('div', { class: 'dim mono' }, Object.entries(a.capabilities || {}).map(([k, v]) => `${v ? '✓' : '✗'} ${k}`).join('  '))),
+              h('div', { class: 'dim mono' }, Object.entries(a.capabilities || {}).map(([k, v]) => `${v ? '✓' : '✗'} ${k}`).join('  ')),
+              a.experimental ? h('div', { class: 'dim' }, 'Agent expérimental : aucune machine réelle ne l\'a encore validé.') : null,
+              // Pourquoi une fonction manque : l'explication du serveur, jamais un simple « ✗ ».
+              ...Object.values(a.support || {}).filter((s) => !s.ok && s.reason).map((s) => h('div', { class: 'dim' }, s.reason))),
             button({
               label: 'Révoquer', variant: 'danger', onClick: async () => {
                 if (!(await confirmDialog({ title: 'Révoquer cet agent ?', message: 'Il sera déconnecté et ne pourra plus se reconnecter. Il faudra le réenrôler.', confirmLabel: 'Révoquer', danger: true }))) return;

@@ -74,7 +74,16 @@ export default {
       replace(frise, ...bins.map((n, i) => h('span', { class: 'frise-bar', style: `height:${Math.max(4, Math.round((n / max) * 100))}%`, title: `${n} événement(s)` })));
     }
 
+    // Fonctions que l'agent de CET hôte annonce (le serveur les calcule avec une explication) ; absent = disponible.
+    const feat = (f) => state.host(hostId)?.agent?.support?.[f] || { ok: true, reason: null };
+
     async function load() {
+      if (!feat('history').ok) {
+        events = [];
+        drawFrise();
+        renderBody(); // affiche l'explication
+        return;
+      }
       replace(body, loadingState());
       try {
         const r = await get(`/api/hosts/${hostId}/rewind/events?limit=500`);
@@ -85,15 +94,19 @@ export default {
     }
 
     async function renderBody() {
+      if (!feat('history').ok) { replace(body, emptyState({ icon: 'history', title: 'Non disponible sur cet hôte', text: feat('history').reason })); return; }
       if (tab === 'history') return renderHistory();
       replace(body, loadingState());
       try {
         const { changes } = await get(`/api/hosts/${hostId}/rewind/changes?at=${Math.round(at)}`);
         if (!changes.length) { replace(body, emptyState({ icon: 'history', title: 'Aucune différence', text: `Les fichiers surveillés sont identiques à ceux du ${formatDate(at)}.` })); return; }
-        const boxes = changes.map((c) => ({ c, cb: checkbox('', { checked: c.restorable, disabled: !c.restorable }) }));
-        const restoreBtn = button({ label: 'Restaurer la sélection', icon: 'history', variant: 'danger', onClick: () => restore(boxes) });
+        // Sans restauration (agent Windows, macOS…) : les différences restent lisibles, rien ne peut être coché ni lancé.
+        const canRestore = feat('restore').ok;
+        const boxes = changes.map((c) => ({ c, cb: checkbox('', { checked: c.restorable && canRestore, disabled: !c.restorable || !canRestore }) }));
+        const restoreBtn = button({ label: 'Restaurer la sélection', icon: 'history', variant: 'danger', onClick: () => restore(boxes), disabled: !canRestore, title: canRestore ? undefined : feat('restore').reason });
         replace(body,
           h('p', null, `${changes.length} différence(s) avec l'état du ${formatDate(at)} :`),
+          canRestore ? null : h('p', { class: 'dim' }, feat('restore').reason),
           h('ul', { class: 'list' }, boxes.map(({ c, cb }) => h('li', { class: 'list-item' },
             cb,
             h('div', { class: 'grow' },
