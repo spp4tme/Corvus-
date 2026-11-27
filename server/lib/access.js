@@ -4,7 +4,8 @@
 import { HttpError } from './validate.js';
 import { Users } from './users.js';
 
-const ID_RE = /^[a-z0-9]{8,32}$/;
+// Insensible à la casse : un identifiant en majuscules est traité comme un identifiant (donc 404), jamais ignoré.
+const ID_RE = /^[a-z0-9]{8,32}$/i;
 const ANY = '*';
 
 // Routes globales réservées : [méthode, motif, rôle global minimal].
@@ -49,6 +50,11 @@ export function hostLevel(method, sub, body) {
   if (sub === '/behavior/settings' || sub === '/behavior/restart') return 'admin';
   // Isolement réseau d'un hôte : coupe presque tout le trafic, donc administrateur de l'hôte (lecture de l'état : viewer).
   if (sub === '/isolation' && !read) return 'admin';
+  // Lectures qui exposent des informations d'administration de l'hôte : journaux système, règles du pare-feu, comptes
+  // de la machine, et contenu des anciennes versions de fichiers (l'agent, root, a pu copier ce que le compte SSH ne lit pas).
+  if (read && (sub === '/admin/logs' || sub === '/admin/firewall' || sub === '/admin/users' || sub === '/rewind/diff' || sub.startsWith('/rewind/version/'))) return 'operator';
+  // Geler / dégeler / arrêter un processus PAR L'AGENT (root) : plus puissant que le compte SSH d'un opérateur.
+  if (sub === '/xray/proc' && !read) return 'admin';
   return read ? 'viewer' : 'operator';
 }
 
@@ -59,6 +65,19 @@ export function hostLevel(method, sub, body) {
  */
 export const roleGuard = (ctx, role) => (req, res, next) => {
   try { ctx.requireRole(req, role); } catch (err) { return next(err); }
+  next();
+};
+
+/**
+ * Seconde barrière GÉNÉRIQUE pour toute route d'hôte (`/hosts/:id/...`), posée dans les routeurs : même si
+ * `accessGuard` était contourné, le droit sur l'hôte est revérifié avec le même niveau canonique (`hostLevel`).
+ * À monter avec `r.use('/hosts/:id', hostBarrier(ctx))` AVANT les routes du routeur.
+ */
+export const hostBarrier = (ctx) => (req, res, next) => {
+  if (!ID_RE.test(String(req.params.id))) return next();
+  try {
+    ctx.requireHost(req.user, req.params.id, hostLevel(req.method, String(req.url || '').split('?')[0], req.body));
+  } catch (err) { return next(err); }
   next();
 };
 

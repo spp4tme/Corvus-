@@ -15,7 +15,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   // Pas d'accessGuard : l'identité est fournie par l'en-tête de test.
-  app.use((req, res, next) => { req.user = { id: 'u-test', username: 'test', role: req.get('x-role') || 'viewer' }; next(); });
+  app.use((req, res, next) => { req.user = { id: req.get('x-uid') || 'u-test', username: 'test', role: req.get('x-role') || 'viewer' }; next(); });
   app.use(accountRoutes(env.corvus.ctx));
   app.use(hostRoutes(env.corvus.ctx));
   app.use(extraRoutes(env.corvus.ctx));
@@ -25,9 +25,9 @@ before(async () => {
 });
 after(async () => { srv.close(); await env.close(); });
 
-const call = async (role, method, url, body) => {
+const call = async (role, method, url, body, uid) => {
   const r = await fetch(base + url, {
-    method, headers: { 'content-type': 'application/json', 'x-role': role }, body: body ? JSON.stringify(body) : undefined,
+    method, headers: { 'content-type': 'application/json', 'x-role': role, ...(uid ? { 'x-uid': uid } : {}) }, body: body ? JSON.stringify(body) : undefined,
   });
   return r.status;
 };
@@ -72,4 +72,23 @@ test('copie d\'hôte à hôte : le routeur refuse de lui-même un compte sans r�
     assert.equal(await call('aucun', m, u, b), 403, `rôle inconnu : ${m} ${u}`);
   }
   assert.notEqual(await call('operator', 'GET', '/fs/copy'), 403);
+});
+
+test('routes d\'hôte : la barrière générique revérifie le droit SUR L\'HÔTE même sans accessGuard (audit 1.1.0)', async () => {
+  const { users, hosts } = env.corvus.ctx;
+  const h1 = hosts.create({ name: 'barriere', hostname: 'b.example', username: 'pi', authType: 'password', password: 'x' });
+  const h2 = hosts.create({ name: 'interdit', hostname: 'c.example', username: 'pi', authType: 'password', password: 'x' });
+  const u = users.create({ username: 'barriere', password: 'mot-de-passe-barriere-1', role: 'viewer' });
+  users.setGrants(u.id, [{ scope: 'host', target: h1.id, role: 'viewer' }]);
+  // Hôte non accordé : 404 pour toute route d'hôte, aussi bien lecture qu'écriture
+  for (const [m, p, b] of [['GET', `/hosts/${h2.id}`], ['GET', `/hosts/${h2.id}/fs/list`], ['POST', `/hosts/${h2.id}/fs/mkdir`, {}], ['GET', `/Hosts/${h2.id}/Admin/Logs/`], ['GET', `/hosts/${h2.id.toUpperCase()}/monitor/stats`]]) {
+    assert.equal(await call('viewer', m, p, b, u.id), 404, `${m} ${p}`);
+  }
+  // Hôte accordé en lecture : lecteur → refus des lectures sensibles et de toute écriture, quelles que soient les variantes
+  for (const [m, p, b] of [['GET', `/hosts/${h1.id}/admin/logs`], ['GET', `/Hosts/${h1.id}/ADMIN/LOGS/`], ['GET', `/hosts/${h1.id}/admin/firewall`], ['POST', `/hosts/${h1.id}/fs/mkdir`, {}],
+    ['POST', `/hosts/${h1.id}/xray/proc`, {}], ['POST', `/hosts/${h1.id}/Isolation/`, {}], ['PATCH', `/hosts/${h1.id}/`, { name: 'x' }]]) {
+    assert.equal(await call('viewer', m, p, b, u.id), 403, `${m} ${p}`);
+  }
+  // Les routes globales voisines ne sont pas happées par la barrière (« /hosts/test » n'est pas un identifiant d'hôte)
+  assert.notEqual(await call('admin', 'POST', '/hosts/test', {}, u.id), 404);
 });

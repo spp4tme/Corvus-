@@ -112,7 +112,7 @@ export default {
         h('div', { class: 'grow' },
           h('div', { class: 'mono' }, p.exe, ' ', h('span', { class: 'dim' }, `pid ${p.pid}`), ' ', p.ssh ? badge(`via SSH · ${p.ssh}`, 'accent') : null, p.uid === 0 ? badge('root', 'warn') : null),
           p.cmd && p.cmd !== p.exe ? h('div', { class: 'dim ellipsis' }, p.cmd) : null),
-        state.canOperate(hostId) ? h('div', { class: 'row' },
+        state.host(hostId)?.role === 'admin' ? h('div', { class: 'row' },
           button({ label: 'Geler', variant: 'ghost', onClick: () => act(p, 'freeze') }),
           button({ label: 'Dégeler', variant: 'ghost', onClick: () => act(p, 'thaw') }),
           button({ label: 'Tuer', variant: 'ghost', onClick: () => act(p, 'kill') })) : null))));

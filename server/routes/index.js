@@ -24,6 +24,7 @@ import { hostAdminRoutes } from './hostadmin.js';
 import { HostAdmin } from '../lib/hostadmin.js';
 import { UndoService } from '../lib/undo.js';
 import { Users } from '../lib/users.js';
+import { hostBarrier } from '../lib/access.js';
 import { HostStatus } from '../lib/hoststatus.js';
 import { MetricsCollector } from '../lib/metrics.js';
 import { CompareService } from '../lib/compare.js';
@@ -79,6 +80,7 @@ export function createServices(ctx) {
 
 export function extraRoutes(ctx) {
   const r = Router();
+  r.use('/hosts/:id', hostBarrier(ctx)); // seconde barrière : droit sur l'hôte revérifié pour TOUTES les routes d'hôte
   r.use(fileRoutes(ctx));
   r.use(gitRoutes(ctx));
   r.use(monitorRoutes(ctx));

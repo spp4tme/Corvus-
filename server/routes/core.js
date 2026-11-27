@@ -4,11 +4,12 @@ import { Router } from 'express';
 import { tailscalePeers } from '../lib/tailscale.js';
 import { HttpError } from '../lib/validate.js';
 import * as v from '../lib/validate.js';
-import { roleGuard } from '../lib/access.js';
+import { roleGuard, hostBarrier } from '../lib/access.js';
 
 
 export function hostRoutes(ctx) {
   const r = Router();
+  r.use('/hosts/:id', hostBarrier(ctx)); // seconde barrière générique (voir access.js)
   const { hosts, pool, knownHosts, journal, terminals, config } = ctx;
 
   r.get('/hosts', (req, res) => {

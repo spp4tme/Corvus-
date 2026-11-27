@@ -1,5 +1,5 @@
 // Radiographie : /api/hosts/:id/xray/* — processus, connexions, lignée (agent requis).
-// Lecture = viewer ; geler / dégeler / tuer = opérateur de l'hôte, avec confirmation explicite, journalisé.
+// Lecture = viewer ; geler / dégeler / tuer = administrateur de l'hôte (l'agent est root), avec confirmation explicite, journalisé.
 import { Router } from 'express';
 import * as v from '../lib/validate.js';
 import { HttpError } from '../lib/validate.js';
