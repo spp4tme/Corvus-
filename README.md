@@ -10,6 +10,7 @@ Auto-hébergé, gratuit, sans cloud, sans télémétrie, **sans IA**.
 
 [![CI](https://github.com/spp4tme/Corvus-/actions/workflows/ci.yml/badge.svg)](https://github.com/spp4tme/Corvus-/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/spp4tme/Corvus-/actions/workflows/codeql.yml/badge.svg)](https://github.com/spp4tme/Corvus-/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/spp4tme/Corvus-/badge)](https://scorecard.dev/viewer/?uri=github.com/spp4tme/Corvus-)
 [![PR Dependabot ouvertes](https://img.shields.io/github/issues-search/spp4tme/Corvus-?query=is%3Apr%20is%3Aopen%20author%3Aapp%2Fdependabot&label=PR%20Dependabot%20ouvertes)](https://github.com/spp4tme/Corvus-/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot)
 [![Release](https://github.com/spp4tme/Corvus-/actions/workflows/release.yml/badge.svg)](https://github.com/spp4tme/Corvus-/actions/workflows/release.yml)
 [![Version](https://img.shields.io/github/v/release/spp4tme/Corvus-?display_name=tag&sort=semver)](https://github.com/spp4tme/Corvus-/releases/latest)
@@ -19,7 +20,7 @@ Auto-hébergé, gratuit, sans cloud, sans télémétrie, **sans IA**.
 [![Image Docker](https://ghcr-badge.egpl.dev/spp4tme/corvus/latest_tag?trim=major&label=image%20Docker)](https://github.com/spp4tme/Corvus-/pkgs/container/corvus)
 
 [![Dernier commit](https://img.shields.io/github/last-commit/spp4tme/Corvus-)](https://github.com/spp4tme/Corvus-/commits/main)
-[![Étoiles](https://img.shields.io/github/stars/spp4tme/Corvus-?style=flat)](https://github.com/spp4tme/Corvus-/stargazers)
+[![Étoiles](https://img.shields.io/github/stars/spp4tme/Corvus-?style=flat)](https://github.com/spp4tme/Corvus-)
 [![Tickets ouverts](https://img.shields.io/github/issues/spp4tme/Corvus-)](https://github.com/spp4tme/Corvus-/issues)
 [![PR bienvenues](https://img.shields.io/badge/PR-bienvenues-brightgreen)](https://github.com/spp4tme/Corvus-/wiki/Contribuer)
 [![Téléchargements](https://img.shields.io/github/downloads/spp4tme/Corvus-/latest/total)](https://github.com/spp4tme/Corvus-/releases/latest)
