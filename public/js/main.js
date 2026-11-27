@@ -21,6 +21,7 @@ const ROUTES = {
   xray: { title: 'Radiographie', icon: 'activity', load: () => import('./views/xray.js'), secondary: true },
   recordings: { title: 'Enregistrements', short: 'Replays', icon: 'history', load: () => import('./views/recordings.js'), secondary: true },
   proxy: { title: 'Services web', icon: 'link', load: () => import('./views/proxy.js'), secondary: true },
+  share: { title: 'Partager vers Corvus', short: 'Partage', icon: 'upload', load: () => import('./views/share.js'), secondary: true },
   settings: { title: 'Réglages', icon: 'settings', load: () => import('./views/settings.js'), secondary: true },
   more: { title: 'Plus', icon: 'more', load: () => import('./views/more.js'), mobileOnly: true },
 };

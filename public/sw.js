@@ -1,16 +1,16 @@
 // Service worker Corvus : coquille de l'app disponible hors ligne.
 // L'API, les WebSockets, les téléchargements et le proxy ne sont JAMAIS mis en cache.
-importScripts('/sw-actions.js'); // actions des notifications (logique pure, testée à part)
-const VERSION = 'corvus-v27';
+importScripts('/sw-actions.js', '/sw-share.js'); // actions des notifications et « Partager vers Corvus » (logique pure, testée à part)
+const VERSION = 'corvus-v28';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest',
   '/css/tokens.css', '/css/app.css',
   '/vendor/xterm.css', '/vendor/xterm.js', '/vendor/addon-fit.js',
-  '/sw-actions.js', '/js/main.js', '/js/api.js', '/js/state.js', '/js/push.js', '/js/terminal-themes.js', '/js/voice.js',
+  '/sw-actions.js', '/sw-share.js', '/js/main.js', '/js/api.js', '/js/state.js', '/js/push.js', '/js/terminal-themes.js', '/js/voice.js',
   '/js/ui/dom.js', '/js/ui/icons.js', '/js/ui/components.js', '/js/ui/hostpicker.js', '/js/ui/chart.js',
   '/js/views/login.js', '/js/views/hosts.js', '/js/views/terminal.js', '/js/views/claude.js', '/js/views/files.js',
   '/js/views/git.js', '/js/views/monitor.js', '/js/views/journal.js', '/js/views/proxy.js',
-  '/js/views/agents.js', '/js/views/rewind.js', '/js/views/xray.js', '/js/views/compare.js', '/js/views/copy-dialog.js', '/js/ui/diffview.js', '/js/views/settings.js', '/js/views/more.js', '/js/views/storage-settings.js', '/js/views/accounts-settings.js', '/js/views/recordings.js', '/js/passkey.js', '/js/cmdbar.js', '/js/views/commands.js', '/js/views/admin.js',
+  '/js/views/agents.js', '/js/views/rewind.js', '/js/views/xray.js', '/js/views/compare.js', '/js/views/copy-dialog.js', '/js/views/share.js', '/js/ui/diffview.js', '/js/views/settings.js', '/js/views/more.js', '/js/views/storage-settings.js', '/js/views/accounts-settings.js', '/js/views/recordings.js', '/js/passkey.js', '/js/cmdbar.js', '/js/views/commands.js', '/js/views/admin.js',
   '/icons/logo.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png',
 ];
 
@@ -34,9 +34,29 @@ function isPrivate(url) {
   return url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/') || url.pathname.startsWith('/proxy/');
 }
 
+// « Partager vers Corvus » : le menu Partager envoie un POST multipart à /share-target. On garde les fichiers dans le
+// navigateur (stockage temporaire, propre au compte connecté) puis on ouvre l'écran qui demande l'hôte et le dossier :
+// RIEN n'est envoyé au serveur sans ce choix.
+async function handleShare(req) {
+  const to = (hash) => Response.redirect(new URL(`/#/share${hash}`, self.location.origin).href, 303);
+  try {
+    const me = await fetch('/api/me', { credentials: 'same-origin', headers: { 'X-Corvus': '1' } });
+    if (!me.ok) return to('?login=1');
+    const owner = (await me.json())?.user?.id;
+    const meta = await self.CorvusShare.create({ caches }).store(await req.formData(), owner);
+    return to(`?id=${meta.id}`);
+  } catch (err) {
+    return to(`?error=${encodeURIComponent(String(err?.message || 'échec').slice(0, 120))}`);
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
+  if (req.method === 'POST' && url.origin === self.location.origin && url.pathname === '/share-target') {
+    event.respondWith(handleShare(req));
+    return;
+  }
   if (req.method !== 'GET' || url.origin !== self.location.origin || isPrivate(url)) return;
 
   // Navigation : réseau d'abord (version à jour), coquille en cache si hors ligne.

@@ -216,12 +216,19 @@ export function createCorvus(overrides = {}) {
     res.set('Cache-Control', 'public, max-age=86400');
     res.sendFile(f);
   });
+  // Le service worker intercepte « Partager vers Corvus » (POST /share-target). Sans lui (navigateur qui n'a pas encore
+  // installé la dernière version), on ne lit ni ne garde rien : simple redirection vers l'écran d'explication.
+  app.post('/share-target', (req, res) => {
+    let n = 0;
+    req.on('data', (c) => { n += c.length; if (n > 1024 * 1024) req.destroy(); }); // le corps est jeté, au plus 1 Mo lu
+    res.redirect(303, '/#/share?unavailable=1');
+  });
   ctx.mountExtraStatic?.(app);
   app.use(express.static(config.publicDir, {
     index: 'index.html',
     setHeaders(res, file) {
       const base = path.basename(file);
-      if (base === 'sw.js' || base === 'index.html' || base.endsWith('.webmanifest')) {
+      if (base === 'sw.js' || base.startsWith('sw-') || base === 'index.html' || base.endsWith('.webmanifest')) {
         res.set('Cache-Control', 'no-cache');
       } else {
         res.set('Cache-Control', 'public, max-age=3600');

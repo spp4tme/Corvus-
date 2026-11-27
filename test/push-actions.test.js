@@ -69,7 +69,7 @@ describe('service worker : logique des actions (isolée)', () => {
 
   test('sw.js : importe la logique, ne stocke rien d\'autre, n\'isole nulle part', () => {
     const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
-    assert.match(sw, /importScripts\('\/sw-actions\.js'\)/);
+    assert.match(sw, /importScripts\('\/sw-actions\.js'/);
     assert.ok(!/isolation/.test(sw), 'le service worker n\'appelle jamais l\'API d\'isolement');
     assert.ok(!/innerHTML/.test(sw));
   });

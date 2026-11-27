@@ -58,7 +58,7 @@ export default {
           button({
             label: 'Se déconnecter', icon: 'logout', variant: 'danger',
             onClick: async () => {
-              try { await post('/api/auth/logout'); toast('Déconnecté', 'ok'); location.reload(); } catch (err) { toastError(err); }
+              try { await post('/api/auth/logout'); try { await caches.delete('corvus-share-v1'); } catch { /* pas de cache */ } toast('Déconnecté', 'ok'); location.reload(); } catch (err) { toastError(err); }
             },
           }))));
   },
