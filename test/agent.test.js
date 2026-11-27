@@ -232,7 +232,7 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
       const list = (await (await fetch(`${env.base}/api/agents`, { headers: auth() })).json()).agents;
       const me = list.find((a) => a.id === identity.agent_id);
       assert.equal(me.online, true);
-      assert.equal(me.version, '1.1.0');
+      assert.equal(me.version, '1.2.0');
       assert.equal(me.capabilities.ebpf, false);
       assert.equal(me.platform, { win32: 'windows', darwin: 'macos' }[process.platform] ?? 'linux');
     } finally {

@@ -52,6 +52,7 @@ Corvus n'écoute que sur `127.0.0.1:7680`. Au premier lancement, un token s'affi
 - **Comptes** avec TOTP obligatoire, passkeys, rôles, droits par hôte, journal d'audit infalsifiable.
 - **Défense avec l'agent facultatif** (Rust, 3 Mo, aucun port ouvert sur l'hôte) : **Rembobiner** les fichiers, **prévisualiser** une
   commande risquée, **radiographier** les processus, repérer l'inhabituel, bloquer un **ransomware**.
+- **Agent Windows et macOS** : lecture seule (métriques, processus, fichiers), Windows testé sur une vraie machine hors service, macOS **expérimental** et jamais essayé sur un Mac réel ([wiki](https://github.com/spp4tme/Corvus-/wiki/Installation-Windows-et-macOS)).
 - Règles et statistiques, **jamais d'IA**. Toute action destructive demande une confirmation et laisse une trace.
 - **Comparer** un fichier de configuration entre 2 à 5 hôtes, côte à côte, mots de passe masqués ([wiki](https://github.com/spp4tme/Corvus-/wiki/Comparer)).
 - **Rechercher dans vos replays** de sessions et exporter en `.cast` ([wiki](https://github.com/spp4tme/Corvus-/wiki/Enregistrements-et-partage)).
