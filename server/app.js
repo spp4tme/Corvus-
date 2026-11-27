@@ -6,6 +6,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { AgentService } from './lib/agents.js';
 import { installScript } from './lib/agent-install.js';
+import { installScriptWindows } from './lib/agent-install-windows.js';
 import { config as baseConfig } from './config.js';
 import { Auth, loadToken, originAllowed, isLoopback } from './lib/auth.js';
 import { Vault } from './lib/vault.js';
@@ -144,6 +145,9 @@ export function createCorvus(overrides = {}) {
   // Script d'installation de l'agent : public (il ne contient aucun secret, le jeton est passé en argument).
   api.get('/agent/install.sh', (req, res) => {
     res.type('text/x-shellscript; charset=utf-8').send(installScript(ctx.version));
+  });
+  api.get('/agent/install.ps1', (req, res) => {
+    res.type('text/plain; charset=utf-8').send(installScriptWindows(ctx.version));
   });
   // Enrôlement d'un agent : public, protégé par le jeton à usage unique (et le limiteur d'échecs par IP).
   api.post('/agent/enroll', (req, res, next) => {
