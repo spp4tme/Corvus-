@@ -21,6 +21,18 @@
     return n;
   }
 
+  /**
+   * Qui a le droit de déposer un partage ? Le système (menu Partager : `Sec-Fetch-Site: none`) ou l'application
+   * elle-même. Un formulaire caché sur un AUTRE site (`cross-site`) est refusé : sinon il pourrait glisser un fichier
+   * dans la liste d'attente de l'utilisateur connecté (le service worker, lui, envoie le cookie de session).
+   */
+  function sourceAllowed(getHeader, selfOrigin) {
+    const site = getHeader('sec-fetch-site');
+    if (site) return site === 'none' || site === 'same-origin';
+    const origin = getHeader('origin');
+    return !origin || origin === selfOrigin;
+  }
+
   function create({ caches, now = () => Date.now(), random = (n) => { const a = new Uint8Array(n); crypto.getRandomValues(a); return a; }, ResponseCtor = Response } = {}) {
     const open = () => caches.open(CACHE);
     const metaKey = (id) => `${PREFIX}${id}/meta`;
@@ -120,5 +132,5 @@
     return { store, list, blob, remove, purge };
   }
 
-  root.CorvusShare = { create, safeName, MAX_FILES, MAX_TOTAL, MAX_AGE_MS, CACHE };
+  root.CorvusShare = { create, safeName, sourceAllowed, MAX_FILES, MAX_TOTAL, MAX_AGE_MS, CACHE };
 }(typeof self !== 'undefined' ? self : globalThis));

@@ -1,7 +1,7 @@
 // Service worker Corvus : coquille de l'app disponible hors ligne.
 // L'API, les WebSockets, les téléchargements et le proxy ne sont JAMAIS mis en cache.
 importScripts('/sw-actions.js', '/sw-share.js'); // actions des notifications et « Partager vers Corvus » (logique pure, testée à part)
-const VERSION = 'corvus-v28';
+const VERSION = 'corvus-v29';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest',
   '/css/tokens.css', '/css/app.css',
@@ -40,6 +40,7 @@ function isPrivate(url) {
 async function handleShare(req) {
   const to = (hash) => Response.redirect(new URL(`/#/share${hash}`, self.location.origin).href, 303);
   try {
+    if (!self.CorvusShare.sourceAllowed((n) => req.headers.get(n), self.location.origin)) return to('?error=' + encodeURIComponent('origine refusée : seul le menu Partager du système ou Corvus lui-même peut déposer un fichier'));
     const me = await fetch('/api/me', { credentials: 'same-origin', headers: { 'X-Corvus': '1' } });
     if (!me.ok) return to('?login=1');
     const owner = (await me.json())?.user?.id;

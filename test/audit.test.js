@@ -2,6 +2,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
 import { startCorvus, CorvusClient, makeUser } from './helpers/corvus.js';
 
@@ -160,5 +161,29 @@ describe('passphrase maître : avertissement visible (audit 1.1.0, point 7)', ()
     assert.match(sh, /--accept-no-passphrase/);
     const check = spawnSync('bash', ['-n', new URL('../deploy/install-linux.sh', import.meta.url).pathname]);
     assert.equal(check.status, 0, String(check.stderr));
+  });
+});
+
+describe('« Partager vers Corvus » : un autre site ne peut pas déposer de fichier (audit 1.1.0, point 13)', () => {
+  const sandbox = { self: {} };
+  vm.runInNewContext(fs.readFileSync(new URL('../public/sw-share.js', import.meta.url), 'utf8'), sandbox);
+  const S = sandbox.self.CorvusShare;
+  const hdr = (h) => (n) => h[n] ?? null;
+  const ME = 'https://corvus.ts.net';
+
+  test('seules les requêtes du système ou de l\'application elle-même sont acceptées', () => {
+    assert.equal(S.sourceAllowed(hdr({ 'sec-fetch-site': 'none' }), ME), true, 'menu Partager du système');
+    assert.equal(S.sourceAllowed(hdr({ 'sec-fetch-site': 'same-origin' }), ME), true);
+    assert.equal(S.sourceAllowed(hdr({ 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' }), ME), false, 'formulaire d\'un autre site');
+    assert.equal(S.sourceAllowed(hdr({ 'sec-fetch-site': 'same-site' }), ME), false);
+    assert.equal(S.sourceAllowed(hdr({ origin: 'https://evil.example' }), ME), false, 'sans Sec-Fetch-Site : l\'origine décide');
+    assert.equal(S.sourceAllowed(hdr({ origin: 'null' }), ME), false);
+    assert.equal(S.sourceAllowed(hdr({ origin: ME }), ME), true);
+    assert.equal(S.sourceAllowed(hdr({}), ME), true, 'aucun en-tête : lancé par le navigateur lui-même');
+  });
+
+  test('sw.js applique ce contrôle avant de lire le moindre fichier', () => {
+    const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+    assert.ok(sw.indexOf('sourceAllowed') > 0 && sw.indexOf('sourceAllowed') < sw.indexOf('req.formData()'));
   });
 });
