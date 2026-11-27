@@ -13,6 +13,7 @@ const ROUTES = {
   git: { title: 'Git', icon: 'git', load: () => import('./views/git.js') },
   monitor: { title: 'Supervision', short: 'Système', icon: 'activity', load: () => import('./views/monitor.js') },
   journal: { title: 'Journal', icon: 'journal', load: () => import('./views/journal.js'), secondary: true },
+  compare: { title: 'Comparer', icon: 'search', load: () => import('./views/compare.js'), secondary: true },
   commands: { title: 'Commandes', icon: 'terminal', load: () => import('./views/commands.js'), secondary: true },
   admin: { title: 'Admin', icon: 'settings', load: () => import('./views/admin.js'), secondary: true },
   agents: { title: 'Agents', icon: 'server', load: () => import('./views/agents.js'), secondary: true },

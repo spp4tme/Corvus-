@@ -57,3 +57,11 @@ test('opérateur : pas d\'administration ; administrateur : accès conservé', a
   assert.equal(await call('admin', 'GET', '/journal/verify'), 200);
   assert.equal(await call('admin', 'GET', '/agents'), 200);
 });
+
+test('comparer : le routeur refuse de lui-même un compte sans rôle valide, variantes de casse comprises (étape 1)', async () => {
+  for (const u of ['/compare', '/Compare', '/COMPARE/']) {
+    assert.equal(await call('aucun', 'POST', u, { path: '~/x', hostIds: ['a', 'b'] }), 403, `rôle inconnu : ${u}`);
+  }
+  // Rôle valide mais hôtes inconnus : 404 (jamais 403 qui révélerait quoi que ce soit)
+  assert.equal(await call('viewer', 'POST', '/Compare/', { path: '~/x', hostIds: ['abcdefabcdef', 'bcdefabcdefa'] }), 404);
+});

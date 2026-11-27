@@ -490,3 +490,15 @@ dialog.dlg[open] { animation: dlg-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .diff-add { background: color-mix(in srgb, var(--c-ok, #2e7d32) 22%, transparent); }
 .diff-del { background: color-mix(in srgb, var(--c-danger, #c62828) 22%, transparent); }
 .diff-sep { padding: 0 var(--s-2); color: var(--c-text-dim); border-block: 1px dashed var(--c-border); }
+
+/* Comparer : fichier de configuration lu sur plusieurs hôtes */
+.cmp-hosts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--s-2); }
+.cmp-summary { margin: 0; }
+.cmp-scroll { overflow-x: auto; border: 1px solid var(--c-border); border-radius: var(--r-2, 8px); }
+.cmp-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono, monospace); font-size: 0.85rem; table-layout: fixed; }
+.cmp-table th { text-align: left; padding: var(--s-2); border-bottom: 1px solid var(--c-border); position: sticky; top: 0; background: var(--c-surface, inherit); }
+.cmp-table td { padding: 0 var(--s-2); white-space: pre-wrap; word-break: break-all; vertical-align: top; width: 50%; }
+.cmp-chg td { background: color-mix(in srgb, var(--c-warn, #f9a825) 22%, transparent); }
+.cmp-del td:first-child, .cmp-add td:last-child { background: color-mix(in srgb, var(--c-danger, #c62828) 22%, transparent); }
+.cmp-add td:last-child { background: color-mix(in srgb, var(--c-ok, #2e7d32) 22%, transparent); }
+.cmp-fold td { color: var(--c-text-dim); text-align: center; border-block: 1px dashed var(--c-border); }

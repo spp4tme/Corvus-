@@ -136,6 +136,23 @@ export class SftpService {
     return { path: abs, content, size: st.size, mtime: st.mtime };
   }
 
+  /**
+   * Lecture bornée d'un fichier texte pour la comparaison : taille maximale `maxBytes`, refus du binaire
+   * et de l'UTF-8 invalide. Renvoie le texte tel quel (fins de ligne comprises).
+   */
+  async readLimited(hostId, p, maxBytes) {
+    const { sftp, abs, st, type } = await this.stat(hostId, p);
+    if (type !== 'file') throw new HttpError(400, 'NOT_A_FILE', 'Ce n\'est pas un fichier');
+    if (st.size > maxBytes) throw new HttpError(413, 'FILE_TOO_LARGE', `Fichier trop gros (${Math.round(st.size / 1024)} Ko > ${Math.round(maxBytes / 1024)} Ko)`);
+    const buf = await readAll(sftp.createReadStream(abs), maxBytes + 1);
+    if (buf.subarray(0, 8192).includes(0)) throw new HttpError(415, 'BINARY', 'Fichier binaire : comparaison impossible');
+    try {
+      return { path: abs, text: new TextDecoder('utf-8', { fatal: true }).decode(buf), size: buf.length };
+    } catch {
+      throw new HttpError(415, 'NOT_UTF8', 'Encodage non UTF-8 : comparaison impossible');
+    }
+  }
+
   async writeText(hostId, p, content, expectedMtime) {
     if (Buffer.byteLength(content, 'utf8') > this.config.maxEditBytes) throw new HttpError(413, 'FILE_TOO_LARGE', 'Contenu > 2 Mo');
     const { sftp, abs } = await this.open(hostId, p);

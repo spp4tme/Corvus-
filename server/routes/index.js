@@ -25,11 +25,14 @@ import { HostAdmin } from '../lib/hostadmin.js';
 import { UndoService } from '../lib/undo.js';
 import { HostStatus } from '../lib/hoststatus.js';
 import { MetricsCollector } from '../lib/metrics.js';
+import { CompareService } from '../lib/compare.js';
+import { compareRoutes } from './compare.js';
 
 /** Services instanciés avant le montage des routes (le proxy est monté hors /api). */
 export function createServices(ctx) {
   ctx.sftp = new SftpService(ctx);
   ctx.git = new GitService(ctx);
+  ctx.compare = new CompareService({ sftp: ctx.sftp, hosts: ctx.hosts, journal: ctx.journal });
   ctx.monitor = new MonitorService(ctx);
   ctx.hostAdmin = new HostAdmin({ pool: ctx.pool, hosts: ctx.hosts, journal: ctx.journal });
   ctx.undo = new UndoService({ db: ctx.db, pool: ctx.pool, blobs: ctx.blobs, journal: ctx.journal, hosts: ctx.hosts });
@@ -71,5 +74,6 @@ export function extraRoutes(ctx) {
   r.use(behaviorRoutes(ctx));
   r.use(productivityRoutes(ctx));
   r.use(hostAdminRoutes(ctx));
+  r.use(compareRoutes(ctx));
   return r;
 }
