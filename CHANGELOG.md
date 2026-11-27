@@ -12,6 +12,19 @@ Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.
   Réglables (`CORVUS_RATE_ACCOUNT_PER_MIN`, `CORVUS_RATE_IP_PER_MIN`, `CORVUS_RATE_BACKUP_PER_MIN`) mais **jamais désactivables**. Un dépassement répond **429** + `Retry-After`
   et laisse **une** entrée de journal par minute et par compte/IP (jamais une par requête refusée, jamais de secret). Mémoire bornée.
 
+### Ajouté (jalon 1.2 — en cours, NON PUBLIÉ)
+- **Plateforme et capacités des agents** (serveur + interface) : `platform` (`linux|windows|macos`, facultatif, absent = linux, protocole v1 inchangé).
+  Rembobiner, Radiographie et Agents **grisent ou masquent avec une explication** ce que l'agent d'un hôte ne propose pas, et le serveur répond
+  `409 UNSUPPORTED` au lieu d'envoyer l'action. La plateforme **informe seulement** : aucun droit n'en dépend.
+- **`install.ps1`** servi par Corvus (`/api/agent/install.ps1`) : SHA-256 vérifié avant toute exécution, paramètres validés, `-DryRun`, `-Uninstall`.
+  *Non validé de bout en bout : l'agent Windows et son binaire n'existent pas encore.*
+- **Hôtes Windows côté SSH** (OpenSSH Server) : détection du système (cmd.exe, PowerShell, sh), réglage « Système de l'hôte », fonctions qui supposent un shell
+  POSIX **désactivées** (409 `POSIX_ONLY`), terminal sans tmux, SFTP inchangé. *Testé avec un faux hôte (simulation de cmd.exe), pas avec un vrai OpenSSH Windows.*
+
+### Pas encore fait (jalon 1.2)
+- Agent Rust Windows (métriques, processus, `ReadDirectoryChangesW`, service Windows, ACL de l'identité) et macOS (`sysctl`, FSEvents, `launchd`) : **non commencés**.
+- Binaires Windows/macOS dans la release et CI Windows/macOS : **non faits** (la CI échouerait tant que l'agent n'est pas portable).
+
 ### Corrigé
 - Alerte « programme jamais vu » : tous les `|` du chemin sont remplacés (`replaceAll`), côté serveur et interface.
 

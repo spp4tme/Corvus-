@@ -65,7 +65,7 @@ export default {
             h('div', { class: 'host-addr ellipsis' }, `${host.username}@${host.hostname}${host.port !== 22 ? `:${host.port}` : ''}`)),
           state.isAdmin ? button({ label: host.pinned ? 'Désépingler' : 'Épingler', icon: 'pin', iconOnly: true, variant: 'ghost', pressed: host.pinned, onClick: () => togglePin(host) }) : null,
           state.isAdmin ? button({ label: 'Modifier', icon: 'edit', iconOnly: true, variant: 'ghost', onClick: () => editHost(host) }) : null),
-        (status || missing || host.tmux || host.agent) ? h('div', { class: 'row' }, status, missing, host.agent ? badge(host.agent.online ? 'agent' : 'agent hors ligne', host.agent.online ? 'accent' : 'warn') : null, host.tmux ? badge(`tmux · ${host.tmuxSession}`, 'accent') : null) : null,
+        (status || missing || host.tmux || host.agent || host.osEffective === 'windows') ? h('div', { class: 'row' }, status, missing, host.osEffective === 'windows' ? badge('Windows') : null, host.agent ? badge(host.agent.online ? 'agent' : 'agent hors ligne', host.agent.online ? 'accent' : 'warn') : null, host.tmux ? badge(`tmux · ${host.tmuxSession}`, 'accent') : null) : null,
         result,
         host.role === 'viewer' ? h('div', null, badge('lecture seule')) : null,
         h('div', { class: 'host-actions' },
@@ -183,6 +183,13 @@ export function editHost(host) {
   }, icon(n))));
   renderIcons();
 
+  const osSel = select([
+    { value: 'auto', label: 'Détecté automatiquement' }, { value: 'posix', label: 'Linux ou macOS' }, { value: 'windows', label: 'Windows (OpenSSH Server)' },
+  ], { value: v.os || 'auto' });
+  const fOs = field({
+    label: 'Système de l\'hôte', control: osSel, span2: true,
+    hint: 'Sous Windows, le terminal et les fichiers restent disponibles ; les fonctions qui supposent un shell POSIX (surveillance, Git, Docker, tmux…) sont désactivées.',
+  });
   const pin = checkbox('Épingler en haut de la liste', { checked: !!v.pinned });
   const tmux = checkbox('Ouvrir les terminaux dans tmux (reprise après coupure)', { checked: !!v.tmux });
   const fTmux = field({ label: 'Nom de session tmux', control: input({ value: v.tmuxSession || 'corvus' }) });
@@ -207,7 +214,7 @@ export function editHost(host) {
     h('div', { class: 'field span-2' }, h('span', { class: 'field-label' }, 'Authentification'), authSeg),
     authFields,
     h('div', { class: 'field span-2' }, h('span', { class: 'field-label' }, 'Icône'), iconPick),
-    fGroup, groupsList, fTmux,
+    fGroup, groupsList, fOs, fTmux,
     h('div', { class: 'span-2' }, pin, tmux),
     fClaudeDir, fClaudeCmd, claudeWarn,
     result);
@@ -216,7 +223,7 @@ export function editHost(host) {
     const val = (f) => f.querySelector('input,textarea').value;
     const body = {
       name: val(fName).trim(), hostname: val(fHost).trim(), port: val(fPort).trim() || 22, username: val(fUser).trim(),
-      authType, icon: iconName, group: val(fGroup).trim(), pinned: pin.input.checked, tmux: tmux.input.checked,
+      authType, os: osSel.value, icon: iconName, group: val(fGroup).trim(), pinned: pin.input.checked, tmux: tmux.input.checked,
       tmuxSession: val(fTmux).trim() || 'corvus',
       claudeDir: val(fClaudeDir).trim(), claudeCmd: val(fClaudeCmd).trim() || 'claude',
     };

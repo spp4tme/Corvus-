@@ -103,3 +103,20 @@ test('vue Agents : plateforme affichée, raisons des fonctions manquantes, macOS
   assert.equal(await win.getByText('expérimental', { exact: true }).count(), 0, 'Windows n\'est pas marqué expérimental');
   await win.getByText(/nftables/).waitFor();
 });
+
+test('hôtes : badge « Windows » sur la carte et champ « Système de l\'hôte » dans le dialogue (valeur enregistrée)', async (t) => {
+  if (!browser) return t.skip('aucun navigateur Chromium/Edge disponible');
+  env.corvus.ctx.hosts.setDetectedOs(hostId, 'windows'); // détection normalement faite par la sonde SSH
+  const page = await (await browser.newContext({ viewport: { width: 1100, height: 900 } })).newPage();
+  await uiLogin(page);
+  const card = page.locator('.host-card', { hasText: 'Poste Windows' });
+  await card.getByText('Windows', { exact: true }).waitFor();
+  assert.equal(await page.locator('.host-card', { hasText: 'Serveur Linux' }).getByText('Windows', { exact: true }).count(), 0, 'pas de badge sur un hôte Linux');
+  await card.getByRole('button', { name: 'Modifier' }).click();
+  const sel = page.getByLabel('Système de l\'hôte');
+  assert.equal(await sel.inputValue(), 'auto');
+  await sel.selectOption('windows');
+  await page.getByRole('button', { name: 'Enregistrer' }).click();
+  await page.locator('dialog').waitFor({ state: 'detached' });
+  assert.equal(env.corvus.ctx.hosts.find(hostId).os, 'windows', 'réglage enregistré côté serveur');
+});
