@@ -1,7 +1,7 @@
 // Script d'installation Windows (install.ps1) : servi par Corvus, public, sans secret, paramètres blindés, SHA-256 vérifié
 // AVANT toute exécution. Exécuté avec le vrai PowerShell (Windows PowerShell 5.1 ou pwsh) ; sauté s'il n'y en a pas.
 // Ce que ces tests NE couvrent PAS : l'installation réelle du service (elle exige un administrateur, un binaire Windows
-// publié et l'agent Windows lui-même) — à valider à la main, voir docs/installation-windows-macos.md.
+// publié et l'agent Windows lui-même) — à valider à la main, voir le wiki, page « Installation-Windows-et-macOS ».
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
