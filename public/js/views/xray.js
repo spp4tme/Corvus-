@@ -75,7 +75,7 @@ export default {
           freeze, isolate, manual,
           h('h3', null, `À examiner (${o.anomalies.length})`),
           o.anomalies.length ? h('ul', { class: 'list' }, o.anomalies.map((a) => h('li', { class: 'list-item' },
-            h('div', { class: 'grow' }, h('div', { class: 'mono' }, a.item.replace('|', ' · ')), h('div', { class: 'dim' }, badge(KIND[a.kind] || a.kind), ` vu ${a.count}× · ${formatDate(a.firstSeen)}`)),
+            h('div', { class: 'grow' }, h('div', { class: 'mono' }, a.item.replaceAll('|', ' · ')), h('div', { class: 'dim' }, badge(KIND[a.kind] || a.kind), ` vu ${a.count}× · ${formatDate(a.firstSeen)}`)),
             state.canOperate(hostId) ? button({ label: 'Autoriser', variant: 'ghost', onClick: async () => { try { await post(`/api/hosts/${hostId}/behavior/allow`, { kind: a.kind, item: a.item }); drawNormal(); } catch (err) { toastError(err); } } }) : null)))
             : emptyState({ icon: 'activity', title: 'Rien à examiner', text: o.learning ? 'Pendant l\'apprentissage, tout est considéré comme normal.' : 'Aucune nouveauté depuis la fin de l\'apprentissage.' }),
           admin ? button({ label: 'Recommencer l\'apprentissage', variant: 'ghost', onClick: async () => {
