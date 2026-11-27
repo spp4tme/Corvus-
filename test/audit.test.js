@@ -61,3 +61,50 @@ describe('droits de lecture trop larges (audit 1.1.0, point 9)', () => {
     assert.equal((await ro.api('GET', `/api/hosts/${up}`)).status, a.status);
   });
 });
+
+describe('un jeton d\'API ne peut pas créer d\'autres moyens de se connecter (audit 1.1.0, point 2)', () => {
+  let env;
+  before(async () => { env = await startCorvus(); });
+  after(() => env.close());
+  const bearer = (method, url, body) => fetch(`${env.base}${url}`, {
+    method, headers: { authorization: `Bearer ${env.token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+  });
+
+  test('jeton : pas de création ni de révocation de jetons, pas de passkey, pas de changement de mot de passe', async () => {
+    const before = env.corvus.ctx.users.tokens(env.admin.id).length;
+    for (const [m, u, b] of [
+      ['POST', '/api/me/tokens', { name: 'persistance' }], ['POST', '/api/Me/Tokens/', { name: 'persistance' }],
+      ['DELETE', '/api/me/tokens/aaaaaaaaaaaa'],
+      ['POST', '/api/me/passkeys/options', {}], ['POST', '/api/me/passkeys', {}], ['DELETE', '/api/me/passkeys/aaaaaaaaaaaa'],
+      ['POST', '/api/me/password', { current: 'x', next: 'un-nouveau-mot-de-passe-1' }],
+    ]) {
+      const r = await bearer(m, u, b);
+      assert.equal(r.status, 403, `${m} ${u} par jeton → ${r.status}`);
+    }
+    assert.equal(env.corvus.ctx.users.tokens(env.admin.id).length, before, 'aucun jeton créé par un jeton');
+  });
+
+  test('jeton : la lecture de ses propres informations reste permise ; session navigateur : tout fonctionne', async () => {
+    assert.equal((await bearer('GET', '/api/me')).status, 200);
+    assert.equal((await bearer('GET', '/api/me/tokens')).status, 200);
+    const c = env.client; await c.login();
+    const t = await c.api('POST', '/api/me/tokens', { name: 'depuis-le-navigateur' });
+    assert.equal(t.status, 201);
+    assert.equal((await c.api('DELETE', `/api/me/tokens/${t.body.id}`)).status, 200);
+  });
+});
+
+describe('gestion des comptes : session de navigateur exigée (audit 1.1.0, point 2)', () => {
+  let env;
+  before(async () => { env = await startCorvus(); });
+  after(() => env.close());
+  test('un jeton d\'API, même administrateur, ne crée ni ne modifie de compte ; il peut les lister', async () => {
+    const h = { authorization: `Bearer ${env.token}`, 'content-type': 'application/json' };
+    const create = await fetch(`${env.base}/api/users`, { method: 'POST', headers: h, body: JSON.stringify({ username: 'porte-derobee', password: 'un-mot-de-passe-long-12', role: 'admin' }) });
+    assert.equal(create.status, 403);
+    assert.equal(env.corvus.ctx.users.byName('porte-derobee'), undefined);
+    const del = await fetch(`${env.base}/api/Users/${env.admin.id}/`, { method: 'DELETE', headers: h });
+    assert.equal(del.status, 403);
+    assert.equal((await fetch(`${env.base}/api/users`, { headers: h })).status, 200);
+  });
+});

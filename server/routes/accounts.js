@@ -161,6 +161,14 @@ export function accountRoutes(ctx) {
   const r = Router();
   const { users, journal, hosts } = ctx;
 
+  // Un jeton d'API (script) ne doit jamais créer ni retirer de moyen de connexion : un jeton volé pourrait sinon se
+  // perpétuer (nouveau jeton, passkey de l'attaquant) après sa révocation. Ces routes exigent une SESSION navigateur
+  // (mot de passe + TOTP ou passkey). Une session « cookie » est la seule à avoir franchi la double authentification.
+  const sessionOnly = (req, res, next) => (req.authKind === 'cookie'
+    ? next()
+    : next(new HttpError(403, 'SESSION_REQUIRED', 'Cette action exige une session de navigateur (mot de passe + TOTP), pas un jeton d\'API')));
+  r.use(['/me/tokens', '/me/passkeys', '/me/password', '/users', '/backups/restore'], (req, res, next) => (req.method === 'GET' ? next() : sessionOnly(req, res, next)));
+
   r.get('/me', (req, res) => res.json({ user: { ...req.user, grants: users.grants(req.user.id) } }));
 
   r.post('/me/password', (req, res) => {
