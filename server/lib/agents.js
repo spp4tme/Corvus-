@@ -9,6 +9,7 @@
 import crypto from 'node:crypto';
 import { HttpError } from './validate.js';
 import { logger } from './log.js';
+import { normalizePlatform, platformLabel, agentSupport, unsupportedReason, EXPERIMENTAL_PLATFORMS } from './agent-support.js';
 
 const log = logger('agents');
 export const PROTOCOL = 1;
@@ -75,7 +76,7 @@ export class AgentService {
   }
 
   /** Consomme le jeton (une seule fois, de façon atomique) et enregistre la clé publique de l'agent. */
-  enroll({ token, publicKey, version, hostname, capabilities }) {
+  enroll({ token, publicKey, version, hostname, capabilities, platform }) {
     if (typeof token !== 'string' || token.length < 20 || token.length > 200) throw new HttpError(400, 'BAD_TOKEN', 'Jeton invalide');
     publicKeyFromRaw(publicKey); // valide le format
     const agentId = crypto.randomBytes(12).toString('hex');
@@ -84,8 +85,8 @@ export class AgentService {
       if (!row || row.used_at || row.expires_at < Date.now()) return null;
       this.db.run('UPDATE agent_enrollments SET used_at = ? WHERE token_hash = ?', Date.now(), sha256(token));
       this.db.run(
-        'INSERT INTO agents (id, host_id, public_key, version, capabilities, enrolled_at) VALUES (?, ?, ?, ?, ?, ?)',
-        agentId, row.host_id, String(publicKey), String(version || '').slice(0, 40), capsJson(capabilities), Date.now(),
+        'INSERT INTO agents (id, host_id, public_key, version, capabilities, enrolled_at, platform) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        agentId, row.host_id, String(publicKey), String(version || '').slice(0, 40), capsJson(capabilities), Date.now(), normalizePlatform(platform),
       );
       return row;
     });
@@ -95,15 +96,25 @@ export class AgentService {
     return { agentId, serverPublicKey: this.publicKeyB64, hostId: res.host_id, protocol: PROTOCOL };
   }
 
+  /** Plateforme + fonctions disponibles, calculées depuis ce que l'agent annonce (informatif : voir agent-support.js). */
+  #describe(a) {
+    const capabilities = safeJson(a.capabilities);
+    const platform = normalizePlatform(a.platform);
+    return {
+      capabilities, platform, platformLabel: platformLabel(platform), experimental: EXPERIMENTAL_PLATFORMS.has(platform),
+      support: agentSupport(platform, capabilities),
+    };
+  }
+
   list() {
-    return this.db.all('SELECT id, host_id AS hostId, version, capabilities, enrolled_at AS enrolledAt, last_seen_at AS lastSeenAt FROM agents ORDER BY enrolled_at')
-      .map((a) => ({ ...a, capabilities: safeJson(a.capabilities), online: this.connections.has(a.id) }));
+    return this.db.all('SELECT id, host_id AS hostId, version, capabilities, platform, enrolled_at AS enrolledAt, last_seen_at AS lastSeenAt FROM agents ORDER BY enrolled_at')
+      .map(({ platform, capabilities, ...a }) => ({ ...a, ...this.#describe({ platform, capabilities }), online: this.connections.has(a.id) }));
   }
 
   /** Résumé pour la carte d'hôte (null = pas d'agent). */
   forHost(hostId) {
-    const a = this.db.get('SELECT id, version, capabilities, last_seen_at AS lastSeenAt FROM agents WHERE host_id = ? ORDER BY enrolled_at DESC LIMIT 1', hostId);
-    return a ? { id: a.id, version: a.version, online: this.connections.has(a.id), lastSeenAt: a.lastSeenAt, capabilities: safeJson(a.capabilities) } : null;
+    const a = this.db.get('SELECT id, version, capabilities, platform, last_seen_at AS lastSeenAt FROM agents WHERE host_id = ? ORDER BY enrolled_at DESC LIMIT 1', hostId);
+    return a ? { id: a.id, version: a.version, online: this.connections.has(a.id), lastSeenAt: a.lastSeenAt, ...this.#describe(a) } : null;
   }
 
   /** Alerte quand un agent enrôlé reste déconnecté plus de `offlineAfterSec` (dédoublonnée par `Alerts`). */
@@ -192,7 +203,7 @@ export class AgentService {
     switch (msg.type) {
       case 'ping': send('pong', {}, msg.id); break;
       case 'hello_agent': { // version et capacités annoncées après l'authentification
-        this.db.run('UPDATE agents SET version = ?, capabilities = ? WHERE id = ?', String(body.version || '').slice(0, 40), capsJson(body.capabilities), agent.id);
+        this.db.run('UPDATE agents SET version = ?, capabilities = ?, platform = ? WHERE id = ?', String(body.version || '').slice(0, 40), capsJson(body.capabilities), normalizePlatform(body.platform), agent.id);
         break;
       }
       case 'events': {
@@ -258,9 +269,13 @@ export class AgentService {
   /** Envoie une action NOMMÉE à l'agent d'un hôte et attend son résultat (le serveur n'envoie jamais de commande shell). */
   async request(hostId, name, args, timeoutMs = 20_000) {
     if (!ACTIONS.has(name)) throw new HttpError(400, 'BAD_ACTION', 'Action inconnue');
-    const row = this.db.get('SELECT id FROM agents WHERE host_id = ? ORDER BY enrolled_at DESC LIMIT 1', hostId);
+    const row = this.db.get('SELECT id, capabilities, platform FROM agents WHERE host_id = ? ORDER BY enrolled_at DESC LIMIT 1', hostId);
     const ws = row && this.connections.get(row.id);
     if (!ws) throw new HttpError(409, 'AGENT_OFFLINE', 'Aucun agent connecté sur cet hôte');
+    // Fonction que cet agent n'annonce pas : refus clair, au lieu d'envoyer l'action et d'échouer chez l'agent.
+    // (Confort, pas sécurité : l'agent revalide tout, et ceci ne donne jamais un droit de plus.)
+    const why = unsupportedReason(normalizePlatform(row.platform), safeJson(row.capabilities), name);
+    if (why) throw new HttpError(409, 'UNSUPPORTED', why);
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pendingRequests.delete(id); reject(new HttpError(504, 'AGENT_TIMEOUT', 'L\'agent n\'a pas répondu')); }, timeoutMs);

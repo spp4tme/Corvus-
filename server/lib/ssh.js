@@ -3,6 +3,7 @@
 import ssh2 from 'ssh2';
 import { HttpError } from './validate.js';
 import { shWrap } from './shell.js';
+import { OS_PROBE, classifyOs, effectiveOs, posixOnly } from './hostos.js';
 import { logger } from './log.js';
 
 const { Client } = ssh2;
@@ -148,6 +149,7 @@ export class SshPool {
     this.knownHosts = knownHosts;
     this.config = config;
     this.conns = new Map();
+    this.osProbed = new Set(); // hôtes dont le système a déjà été sondé pendant ce processus
     this.pending = new Map();
     this.reaper = setInterval(() => this.reap(), 60_000);
     this.reaper.unref();
@@ -187,6 +189,8 @@ export class SshPool {
 
   /** Exécute un script POSIX (encapsulé dans sh -c) ; réessaie une fois si la connexion était morte. */
   async exec(hostId, script, opts = {}) {
+    // Sonde interne (détection du système) : seule exception au garde-fou ci-dessous.
+    if (!opts.probe && await this.#os(hostId) === 'windows') throw posixOnly();
     const command = opts.raw ? script : shWrap(script);
     for (let attempt = 0; ; attempt++) {
       const conn = await this.get(hostId);
@@ -206,6 +210,31 @@ export class SshPool {
       }
     }
   }
+
+  /**
+   * Système de l'hôte : réglage de l'administrateur, sinon détecté UNE fois (par processus) à la première commande.
+   * Un échec de sonde ne conclut rien (POSIX par défaut, comme avant) et n'est pas retenté en boucle.
+   * @returns {Promise<'windows'|'posix'|null>}
+   */
+  async #os(hostId) {
+    const host = this.hosts.find?.(hostId);
+    if (!host) return null;
+    const known = effectiveOs(host);
+    if (known || this.osProbed.has(hostId)) return known;
+    this.osProbed.add(hostId);
+    try {
+      const r = await this.exec(hostId, OS_PROBE, { raw: true, probe: true, timeoutMs: 10_000, maxBytes: 4096 });
+      const detected = classifyOs(`${r.stdout.toString('utf8')}\n${r.stderr}`);
+      if (detected) { this.hosts.setDetectedOs(hostId, detected); return detected; }
+    } catch { /* hôte injoignable, sonde refusée… : on ne conclut rien */ }
+    return null;
+  }
+
+  /** Système de l'hôte, sondé au besoin (une fois) : le terminal en a besoin AVANT de choisir sa commande de démarrage. */
+  os(hostId) { return this.#os(hostId); }
+
+  /** Système effectif connu d'un hôte (sans sonde ni connexion). */
+  osOf(hostId) { return effectiveOs(this.hosts.find?.(hostId)); }
 
   /**
    * Marque la connexion comme active (transfert SFTP long) pour que le « reaper » ne la ferme pas.
@@ -291,10 +320,21 @@ export class SshPool {
     });
     const latencyMs = Date.now() - started;
     try {
+      // Hôte Windows (OpenSSH Server) : la connexion est bonne, mais le script POSIX ci-dessous n'y tourne pas.
+      // On le dit au lieu d'afficher un échec trompeur, et on n'y envoie rien de POSIX.
+      const probe = await runExec(client, OS_PROBE, { timeoutMs: 10_000, maxBytes: 4096 }).catch(() => null);
+      const os = probe ? classifyOs(`${probe.stdout.toString('utf8')}\n${probe.stderr}`) : null;
+      if (os === 'windows') {
+        return {
+          ok: true, latencyMs, os, uname: 'Windows (OpenSSH)', tmux: false,
+          hostKey: { fingerprint: hostKey.fingerprint, type: hostKey.type, firstSeen: hostKey.status === 'new' },
+        };
+      }
       const r = await runExec(client, shWrap('echo __corvus_ok__; uname -srm 2>/dev/null || true; command -v tmux >/dev/null 2>&1 && echo __tmux__ || true'), { timeoutMs: 10_000 });
       const out = r.stdout.toString('utf8');
       return {
         ok: out.includes('__corvus_ok__'),
+        os: os || (out.includes('__corvus_ok__') ? 'posix' : null),
         latencyMs,
         uname: out.split('\n').find((l) => l && !l.startsWith('__'))?.trim() || null,
         tmux: out.includes('__tmux__'),

@@ -6,6 +6,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { AgentService } from './lib/agents.js';
 import { installScript } from './lib/agent-install.js';
+import { installScriptWindows } from './lib/agent-install-windows.js';
 import { config as baseConfig } from './config.js';
 import { Auth, loadToken, originAllowed, isLoopback } from './lib/auth.js';
 import { Vault } from './lib/vault.js';
@@ -29,6 +30,7 @@ import { logger, setLogLevel } from './lib/log.js';
 import { hostRoutes } from './routes/core.js';
 import { authRoutes, accountRoutes } from './routes/accounts.js';
 import { accessGuard } from './lib/access.js';
+import { RequestLimiter, isStrictPath } from './lib/ratelimit.js';
 import { Users, publicUser } from './lib/users.js';
 import { requestContext } from './lib/context.js';
 import { Challenges } from './lib/webauthn.js';
@@ -144,6 +146,9 @@ export function createCorvus(overrides = {}) {
   api.get('/agent/install.sh', (req, res) => {
     res.type('text/x-shellscript; charset=utf-8').send(installScript(ctx.version));
   });
+  api.get('/agent/install.ps1', (req, res) => {
+    res.type('text/plain; charset=utf-8').send(installScriptWindows(ctx.version));
+  });
   // Enrôlement d'un agent : public, protégé par le jeton à usage unique (et le limiteur d'échecs par IP).
   api.post('/agent/enroll', (req, res, next) => {
     const wait = auth.limiter.blockedFor(req.ip);
@@ -158,6 +163,23 @@ export function createCorvus(overrides = {}) {
       next(err);
     }
   });
+
+  // Limiteur de débit des routes authentifiées : par compte ET par IP, plafond plus strict pour les sauvegardes.
+  const limiter = new RequestLimiter({ accountPerMin: config.rateAccountPerMin, ipPerMin: config.rateIpPerMin, strictPerMin: config.rateBackupPerMin });
+  ctx.requestLimiter = limiter;
+  const enforceRate = (req, res) => {
+    const strict = isStrictPath(req.path);
+    const r = limiter.check({ accountId: req.user.id, ip: req.ip, strict });
+    if (r.ok) return null;
+    res.set('Retry-After', String(Math.max(1, Math.ceil(r.retryAfterMs / 1000))));
+    // Une entrée de journal par minute et par compte/IP (jamais une par requête refusée : le journal reste inondable sinon).
+    const key = r.scope === 'account' ? req.user.id : req.ip;
+    if (limiter.shouldReport(r.scope, r.strict, key)) {
+      journal.add({ type: 'ratelimit', event: 'exceeded', user: req.user, ip: req.ip, ok: false,
+        detail: `plafond ${r.strict ? 'sauvegardes' : 'global'} par ${r.scope === 'account' ? 'compte' : 'IP'} dépassé (${req.method})` });
+    }
+    return new HttpError(429, 'RATE_LIMITED', 'Trop de requêtes : réessayez dans quelques instants');
+  };
 
   // Tout le reste exige une authentification.
   api.use((req, res, next) => {
@@ -185,6 +207,8 @@ export function createCorvus(overrides = {}) {
     req.authKind = who.kind;
     req.user = publicUser(who.user);
     req.sessionKey = who.sessionKey;
+    const tooMany = enforceRate(req, res);
+    if (tooMany) return next(tooMany);
     // Mot de passe provisoire (créé par un admin) : seul le changement de mot de passe est permis.
     if (req.user.mustChangePassword && !/^\/(me|me\/password|auth(\/.*)?)$/.test(req.path)) {
       return next(new HttpError(403, 'PASSWORD_CHANGE_REQUIRED', 'Changez votre mot de passe provisoire (Réglages → Mon compte).'));

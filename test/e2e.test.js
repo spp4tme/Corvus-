@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { startFakeSshd } from './helpers/fake-sshd.js';
 import { startCorvus, waitFor } from './helpers/corvus.js';
+import { skipUnlessColonNames } from './helpers/platform.js';
 
 let sshd;
 let env;
@@ -374,7 +375,7 @@ describe('git distant', () => {
     assert.ok(all.body.files.every((f) => f.staged));
   });
 
-  test('chemins littéraux : un fichier « :(exclude)x » est indexé seul, sans entraîner les autres', async () => {
+  test('chemins littéraux : un fichier « :(exclude)x » est indexé seul, sans entraîner les autres', { skip: skipUnlessColonNames }, async () => {
     const dirRepo = path.join(sshd.root, 'litteral');
     fs.mkdirSync(dirRepo);
     git(dirRepo, 'init', '-q', '-b', 'main');

@@ -1,6 +1,6 @@
 [package]
 name = "corvus-agent"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Agent Corvus : se connecte à Corvus (connexion sortante) et lui envoie métriques et événements"
 license = "MIT"
@@ -13,7 +13,6 @@ license = "MIT"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 base64 = "0.23"
-libc = "0.2"
 sha2 = "0.11"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +20,21 @@ serde_json = "1"
 rusqlite = { version = "0.43", features = ["bundled"] }
 tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+
+# libc : seulement hors Windows (signaux, geteuid, statvfs, chown : tout cela est propre à Unix).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Windows et macOS (jalon 1.2) : métriques et liste des processus par `sysinfo` (une seule bibliothèque pour deux systèmes, au lieu de
+# centaines de lignes d'appels système), surveillance de fichiers par évènements du système par `notify` (ReadDirectoryChangesW
+# sous Windows, FSEvents sous macOS). Rien de tout cela n'est compilé sous Linux : l'agent Linux ne change pas.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk", "network"] }
+notify = "9"
+
+# Service Windows (SCM) : le démarrage en service exige de parler au gestionnaire de services.
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
 
 [profile.release]
 opt-level = "s"

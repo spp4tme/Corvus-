@@ -6,7 +6,9 @@
 
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
+#[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::MetadataExt;
 
 pub struct Event {
@@ -27,6 +29,7 @@ pub struct Proc {
 
 /// Lit /proc/PID/stat : « pid (comm) S ppid … starttime ». `comm` peut contenir des espaces et des
 /// parenthèses : on coupe donc sur la DERNIÈRE parenthèse fermante.
+#[cfg(target_os = "linux")]
 pub fn parse_stat(text: &str) -> Option<(String, u32, u64)> {
     let open = text.find('(')?;
     let close = text.rfind(')')?;
@@ -36,6 +39,7 @@ pub fn parse_stat(text: &str) -> Option<(String, u32, u64)> {
     Some((comm, rest.get(1)?.parse().ok()?, rest.get(19)?.parse().ok()?))
 }
 
+#[cfg(target_os = "linux")]
 pub fn read_proc(pid: u32) -> Option<Proc> {
     let base = format!("/proc/{pid}");
     let (comm, ppid, start) = parse_stat(&fs::read_to_string(format!("{base}/stat")).ok()?)?;
@@ -45,6 +49,7 @@ pub fn read_proc(pid: u32) -> Option<Proc> {
     Some(Proc { pid, ppid, uid, start, comm, exe, cmd })
 }
 
+#[cfg(target_os = "linux")]
 pub fn read_all() -> HashMap<u32, Proc> {
     let mut out = HashMap::new();
     if let Ok(rd) = fs::read_dir("/proc") {
@@ -55,6 +60,18 @@ pub fn read_all() -> HashMap<u32, Proc> {
         }
     }
     out
+}
+
+/// Windows et macOS : la liste vient de `sysinfo` (voir platform/portable.rs).
+#[cfg(not(target_os = "linux"))]
+pub fn read_all() -> HashMap<u32, Proc> {
+    crate::platform::procs::read_all()
+}
+
+/// Hors Linux il n'y a pas de connecteur de processus : `note_exec` n'est jamais appelé, mais la fonction doit exister.
+#[cfg(not(target_os = "linux"))]
+pub fn read_proc(pid: u32) -> Option<Proc> {
+    read_all().remove(&pid)
 }
 
 /// Les ancêtres d'un processus (le plus proche d'abord), jusqu'à 8 niveaux.
@@ -90,6 +107,7 @@ pub fn ssh_session(all: &HashMap<u32, Proc>, pid: u32) -> Option<(String, u32)> 
 // --- Connexions -------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // hors Linux : aucune connexion n'est lue
 pub struct Conn {
     pub local: String,
     pub remote: String,
@@ -97,6 +115,7 @@ pub struct Conn {
     pub inode: u64,
 }
 
+#[cfg(target_os = "linux")]
 fn addr(hex: &str, v6: bool) -> Option<String> {
     let (ip, port) = hex.split_once(':')?;
     let port = u16::from_str_radix(port, 16).ok()?;
@@ -112,10 +131,23 @@ fn addr(hex: &str, v6: bool) -> Option<String> {
     Some(format!("{}.{}.{}.{}:{port}", n[0], n[1], n[2], n[3]))
 }
 
+#[cfg(target_os = "linux")]
 fn is_loopback(a: &str) -> bool {
     a.starts_with("127.") || a.starts_with("[::1]") || a.starts_with("[::ffff:127.")
 }
 
+/// Windows et macOS : connexions par processus non fournies (il faudrait la table TCP du système) : liste vide, dit comme tel.
+#[cfg(not(target_os = "linux"))]
+pub fn read_conns() -> Vec<Conn> {
+    Vec::new()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn socket_owners(_all: &HashMap<u32, Proc>, _wanted: &HashSet<u64>) -> HashMap<u64, u32> {
+    HashMap::new()
+}
+
+#[cfg(target_os = "linux")]
 pub fn read_conns() -> Vec<Conn> {
     let mut out = Vec::new();
     for (file, v6) in [("/proc/net/tcp", false), ("/proc/net/tcp6", true)] {
@@ -132,6 +164,7 @@ pub fn read_conns() -> Vec<Conn> {
 }
 
 /// inode de socket → pid propriétaire (lecture de /proc/PID/fd).
+#[cfg(target_os = "linux")]
 pub fn socket_owners(all: &HashMap<u32, Proc>, wanted: &HashSet<u64>) -> HashMap<u64, u32> {
     let mut out = HashMap::new();
     if wanted.is_empty() { return out; }
@@ -239,10 +272,12 @@ impl Xray {
 // --- Actions sur un processus -------------------------------------------------------------------------
 
 /// Processus que l'agent refuse de toucher, même si Corvus le demande (on ne coupe pas la branche sur laquelle on est assis).
+#[cfg(target_os = "linux")]
 const PROTECTED: [&str; 8] = ["systemd", "init", "sshd", "tailscaled", "corvus-agent", "kthreadd", "dbus-daemon", "systemd-logind"];
 
 /// Valide une cible `(pid, start)` : elle doit exister avec le MÊME starttime (pas un pid réutilisé),
 /// ne pas être protégée, ni un ancêtre de l'agent, ni un thread noyau.
+#[cfg(target_os = "linux")]
 pub fn check_target(pid: u32, start: u64) -> Result<Proc, String> {
     if pid <= 1 { return Err("pid refusé".into()); }
     let p = read_proc(pid).ok_or("processus introuvable")?;
@@ -262,6 +297,7 @@ pub fn check_target(pid: u32, start: u64) -> Result<Proc, String> {
     Ok(p)
 }
 
+#[cfg(target_os = "linux")]
 pub fn signal(pid: u32, start: u64, sig: i32) -> Result<Value, String> {
     let p = check_target(pid, start)?;
     // SAFETY : kill n'a pas d'effet mémoire ; pid et signal validés ci-dessus.
@@ -270,7 +306,7 @@ pub fn signal(pid: u32, start: u64, sig: i32) -> Result<Value, String> {
     Ok(json!({ "pid": pid, "exe": p.exe, "signal": sig }))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))] // lit /proc, envoie des signaux : propre à Linux
 mod tests {
     use super::*;
 

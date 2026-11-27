@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- LaunchDaemon de l'agent Corvus (macOS, EXPÉRIMENTAL : jamais essayé sur un Mac réel).
+     Le binaire et l'identité vivent dans un dossier appartenant à root (jamais /usr/local/bin, souvent inscriptible par
+     l'utilisateur avec Homebrew : il pourrait y remplacer un programme exécuté en root).
+       sudo install -d -m 755 -o root -g wheel "/Library/Application Support/CorvusAgent"
+       sudo install -m 755 -o root -g wheel corvus-agent "/Library/Application Support/CorvusAgent/corvus-agent"
+       sudo "/Library/Application Support/CorvusAgent/corvus-agent" enroll --server https://<corvus>.<tailnet>.ts.net --token <jeton>
+       sudo install -m 644 -o root -g wheel com.corvus.agent.plist /Library/LaunchDaemons/
+       sudo launchctl bootstrap system /Library/LaunchDaemons/com.corvus.agent.plist
+     Retrait : sudo launchctl bootout system/com.corvus.agent && sudo rm /Library/LaunchDaemons/com.corvus.agent.plist
+     L'agent n'exécute jamais de commande reçue du serveur ; hors Linux il ne fait que lire (métriques, processus, fichiers). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.corvus.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Application Support/CorvusAgent/corvus-agent</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardErrorPath</key>
+  <string>/var/log/corvus-agent.log</string>
+  <key>StandardOutPath</key>
+  <string>/var/log/corvus-agent.log</string>
+</dict>
+</plist>

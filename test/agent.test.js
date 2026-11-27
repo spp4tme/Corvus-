@@ -194,7 +194,7 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 
 const AGENT_BIN = process.env.CORVUS_AGENT_BIN
-  || ['debug', 'release'].map((p) => path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent', 'target', p, 'corvus-agent')).find((p) => fs.existsSync(p));
+  || ['debug', 'release'].map((p) => path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent', 'target', p, process.platform === 'win32' ? 'corvus-agent.exe' : 'corvus-agent')).find((p) => fs.existsSync(p));
 
 describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non compilé (cd agent && cargo build)' }, () => {
   const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-agent-'));
@@ -205,7 +205,14 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
     const { stdout: out } = await run(AGENT_BIN, ['enroll', '--server', env.base, '--token', t.token, '--dir', d]);
     assert.match(out, /Enrôlé : agent [0-9a-f]{24}/);
     const identity = JSON.parse(fs.readFileSync(path.join(d, 'identity.json'), 'utf8'));
-    assert.equal(fs.statSync(path.join(d, 'identity.json')).mode & 0o777, 0o600);
+    if (process.platform === 'win32') {
+      // Pas de mode 0600 sous Windows : l'ACL réelle ne doit donner l'accès qu'à SYSTEM, aux Administrateurs et au propriétaire.
+      const { stdout: acl } = await run(path.join(process.env.SystemRoot, 'System32', 'icacls.exe'), [path.join(d, 'identity.json')]);
+      assert.equal(acl.toLowerCase().split(':(f)').length - 1, 3, acl);
+      assert.doesNotMatch(acl, /everyone|authenticated users|builtin\users|tout le monde|utilisateurs/i);
+    } else {
+      assert.equal(fs.statSync(path.join(d, 'identity.json')).mode & 0o777, 0o600);
+    }
     assert.equal(identity.serverPublicKey ?? identity.server_public_key, env.corvus.ctx.agents.publicKeyB64);
 
     // Le jeton est consommé : un second enrôlement échoue.
@@ -216,11 +223,59 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
       const { db } = env.corvus.ctx;
       await waitFor(() => db.get("SELECT 1 AS x FROM agent_events WHERE agent_id = ? AND type = 'agent.start'", identity.agent_id), 40000);
       await waitFor(() => db.get('SELECT 1 AS x FROM metrics_raw WHERE host_id = ? AND metric = ?', hostId, 'mem'), 40000);
+      if (process.platform !== 'linux') {
+        // Sous Windows et macOS les métriques viennent de `sysinfo` : disque nommé « df:<disque> », réseau, uptime.
+        await waitFor(() => db.get("SELECT 1 AS x FROM metrics_raw WHERE host_id = ? AND metric LIKE 'df:%'", hostId), 40000);
+        await waitFor(() => db.get("SELECT 1 AS x FROM metrics_raw WHERE host_id = ? AND metric = 'cpu'", hostId), 40000);
+        await waitFor(() => db.get("SELECT 1 AS x FROM metrics_raw WHERE host_id = ? AND metric = 'uptime'", hostId), 40000);
+      }
       const list = (await (await fetch(`${env.base}/api/agents`, { headers: auth() })).json()).agents;
       const me = list.find((a) => a.id === identity.agent_id);
       assert.equal(me.online, true);
-      assert.equal(me.version, '1.1.0');
+      assert.equal(me.version, '1.2.0');
       assert.equal(me.capabilities.ebpf, false);
+      assert.equal(me.platform, { win32: 'windows', darwin: 'macos' }[process.platform] ?? 'linux');
+    } finally {
+      child.kill();
+    }
+  });
+
+  test('Radiographie en direct : le vrai agent liste ses processus (dont lui-même) sur Windows, macOS et Linux', async () => {
+    const d = dir();
+    const t = await (await post('/api/agents/enrollments', { hostId })).json();
+    await run(AGENT_BIN, ['enroll', '--server', env.base, '--token', t.token, '--dir', d]);
+    const identity = JSON.parse(fs.readFileSync(path.join(d, 'identity.json'), 'utf8'));
+    const child = spawn(AGENT_BIN, ['run', '--dir', d, '--interval', '1'], { stdio: 'pipe' });
+    try {
+      const { db } = env.corvus.ctx;
+      await waitFor(() => db.get("SELECT 1 AS x FROM agent_events WHERE agent_id = ? AND type = 'agent.start'", identity.agent_id), 40000);
+      const r = await fetch(`${env.base}/api/hosts/${hostId}/xray/live`, { headers: auth() });
+      assert.equal(r.status, 200);
+      const live = await r.json();
+      const list = live.processes ?? live.procs ?? [];
+      assert.ok(list.length > 5, `processus attendus : ${JSON.stringify(live).slice(0, 200)}`);
+      assert.ok(list.some((p) => p.pid === child.pid), "l'agent se voit lui-même");
+    } finally {
+      child.kill();
+    }
+  });
+
+  // Linux : pas de signal du système de fichiers (FSNOTIFY = false, balayage périodique seul) ; ce signal n'existe que sous Windows et macOS.
+  test('un fichier créé dans un dossier surveillé est détecté bien avant le balayage périodique (évènements du système)', { skip: process.platform === 'linux' && 'Linux : balayage périodique seulement' }, async () => {
+    const d = dir();
+    const watched = dir();
+    fs.writeFileSync(path.join(watched, 'existant.txt'), 'x');
+    const t = await (await post('/api/agents/enrollments', { hostId })).json();
+    await run(AGENT_BIN, ['enroll', '--server', env.base, '--token', t.token, '--dir', d]);
+    const identity = JSON.parse(fs.readFileSync(path.join(d, 'identity.json'), 'utf8'));
+    // Balayage périodique à 60 s : seul le signal du système de fichiers peut produire l'évènement dans le délai du test.
+    const child = spawn(AGENT_BIN, ['run', '--dir', d, '--interval', '1', '--watch', watched, '--scan-interval', '60'], { stdio: 'pipe' });
+    try {
+      const { db } = env.corvus.ctx;
+      await waitFor(() => db.get("SELECT 1 AS x FROM agent_events WHERE agent_id = ? AND type = 'agent.start'", identity.agent_id), 40000);
+      await new Promise((r) => setTimeout(r, 1500));
+      fs.writeFileSync(path.join(watched, 'nouveau.txt'), 'bonjour');
+      await waitFor(() => db.get("SELECT 1 AS x FROM agent_events WHERE agent_id = ? AND type = 'file.created'", identity.agent_id), 20000);
     } finally {
       child.kill();
     }

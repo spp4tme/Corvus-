@@ -105,6 +105,15 @@ describe('empreinte du normal', () => {
     assert.equal(db.get("SELECT allowed FROM behavior_profile WHERE host_id = ? AND item LIKE '/tmp/antidate|%'", hostId).allowed, 0);
   });
 
+  test('le message d\'anomalie remplace TOUS les séparateurs « | » (replaceAll)', () => {
+    // Un chemin de programme peut contenir « | » : l'élément appris est « exe|uid », donc plusieurs séparateurs.
+    behavior.ingest(hostId, start('/tmp/a|b|c', { pid: 11 }));
+    const m = alerts().find((a) => a.message.includes('/tmp/a · b'));
+    assert.ok(m, 'anomalie signalée');
+    assert.match(m.message, /\/tmp\/a · b · c · 1000/);
+    assert.equal(m.message.includes('|'), false, 'aucun « | » ne doit rester dans le message');
+  });
+
   test('recommencer l\'apprentissage exige une confirmation', async () => {
     assert.equal((await api('POST', `/api/hosts/${hostId}/behavior/restart`, {})).status, 400);
     const r = await api('POST', `/api/hosts/${hostId}/behavior/restart`, { confirm: true, days: 7 });

@@ -13,6 +13,7 @@ async function copy(text) {
 /** Crée un jeton et affiche la commande à coller sur l'hôte (le jeton n'est montré qu'une fois). */
 async function installDialog(hosts, onDone) {
   const sel = select(hosts.map((x) => ({ value: x.id, label: `${x.name} (${x.hostname})` })), { value: hosts[0]?.id });
+  const os = select([{ value: 'linux', label: 'Linux (x86_64 ou aarch64)' }, { value: 'macos', label: 'macOS — expérimental, jamais essayé sur un Mac réel' }, { value: 'windows', label: 'Windows (x64) — PowerShell en administrateur' }], { value: 'linux' });
   const full = h('input', { type: 'checkbox', id: 'ag-full' });
   const out = h('div', { class: 'stack' });
   const make = button({
@@ -21,11 +22,16 @@ async function installDialog(hosts, onDone) {
       try {
         const t = await post('/api/agents/enrollments', { hostId: sel.value });
         const server = location.origin;
-        const cmd = `curl -fsSL ${server}/api/agent/install.sh | sudo sh -s -- --server ${server} --token ${t.token}${full.checked ? ' --full' : ''}`;
+        const win = os.value === 'windows';
+        // Windows : on télécharge le script puis on l'exécute (jamais d'Invoke-Expression sur du contenu distant) ; droits complets : Linux seulement.
+        const cmd = win
+          ? `Invoke-WebRequest ${server}/api/agent/install.ps1 -OutFile install.ps1; .\\install.ps1 -Server ${server} -Token ${t.token}`
+          : `curl -fsSL ${server}/api/agent/install.sh | sudo sh -s -- --server ${server} --token ${t.token}${full.checked && os.value === 'linux' ? ' --full' : ''}`;
+        const label = { linux: 'Linux', macos: 'macOS (expérimental)', windows: 'Windows' }[os.value];
         replace(out,
-          h('p', { class: 'dim' }, `Valable 15 minutes, à usage unique. Collez cette commande sur l'hôte « ${t.host.name} » (Linux, x86_64 ou aarch64) : elle télécharge l'agent, vérifie son empreinte SHA-256, installe le service et enrôle :`),
+          h('p', { class: 'dim' }, `Valable 15 minutes, à usage unique. Collez cette commande sur l'hôte « ${t.host.name} » (${label}) : elle télécharge l'agent, vérifie son empreinte SHA-256, installe le service et enrôle :`),
           h('pre', { class: 'code' }, cmd),
-          h('p', { class: 'dim' }, `Le script est lisible avant exécution : ${server}/api/agent/install.sh`),
+          h('p', { class: 'dim' }, `Le script est lisible avant exécution : ${server}/api/agent/install.${win ? 'ps1' : 'sh'}`),
           button({ label: 'Copier la commande', icon: 'copy', onClick: () => copy(cmd) }));
         onDone();
       } catch (err) { toastError(err); }
@@ -33,8 +39,8 @@ async function installDialog(hosts, onDone) {
   });
   const d = openDialog({
     title: 'Installer un agent',
-    body: h('div', { class: 'stack' }, h('label', null, 'Hôte', sel),
-      h('label', { class: 'row', for: 'ag-full' }, full, h('span', null, 'Droits complets (prévisualisation, restauration, gel de processus, isolement réseau)')),
+    body: h('div', { class: 'stack' }, h('label', null, 'Hôte', sel), h('label', null, "Système de l'hôte", os),
+      h('label', { class: 'row', for: 'ag-full' }, full, h('span', null, 'Droits complets, Linux seulement (prévisualisation, restauration, gel de processus, isolement réseau)')),
       h('p', { class: 'dim' }, 'Sans cette case, l\'agent n\'a aucun privilège : métriques, surveillance de fichiers, radiographie des processus de root.'),
       out),
     actions: [button({ label: 'Fermer', variant: 'ghost', onClick: () => d.close() }), make],
@@ -59,9 +65,13 @@ export default {
           const host = state.host(a.hostId);
           return h('li', { class: 'list-item' },
             h('div', { class: 'grow' },
-              h('div', { class: 'host-name' }, host?.name || 'hôte supprimé', ' ', badge(a.online ? 'en ligne' : 'hors ligne', a.online ? 'ok' : 'warn'), ' ', badge(`v${a.version || '?'}`)),
+              h('div', { class: 'host-name' }, host?.name || 'hôte supprimé', ' ', badge(a.online ? 'en ligne' : 'hors ligne', a.online ? 'ok' : 'warn'), ' ', badge(`v${a.version || '?'}`), ' ',
+                badge(a.platformLabel), ' ', a.experimental ? badge('expérimental', 'warn') : null),
               h('div', { class: 'dim' }, `Enrôlé le ${when(a.enrolledAt)} · vu le ${when(a.lastSeenAt)}`),
-              h('div', { class: 'dim mono' }, Object.entries(a.capabilities || {}).map(([k, v]) => `${v ? '✓' : '✗'} ${k}`).join('  '))),
+              h('div', { class: 'dim mono' }, Object.entries(a.capabilities || {}).map(([k, v]) => `${v ? '✓' : '✗'} ${k}`).join('  ')),
+              a.experimental ? h('div', { class: 'dim' }, 'Agent expérimental : aucune machine réelle ne l\'a encore validé.') : null,
+              // Pourquoi une fonction manque : l'explication du serveur, jamais un simple « ✗ ».
+              ...Object.values(a.support || {}).filter((s) => !s.ok && s.reason).map((s) => h('div', { class: 'dim' }, s.reason))),
             button({
               label: 'Révoquer', variant: 'danger', onClick: async () => {
                 if (!(await confirmDialog({ title: 'Révoquer cet agent ?', message: 'Il sera déconnecté et ne pourra plus se reconnecter. Il faudra le réenrôler.', confirmLabel: 'Révoquer', danger: true }))) return;

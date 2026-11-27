@@ -106,7 +106,7 @@ export class Behavior {
     const what = { proc: 'Programme jamais vu', conn: 'Destination réseau jamais vue', listen: 'Port en écoute jamais vu' }[kind];
     const via = event.body.via?.ssh ? ` (session SSH de ${event.body.via.ssh})` : '';
     const severity = quiet && kind === 'proc' ? 'critical' : 'warn';
-    const message = `${name} : ${what} — ${item.replace('|', ' · ')}${via}${quiet ? ' · pendant une heure habituellement calme' : ''}`;
+    const message = `${name} : ${what} — ${item.replaceAll('|', ' · ')}${via}${quiet ? ' · pendant une heure habituellement calme' : ''}`;
     this.alerts?.raise({ kind: `anomaly:${kind}:${item}`.slice(0, 120), severity, message, hostId, data: { kind, item, quiet, lineage: event.body.lineage, pid: event.body.pid } });
     this.journal?.add({ type: 'behavior', event: 'anomaly', host, user: null, ip: null, ok: false, detail: `${kind} ${item}${quiet ? ' [heure creuse]' : ''}` });
     if (severity === 'critical' && this.autoFreeze(hostId) && event.body.pid && event.body.start) {
