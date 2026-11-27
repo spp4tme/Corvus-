@@ -46,6 +46,17 @@ une mauvaise signature, pour ne pas révéler quels agents existent. Délai : 10
 Une seule connexion par agent : une nouvelle remplace l'ancienne (fermeture 4002). Un agent révoqué est
 déconnecté (4003).
 
+### Plateforme (jalon 1.2, champ facultatif)
+`hello_agent` et le corps de `POST /api/agent/enroll` peuvent porter `platform` : `"linux"`, `"windows"` ou `"macos"`.
+**Absent = `linux`** (agents 1.0 et 1.1 : le protocole reste en version 1). Toute autre valeur est enregistrée comme `unknown`.
+`platform` et `capabilities` sont annoncés par l'hôte : le serveur s'en sert **uniquement pour informer l'interface**
+(masquer ou griser ce que l'agent ne fait pas, avec une explication) et pour répondre `409 UNSUPPORTED` plutôt que d'envoyer
+une action que l'agent n'annonce pas. **Jamais pour une décision de sécurité** : les droits viennent des rôles du compte et des
+droits par hôte, et l'agent revalide chaque action.
+
+Capacités ajoutées par les agents Windows/macOS : `fsnotify` (surveillance par évènements du système) ; `fanotify` reste
+réservé à Linux (écrivain exact). Une fonction absente de `capabilities`/`actions` est indisponible, pas « inconnue ».
+
 ## 4. Messages de l'agent
 | Type | Corps | Effet |
 |---|---|---|

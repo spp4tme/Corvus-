@@ -265,4 +265,12 @@ CREATE TABLE agent_versions (
 CREATE INDEX agent_events_type ON agent_events(host_id, type, ts);
 `,
   },
+  {
+    version: 4,
+    name: 'agents : plateforme annoncée (linux, windows, macos) — informative, jamais une décision de sécurité',
+    sql: `
+-- NULL = agent antérieur à 1.2 (protocole inchangé) : traité comme linux.
+ALTER TABLE agents ADD COLUMN platform TEXT;
+`,
+  },
 ];
