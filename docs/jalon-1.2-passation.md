@@ -63,7 +63,8 @@ Point important : **le code compile sur Windows et sur les deux macOS**, et tous
 - `2785e75` : ce test Rust est isolé par `#[cfg(target_os = "linux")]` ;
 - `81f61c3` : les tests PowerShell d'`install.ps1` ne s'exécutent que sous Windows (sautés avec raison écrite ailleurs).
 
-Un nouveau run CI est lancé sur `81f61c3` : **son résultat n'est pas connu au moment de l'écriture, vérifiez qu'il est vert** (§3). Les jobs `qualite`, `real-openssh`, `docker` et les deux jobs `agent` Linux étaient déjà verts.
+**La CI est entièrement verte sur `81f61c3`** (vérifié sur GitHub : les 10 jobs en succès — `agent` Linux ×2, `agent-os` Windows + macOS aarch64 + macOS x86_64, `node` ×2, `qualite`, `real-openssh`, `docker`).
+Cela prouve que l'agent **compile et que ses tests passent** sur Windows, macOS et Linux ; cela ne prouve **pas** qu'il fonctionne sur une machine réelle (§4 points 3 à 7).
 
 ## 3. Lire la CI sans accès aux journaux (API publique, sans jeton)
 
@@ -82,7 +83,7 @@ Si le run est **vert partout** : passez à §4. S'il reste des échecs : corrige
 
 ## 4. Ce qui reste à faire (dans cet ordre)
 
-1. **Confirmer la CI verte** sur `jalon-1.2` (Linux, Windows, macOS, jobs `node` compris).
+1. ~~Confirmer la CI verte~~ : **fait** (vert sur `81f61c3`). Relancez simplement la vérification du §3 après chacun de vos commits.
 2. **Compiler et tester localement** sur votre PC (`cd agent && cargo test`), puis `npm test` (voir §6 pour l'environnement Windows).
 3. **Test réel de l'agent Windows** (le prompt l'exige : « testable pour de vrai ») : `cargo build --release`, puis `corvus-agent enroll --server … --token …`, `corvus-agent run`,
    vérifier côté Corvus : métriques (`cpu`, `mem`, `df:C:`, `net:rx`…), liste des processus (Radiographie), évènements de fichiers sur un dossier surveillé, plateforme « Windows » dans l'écran Agents.
