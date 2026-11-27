@@ -17,10 +17,13 @@ function tree(processes) {
 }
 
 export default {
-  mount(el) {
+  mount(el, { params } = {}) {
     const eligible = () => state.hosts.filter((x) => x.agent);
-    let hostId = eligible().find((x) => x.id === state.activeHostId)?.id || eligible()[0]?.id;
-    let tab = 'procs';
+    // Lien profond des notifications : #/xray?host=<id>&isolate=1 → onglet « Normal » ; la CONFIRMATION reste demandée.
+    const wanted = params?.get('host');
+    let hostId = eligible().find((x) => x.id === wanted)?.id || eligible().find((x) => x.id === state.activeHostId)?.id || eligible()[0]?.id;
+    let pendingIsolate = params?.get('isolate') === '1' && eligible().some((x) => x.id === wanted);
+    let tab = pendingIsolate ? 'normal' : 'procs';
     let data = null;
     const root = h('div', { class: 'stack' });
     el.appendChild(root);
@@ -53,11 +56,12 @@ export default {
         freeze.input.addEventListener('change', async () => { try { await put(`/api/hosts/${hostId}/behavior/settings`, { autoFreeze: freeze.input.checked }); toast('Réglage enregistré', 'ok', 1500); } catch (err) { toastError(err); freeze.input.checked = !freeze.input.checked; } });
         const isolate = checkbox(`Isoler l'hôte du réseau ${Math.round(o.isolateTtl / 60)} min en cas de ransomware probable (Tailscale et Corvus restent joignables ; levée automatique)`, { checked: o.autoIsolate, disabled: !admin });
         isolate.input.addEventListener('change', async () => { try { await put(`/api/hosts/${hostId}/behavior/settings`, { autoIsolate: isolate.input.checked }); toast('Réglage enregistré', 'ok', 1500); } catch (err) { toastError(err); isolate.input.checked = !isolate.input.checked; } });
+        const askIsolate = async () => {
+          if (!(await confirmDialog({ title: 'Isoler cet hôte du réseau ?', message: `Presque tout le trafic sera coupé pendant ${Math.round(o.isolateTtl / 60)} min (connexions établies comprises). Resteront joignables : Tailscale et le serveur Corvus. L'isolement se lève tout seul.`, confirmLabel: 'Isoler', danger: true }))) return;
+          try { await post(`/api/hosts/${hostId}/isolation`, { action: 'isolate', ttlSec: o.isolateTtl, confirm: true }); toast('Hôte isolé', 'warn', 4000); } catch (err) { toastError(err); }
+        };
         const manual = admin ? h('div', { class: 'row' },
-          button({ label: 'Isoler maintenant', variant: 'danger', onClick: async () => {
-            if (!(await confirmDialog({ title: 'Isoler cet hôte du réseau ?', message: `Presque tout le trafic sera coupé pendant ${Math.round(o.isolateTtl / 60)} min (connexions établies comprises). Resteront joignables : Tailscale et le serveur Corvus. L'isolement se lève tout seul.`, confirmLabel: 'Isoler', danger: true }))) return;
-            try { await post(`/api/hosts/${hostId}/isolation`, { action: 'isolate', ttlSec: o.isolateTtl, confirm: true }); toast('Hôte isolé', 'warn', 4000); } catch (err) { toastError(err); }
-          } }),
+          button({ label: 'Isoler maintenant', variant: 'danger', onClick: askIsolate }),
           button({ label: 'Lever l\'isolement', variant: 'ghost', onClick: async () => {
             try { await post(`/api/hosts/${hostId}/isolation`, { action: 'release', confirm: true }); toast('Isolement levé', 'ok', 3000); } catch (err) { toastError(err); }
           } })) : null;
@@ -78,6 +82,8 @@ export default {
             if (!(await confirmDialog({ title: 'Recommencer l\'apprentissage ?', message: 'Tout ce qui a été appris sera oublié et les anomalies en attente effacées.', confirmLabel: 'Recommencer', danger: true }))) return;
             try { await post(`/api/hosts/${hostId}/behavior/restart`, { confirm: true }); drawNormal(); } catch (err) { toastError(err); }
           } }) : null);
+        // Arrivée par la notification « Isoler… » : on ouvre la confirmation, on n'isole rien d'office.
+        if (pendingIsolate) { pendingIsolate = false; if (admin) askIsolate(); else toast('Isoler un hôte est réservé aux administrateurs de cet hôte', 'warn', 5000); }
       } catch (err) { replace(body, errorState(err, drawNormal)); }
     }
 

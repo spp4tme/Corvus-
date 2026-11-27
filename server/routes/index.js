@@ -23,6 +23,7 @@ import { productivityRoutes } from './productivity.js';
 import { hostAdminRoutes } from './hostadmin.js';
 import { HostAdmin } from '../lib/hostadmin.js';
 import { UndoService } from '../lib/undo.js';
+import { Users } from '../lib/users.js';
 import { HostStatus } from '../lib/hoststatus.js';
 import { MetricsCollector } from '../lib/metrics.js';
 import { CompareService } from '../lib/compare.js';
@@ -47,6 +48,24 @@ export function createServices(ctx) {
     if (u.role === 'admin') return true;
     const host = hostId && ctx.hosts.find(hostId);
     return !!host && !!ctx.users.hostRole(u, host);
+  };
+  // Boutons proposés dans la notification, selon les droits du compte qui la lit :
+  //   « Ouvrir » toujours ; « Acquitter » si le compte est au moins opérateur sur l'hôte (comme la route d'acquittement) ;
+  //   « Isoler… » seulement pour une alerte CRITIQUE d'un hôte dont il est administrateur — et il ne fait JAMAIS isoler :
+  //   il ouvre l'écran de confirmation de l'application (lien profond).
+  ctx.push.actionsFor = (user, n) => {
+    const host = n.hostId ? ctx.hosts.find(n.hostId) : null;
+    const hostRole = host ? ctx.users.hostRole(user, host) : null;
+    const actions = [{ action: 'open', title: 'Ouvrir', url: n.sessionId ? '/#/terminal' : (host ? `/#/xray?host=${host.id}` : '/#/journal') }];
+    const alert = n.alertId ? ctx.alerts.open(n.alertId) : null;
+    if (alert) {
+      const mayAck = host ? Users.atLeast(hostRole, 'operator') && Users.atLeast(user.role, 'operator') : Users.atLeast(user.role, 'operator');
+      if (mayAck) actions.push({ action: 'ack', title: 'Acquitter', alertId: alert.id });
+      if (alert.severity === 'critical' && host && Users.atLeast(hostRole, 'admin') && Users.atLeast(user.role, 'admin')) {
+        actions.push({ action: 'isolate', title: 'Isoler…', url: `/#/xray?host=${host.id}&isolate=1` });
+      }
+    }
+    return actions;
   };
   ctx.notify = (n) => {
     ctx.journal.add({ type: 'terminal', event: 'notify', host: n.hostId ? ctx.hosts.find(n.hostId) : undefined, user: n.owner || null, ip: null, detail: `${n.title} : ${n.body}` });

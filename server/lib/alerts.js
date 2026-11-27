@@ -14,9 +14,11 @@ export class Alerts {
     if (recent) return null;
     const r = this.db.run('INSERT INTO alerts (ts, host_id, kind, severity, message, data) VALUES (?, ?, ?, ?, ?, ?)',
       Date.now(), a.hostId ?? null, a.kind, a.severity, String(a.message).slice(0, 500), a.data ? JSON.stringify(a.data) : null);
+    const id = Number(r.lastInsertRowid);
     this.journal?.add({ type: 'alert', event: a.kind, ok: a.severity === 'info', detail: a.message });
-    this.notify?.({ title: a.severity === 'critical' ? 'Corvus — alerte' : 'Corvus', body: a.message, hostId: a.hostId });
-    return Number(r.lastInsertRowid);
+    // `alertId` et `severity` servent à proposer « Acquitter » / « Isoler… » dans la notification (voir push.js).
+    this.notify?.({ title: a.severity === 'critical' ? 'Corvus — alerte' : 'Corvus', body: a.message, hostId: a.hostId, alertId: id, severity: a.severity });
+    return id;
   }
 
   list({ limit = 100, open = false, hostIds } = {}) {
@@ -34,9 +36,16 @@ export class Alerts {
 
   /** `hostIds` (null = tous) : on n'acquitte que ce qu'on peut voir. */
   ack(id, user, hostIds = null) {
-    const row = this.db.get('SELECT host_id FROM alerts WHERE id = ?', id);
+    const row = this.db.get('SELECT host_id, kind FROM alerts WHERE id = ?', id);
     if (!row || (hostIds && row.host_id && !hostIds.includes(row.host_id))) throw new HttpError(404, 'NOT_FOUND', 'Alerte introuvable ou déjà acquittée');
     const r = this.db.run('UPDATE alerts SET ack_at = ?, ack_by = ? WHERE id = ? AND ack_at IS NULL', Date.now(), user?.username ?? null, id);
     if (!r.changes) throw new HttpError(404, 'NOT_FOUND', 'Alerte introuvable ou déjà acquittée');
+    this.journal?.add({ type: 'alert', event: 'ack', detail: `alerte ${id} acquittée (${String(row.kind).slice(0, 60)})` });
+  }
+
+  /** Alerte non acquittée ? (pour décider des boutons d'une notification) */
+  open(id) {
+    const r = this.db.get('SELECT id, host_id, severity FROM alerts WHERE id = ? AND ack_at IS NULL', id);
+    return r ? { id: r.id, hostId: r.host_id, severity: r.severity } : null;
   }
 }

@@ -1,11 +1,12 @@
 // Service worker Corvus : coquille de l'app disponible hors ligne.
 // L'API, les WebSockets, les téléchargements et le proxy ne sont JAMAIS mis en cache.
-const VERSION = 'corvus-v25';
+importScripts('/sw-actions.js'); // actions des notifications (logique pure, testée à part)
+const VERSION = 'corvus-v26';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest',
   '/css/tokens.css', '/css/app.css',
   '/vendor/xterm.css', '/vendor/xterm.js', '/vendor/addon-fit.js',
-  '/js/main.js', '/js/api.js', '/js/state.js', '/js/push.js', '/js/terminal-themes.js', '/js/voice.js',
+  '/sw-actions.js', '/js/main.js', '/js/api.js', '/js/state.js', '/js/push.js', '/js/terminal-themes.js', '/js/voice.js',
   '/js/ui/dom.js', '/js/ui/icons.js', '/js/ui/components.js', '/js/ui/hostpicker.js', '/js/ui/chart.js',
   '/js/views/login.js', '/js/views/hosts.js', '/js/views/terminal.js', '/js/views/claude.js', '/js/views/files.js',
   '/js/views/git.js', '/js/views/monitor.js', '/js/views/journal.js', '/js/views/proxy.js',
@@ -56,29 +57,43 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Notifications push (commande longue terminée) — voir docs/notifications.md.
+// Notifications push (commande longue, alertes) — voir docs/notifications.md.
+// Le push est SANS contenu : le détail et les boutons viennent de /api/push/latest (cookie de session).
 self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
-    let n = { title: 'Corvus', body: 'Une commande est terminée.' };
+    let n = {};
     try {
       const res = await fetch('/api/push/latest', { credentials: 'same-origin', headers: { 'X-Corvus': '1' } });
-      if (res.ok) n = { ...n, ...(await res.json()).notification };
+      if (res.ok) n = (await res.json()).notification || {};
     } catch { /* message générique */ }
-    await self.registration.showNotification(n.title, {
-      body: n.body, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png',
-      tag: n.sessionId || 'corvus', data: { url: n.sessionId ? '/#/terminal' : '/' },
-    });
+    const { title, options } = self.CorvusSW.buildNotification(n);
+    await self.registration.showNotification(title, options);
   })());
 });
 
+async function openApp(target) {
+  const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const c of all) {
+    if ('focus' in c) { await c.focus(); if (c.navigate) await c.navigate(target); return; }
+  }
+  await self.clients.openWindow(target);
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = event.notification.data?.url || '/';
+  const todo = self.CorvusSW.decideClick(event.action, event.notification.data);
   event.waitUntil((async () => {
-    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of all) {
-      if ('focus' in c) { await c.focus(); c.navigate?.(target); return; }
+    if (todo.kind === 'ack') {
+      // Acquitter : la session (cookie SameSite=Strict) et les droits du compte décident ; le serveur répond 404 / 403 sinon.
+      const { url, init } = self.CorvusSW.ackRequest(todo.alertId);
+      let ok = false;
+      try { ok = (await fetch(url, init)).ok; } catch { ok = false; }
+      await self.registration.showNotification(ok ? 'Alerte acquittée' : 'Acquittement impossible', {
+        body: ok ? '' : 'Ouvrez Corvus : la session a peut-être expiré, ou ce compte n\'a pas le droit d\'acquitter cette alerte.',
+        icon: '/icons/icon-192.png', tag: `ack-${todo.alertId}`, silent: true,
+      });
+      return;
     }
-    await self.clients.openWindow(target);
+    await openApp(todo.url);
   })());
 });

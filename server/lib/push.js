@@ -108,7 +108,10 @@ export class PushService {
    * @param {{userIds?: string[]}} [to] destinataires ; par défaut : administrateurs et hôte concerné
    */
   async notify(n, to = {}) {
-    this.latest = { userIds: to.userIds, title: String(n.title || 'Corvus').slice(0, 120), body: String(n.body || '').slice(0, 400), sessionId: n.sessionId, hostId: n.hostId, ts: Date.now() };
+    this.latest = {
+      userIds: to.userIds, title: String(n.title || 'Corvus').slice(0, 120), body: String(n.body || '').slice(0, 400),
+      sessionId: n.sessionId, hostId: n.hostId, alertId: Number.isInteger(n.alertId) ? n.alertId : undefined, severity: n.severity, ts: Date.now(),
+    };
     let subs = this.subscriptions();
     if (to.userIds) subs = subs.filter((s) => to.userIds.includes(s.userId));
     else if (this.audience) subs = subs.filter((s) => this.audience(s.userId, n.hostId));
@@ -133,6 +136,7 @@ export class PushService {
       throw new HttpError(404, 'NONE', 'Aucune notification');
     }
     const { userIds, ...rest } = n;
-    return rest;
+    // Boutons de la notification, calculés PAR COMPTE selon ses droits (le service worker ne décide de rien).
+    return { ...rest, actions: this.actionsFor ? this.actionsFor(user, n) : [{ action: 'open', title: 'Ouvrir', url: '/' }] };
   }
 }
