@@ -97,7 +97,8 @@ mod tests {
         for banned in ["everyone", "authenticated users", "builtin\\users", "utilisateurs authentifiés", "tout le monde"] {
             assert!(!acl.contains(banned), "ACL trop large ({banned}) : {acl}");
         }
-        assert!(acl.contains("system"), "SYSTEM doit garder l'accès : {acl}");
+        // Indépendant de la langue de Windows : exactement trois entrées (SYSTEM, Administrateurs, propriétaire), toutes en contrôle total.
+        assert_eq!(acl.matches(":(f)").count(), 3, "ACL attendue : SYSTEM, Administrateurs et propriétaire seulement : {acl}");
         // Le propriétaire (nous) lit toujours.
         assert_eq!(std::fs::read(&f).unwrap(), b"secret");
         let _ = std::fs::remove_dir_all(&dir);

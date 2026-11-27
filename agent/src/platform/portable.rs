@@ -191,7 +191,7 @@ pub mod metrics {
             if let (Some(n), Some(dt)) = (self.nets.as_ref(), elapsed) {
                 if dt > 0.0 {
                     let (mut rx, mut tx) = (0u64, 0u64);
-                    for (_, data) in n.iter() {
+                    for data in n.values() {
                         rx += data.received();
                         tx += data.transmitted();
                     }
