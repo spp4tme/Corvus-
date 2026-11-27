@@ -20,7 +20,7 @@ function headerPassword(req) {
 export function systemRoutes(ctx) {
   const r = Router();
   const { storage, storageMonitor, blobs, backups, alerts, db, journal, config } = ctx;
-  const admin = (req) => ctx.requireRole?.(req, 'admin');
+  const admin = (req) => ctx.requireRole(req, 'admin'); // sans « ?. » : si requireRole manquait, on échoue fermé
 
   r.get('/system/status', (req, res) => {
     const space = storageMonitor.status();
@@ -51,6 +51,7 @@ export function systemRoutes(ctx) {
   });
 
   r.post('/alerts/:id/ack', (req, res) => {
+    ctx.requireRole(req, 'operator');
     // Un opérateur n'acquitte pas (ne fait pas taire) l'alerte d'un hôte qui ne lui est pas accordé.
     alerts.ack(v.int(req.params.id, 'id', { min: 1 }), req.user, req.allowedHostIds?.() || null);
     res.json({ ok: true });

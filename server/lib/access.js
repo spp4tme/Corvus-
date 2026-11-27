@@ -50,6 +50,16 @@ export function hostLevel(method, sub, body) {
   return read ? 'viewer' : 'operator';
 }
 
+/**
+ * Seconde barrière, posée dans les routeurs eux-mêmes : même si le middleware d'`accessGuard` était contourné
+ * (variante de casse, « / » final, nouvelle route oubliée dans GLOBAL_RULES…), la route refuse. Évalué à chaque
+ * requête ; `ctx.requireRole` absent → TypeError → 500 (on échoue fermé, jamais ouvert).
+ */
+export const roleGuard = (ctx, role) => (req, res, next) => {
+  try { ctx.requireRole(req, role); } catch (err) { return next(err); }
+  next();
+};
+
 export function accessGuard(ctx) {
   ctx.requireRole = (req, role) => {
     if (!Users.atLeast(req.user?.role, role)) throw forbidden(role === 'admin' ? 'Réservé aux administrateurs' : 'Action non autorisée en lecture seule');

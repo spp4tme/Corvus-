@@ -8,6 +8,7 @@ import { Router } from 'express';
 import { COOKIE, parseCookies } from '../lib/auth.js';
 import { HttpError } from '../lib/validate.js';
 import * as v from '../lib/validate.js';
+import { roleGuard } from '../lib/access.js';
 import * as totp from '../lib/totp.js';
 import { publicUser } from '../lib/users.js';
 import { originAllowed } from '../lib/auth.js';
@@ -232,6 +233,8 @@ export function accountRoutes(ctx) {
   });
 
   // ---------- Administration (garde : routes /users réservées aux admins, voir access.js) ----------
+  // Seconde barrière : toute route /users exige le rôle administrateur, quoi qu'ait décidé le middleware.
+  r.use('/users', roleGuard(ctx, 'admin'));
   const uid = (req) => v.str(req.params.id, 'id', { min: 16, max: 16 });
   r.get('/users', (req, res) => res.json({ users: users.list(), groups: hosts.groups(), hosts: hosts.hosts.map((h) => ({ id: h.id, name: h.name, group: h.group })) }));
   r.post('/users', (req, res) => {

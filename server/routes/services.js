@@ -1,14 +1,18 @@
 // Routes : services web (proxy) et notifications push.
 import { Router } from 'express';
 import * as v from '../lib/validate.js';
+import { roleGuard } from '../lib/access.js';
 
-export function serviceRoutes({ proxy, push, config }) {
+export function serviceRoutes(ctx) {
+  const { proxy, push, config } = ctx;
   const r = Router();
+  const admin = roleGuard(ctx, 'admin');
+  const operator = roleGuard(ctx, 'operator');
 
   r.get('/services', (req, res) => res.json({ enabled: config.webProxy, services: proxy.list() }));
-  r.post('/services', (req, res) => res.status(201).json({ service: proxy.create(req.body) }));
-  r.delete('/services/:id', (req, res) => { proxy.delete(v.str(req.params.id, 'id', { min: 12, max: 12 })); res.json({ ok: true }); });
-  r.post('/services/:id/open', async (req, res) => {
+  r.post('/services', admin, (req, res) => res.status(201).json({ service: proxy.create(req.body) }));
+  r.delete('/services/:id', admin, (req, res) => { proxy.delete(v.str(req.params.id, 'id', { min: 12, max: 12 })); res.json({ ok: true }); });
+  r.post('/services/:id/open', operator, async (req, res) => {
     if (!config.webProxy) throw new v.HttpError(403, 'DISABLED', 'Proxy web désactivé (CORVUS_WEB_PROXY=0)');
     res.json(await proxy.open(v.str(req.params.id, 'id', { min: 12, max: 12 })));
   });

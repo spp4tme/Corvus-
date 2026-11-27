@@ -2,9 +2,12 @@
 // L'enrôlement lui-même (POST /api/agent/enroll) est public et vit dans app.js.
 import { Router } from 'express';
 import * as v from '../lib/validate.js';
+import { roleGuard } from '../lib/access.js';
 
 export function agentRoutes(ctx) {
   const r = Router();
+  // Seconde barrière (voir access.js) : gestion des agents réservée aux administrateurs.
+  r.use('/agents', roleGuard(ctx, 'admin'));
 
   r.get('/agents', (req, res) => res.json({ agents: ctx.agents.list(), serverPublicKey: ctx.agents.publicKeyB64 }));
 

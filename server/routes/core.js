@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { tailscalePeers } from '../lib/tailscale.js';
 import { HttpError } from '../lib/validate.js';
 import * as v from '../lib/validate.js';
+import { roleGuard } from '../lib/access.js';
 
 
 export function hostRoutes(ctx) {
@@ -90,6 +91,9 @@ export function hostRoutes(ctx) {
     res.json({ ok: true });
   });
 
+  // Seconde barrière (voir access.js) : réservé aux administrateurs.
+  r.use('/tailscale', roleGuard(ctx, 'admin'));
+  r.use('/journal/verify', roleGuard(ctx, 'admin'));
   r.get('/tailscale/peers', async (req, res) => {
     res.json(await tailscalePeers(config.tailscaleBin));
   });
