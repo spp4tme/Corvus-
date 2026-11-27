@@ -4,6 +4,44 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [1.1.0] - 2026-11-27
+
+Cinq fonctions nouvelles, et un audit de sécurité complet (rapport : `docs/audit-1.1.0.md`).
+
+### Ajouté
+- **Comparer** : un fichier de configuration lu sur 2 à 5 hôtes (SFTP, sans shell), différences côte à côte, blocs identiques repliés ; les mots de passe,
+  jetons et clés sont **masqués côté serveur** (révélation sur demande, journalisée) ; diff en JavaScript pur, tailles bornées.
+- **Replays** : **recherche plein texte** dans une session ou dans toutes celles que vous pouvez relire (déchiffrement à la volée, sans index sur disque,
+  séquences d'échappement retirées même coupées entre deux paquets, bornée en temps, requête jamais journalisée) et **export `.cast`**.
+- **Notifications** : boutons **Ouvrir**, **Acquitter** et **Isoler…** calculés par compte ; « Isoler… » ouvre l'écran de confirmation, il n'isole jamais d'un seul geste ;
+  le push reste sans contenu.
+- **Copie d'hôte à hôte** (Fichiers → ⋯) : fichier ou dossier en flux par Corvus, progression, annulation sans résidu, jamais d'écrasement sans confirmation,
+  liens symboliques jamais suivis, écriture atomique, limites (`COPY_MAX_MB`, `COPY_MAX_FILES`, `COPY_MAX_MBPS`).
+- **Partager vers Corvus** : menu Partager d'Android et des ordinateurs (`share_target`), stockage temporaire propre au compte, envoi après le choix de l'hôte et du dossier.
+  **iPhone** : Safari ne le permet pas ; page du wiki « Raccourci iPhone » (jeton d'API personnel).
+- `sudo corvus journal-head` : empreinte de tête du journal d'audit à noter hors du serveur (code de sortie 2 si la chaîne est rompue).
+- `SECURITY.md` (signalement privé), `docs/modele-de-menace.md`, `docs/audit-1.1.0.md`.
+- CI : `npm audit`, `cargo audit`, `cargo clippy -- -D warnings`, CodeQL, OpenSSF Scorecard, Dependabot ; **actions GitHub épinglées par empreinte de commit**.
+
+### Sécurité
+Correctifs de l'audit (détails et gravité dans `docs/audit-1.1.0.md`) — **mise à jour recommandée, agents compris** :
+- **Haute** : un **jeton d'API ne peut plus créer** de jeton, de passkey ni de compte (un jeton volé pouvait se perpétuer après sa révocation). Ces actions exigent une session de navigateur.
+- **Moyenne** : un **lecteur** ne lit plus les journaux système, le pare-feu, les comptes de l'hôte ni l'historique des fichiers (réservés aux opérateurs) ;
+  geler / dégeler / arrêter un processus par l'agent (root) est réservé à l'**administrateur de l'hôte**.
+- **Moyenne** : SQLite embarqué dans l'**agent** mis à jour (RUSTSEC-2026-0459, CVE-2026-119375).
+- **Moyenne** : « Partager vers Corvus » refuse les dépôts venus d'un autre site.
+- **Moyenne** : **avertissement bloquant sans passphrase maître** (script d'installation, bandeau pour les administrateurs, réglages).
+- Seconde barrière générique sur toutes les routes d'hôte ; identifiants d'hôte en majuscules traités comme des identifiants.
+- « Journal infalsifiable » corrigé en « à chaînage cryptographique (toute modification est détectable) ».
+
+### Modifié
+- Droits : voir « Sécurité » ci-dessus (lecteur → opérateur pour quatre lectures ; processus de l'agent → administrateur).
+- Le protocole de l'agent et les données restent compatibles avec la 1.0.x.
+
+### Limites connues
+- Partager vers Corvus et les boutons des notifications : testés par logique, **pas sur un vrai téléphone**. Pas de partage natif sur iPhone.
+- Voir « Reste ouvert » dans `docs/audit-1.1.0.md` (jetons d'API sans expiration, rôle « lecteur » large, restauration de sauvegarde non bornée…).
+
 ## [1.0.2] - 2026-11-27
 
 ### Modifié
