@@ -224,6 +224,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "linux")] // lit /proc/PID/fd : l'attribution d'un écrivain par fichiers ouverts n'existe que sous Linux
     fn un_processus_sans_lien_avec_les_dossiers_touches_nest_pas_accuse() {
         let dir = std::env::temp_dir().join(format!("corvus-top-{}", std::process::id()));
         let other = std::env::temp_dir().join(format!("corvus-top-autre-{}", std::process::id()));
