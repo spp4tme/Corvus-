@@ -65,12 +65,15 @@ test('Radiographie, onglet Normal : isolement et gel grisés avec l\'explication
   assert.equal(await page.getByRole('button', { name: 'Lever l\'isolement' }).isDisabled(), true);
   for (const cb of await page.locator('input[type=checkbox]').all()) assert.equal(await cb.isDisabled(), true, 'réglages de défense grisés');
   assert.ok((await page.getByRole('button', { name: 'Isoler maintenant' }).getAttribute('title')).includes('nftables'), 'explication en infobulle');
+  await page.getByText(/Linux seulement, à vous de décider/).waitFor(); // pas de « SIGSTOP » promis là où le gel n'existe pas
+  assert.equal(await page.getByText(/SIGSTOP/).count(), 0);
 
   // Linux complet : l'isolement est proposé normalement.
   await page.goto(`${env.base}/#/xray?host=${linuxId}`);
   await page.getByRole('tab', { name: 'Normal et anomalies' }).or(page.getByRole('button', { name: 'Normal et anomalies' })).first().click();
   await page.getByRole('button', { name: 'Isoler maintenant' }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Isoler maintenant' }).isDisabled(), false);
+  await page.getByText(/SIGSTOP, à vous de décider/).waitFor();
   assert.deepEqual(errors, []);
 });
 

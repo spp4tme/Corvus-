@@ -4,6 +4,7 @@ import { get, post, put } from '../api.js';
 import { h, replace, formatDate } from '../ui/dom.js';
 import { button, confirmDialog, select, input, segmented, checkbox, loadingState, emptyState, errorState, badge, toast, toastError } from '../ui/components.js';
 import { state } from '../state.js';
+import { agentFeature } from '../ui/agent-support.js';
 
 function tree(processes) {
   const byParent = new Map();
@@ -46,7 +47,7 @@ export default {
     }
 
     // Fonctions que l'agent de CET hôte annonce (le serveur les calcule avec une explication) ; absent = disponible.
-    const feat = (f) => state.host(hostId)?.agent?.support?.[f] || { ok: true, reason: null };
+    const feat = agentFeature(hostId);
     const KIND = { proc: 'programme', conn: 'destination', listen: 'port en écoute' };
     async function drawNormal() {
       replace(body, loadingState());
@@ -59,7 +60,7 @@ export default {
         // Une fonction que l'agent n'a pas est grisée ET expliquée : jamais proposée pour échouer ensuite.
         const unavailable = !admin ? [] : [!canFreeze && feat('procActions').reason, !canIsolate && feat('isolation').reason, !feat('ransom').ok && feat('ransom').reason]
           .filter(Boolean).map((text) => h('p', { class: 'dim' }, text));
-        const freeze = checkbox('Geler automatiquement un programme jamais vu lancé pendant une heure calme (SIGSTOP, à vous de décider ensuite)', { checked: o.autoFreeze && canFreeze, disabled: !admin || !canFreeze });
+        const freeze = checkbox(`Geler automatiquement un programme jamais vu lancé pendant une heure calme (${canFreeze ? 'SIGSTOP, ' : 'Linux seulement, '}à vous de décider ensuite)`, { checked: o.autoFreeze && canFreeze, disabled: !admin || !canFreeze });
         freeze.input.addEventListener('change', async () => { try { await put(`/api/hosts/${hostId}/behavior/settings`, { autoFreeze: freeze.input.checked }); toast('Réglage enregistré', 'ok', 1500); } catch (err) { toastError(err); freeze.input.checked = !freeze.input.checked; } });
         const isolate = checkbox(`Isoler l'hôte du réseau ${Math.round(o.isolateTtl / 60)} min en cas de ransomware probable (Tailscale et Corvus restent joignables ; levée automatique)`, { checked: o.autoIsolate && canIsolate, disabled: !admin || !canIsolate });
         isolate.input.addEventListener('change', async () => { try { await put(`/api/hosts/${hostId}/behavior/settings`, { autoIsolate: isolate.input.checked }); toast('Réglage enregistré', 'ok', 1500); } catch (err) { toastError(err); isolate.input.checked = !isolate.input.checked; } });
