@@ -29,7 +29,7 @@ export function mapSftpError(err, p) {
   }
 }
 
-const call = (sftp, method, ...args) => new Promise((resolve, reject) => {
+export const call = (sftp, method, ...args) => new Promise((resolve, reject) => {
   sftp[method](...args, (err, res) => (err ? reject(err) : resolve(res)));
 });
 
@@ -317,7 +317,7 @@ export class SftpService {
 }
 
 /** Remplace `target` par `tmp` sans jamais laisser l'utilisateur sans fichier. */
-async function finalizeUpload(sftp, tmp, target, { overwrite, previous, exists }) {
+export async function finalizeUpload(sftp, tmp, target, { overwrite, previous, exists }) {
   if (previous && previous.mode != null) {
     // Conserve les droits du fichier remplacé (le fichier temporaire a ceux par défaut).
     await call(sftp, 'chmod', tmp, previous.mode & 0o7777).catch(() => {});

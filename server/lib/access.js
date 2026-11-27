@@ -21,6 +21,8 @@ const GLOBAL_RULES = [
   ['GET', /^\/journal\/verify\/?$/i, 'admin'],
   ['POST', /^\/alerts\//i, 'operator'],
   [ANY, /^\/exec(\/|$)/i, 'operator'],
+  // Copie d'hôte à hôte : opérateur au minimum ; les droits SUR CHAQUE HÔTE sont vérifiés par le service (requireHost).
+  [ANY, /^\/fs\/copy(\/|$)/i, 'operator'],
   [ANY, /^\/agents(\/|$)/i, 'admin'],
 ];
 

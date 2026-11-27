@@ -59,6 +59,10 @@ export const config = Object.freeze({
   maxEditBytes: 2 * 1024 * 1024,
   maxPreviewBytes: int(env.MAX_PREVIEW_MB, 20) * 1024 * 1024,
   maxUploadBytes: int(env.MAX_UPLOAD_MB, 1024) * 1024 * 1024,
+  // Copie d'hôte à hôte : taille totale, nombre de fichiers (dossier) et débit maximal (0 = illimité).
+  copyMaxBytes: int(env.COPY_MAX_MB, 2048) * 1024 * 1024,
+  copyMaxFiles: int(env.COPY_MAX_FILES, 5000),
+  copyMaxBps: int(env.COPY_MAX_MBPS, 0) * 1024 * 1024,
   webProxy: bool(env.CORVUS_WEB_PROXY, true),
   proxyAllowPrivate: bool(env.CORVUS_PROXY_ALLOW_PRIVATE, false),
   vapidSubject: env.CORVUS_VAPID_SUBJECT || 'mailto:corvus@example.com',

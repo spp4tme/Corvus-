@@ -8,6 +8,7 @@ import {
   loadingState, emptyState, errorState, textarea, checkbox,
 } from '../ui/components.js';
 import { hostPicker } from '../ui/hostpicker.js';
+import { copyDialog } from './copy-dialog.js';
 import { state } from '../state.js';
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|avif|ico|svg)$/i;
@@ -133,6 +134,7 @@ export default {
           !isDir ? menuItem('download', 'Télécharger', () => { d.close(); download(p); }) : null,
           !isDir ? menuItem('edit', 'Ouvrir dans l\'éditeur', () => { d.close(); openEditor(p); }) : null,
           menuItem('edit', 'Renommer / déplacer', () => { d.close(); rename(e); }),
+          (e.type === 'file' || e.type === 'dir') && state.hosts.filter((x) => state.canOperate(x.id)).length ? menuItem('copy', 'Copier vers un autre hôte…', () => { d.close(); copyDialog({ fromHostId: hostId, path: p, name: e.name, isDir }); }) : null,
           menuItem('copy', 'Copier le chemin', async () => {
             d.close();
             try { await navigator.clipboard.writeText(p); toast('Chemin copié', 'ok', 1500); } catch { toast(p, 'info', 8000); }

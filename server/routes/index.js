@@ -28,11 +28,14 @@ import { HostStatus } from '../lib/hoststatus.js';
 import { MetricsCollector } from '../lib/metrics.js';
 import { CompareService } from '../lib/compare.js';
 import { compareRoutes } from './compare.js';
+import { CopyService } from '../lib/copy.js';
+import { copyRoutes } from './copy.js';
 
 /** Services instanciés avant le montage des routes (le proxy est monté hors /api). */
 export function createServices(ctx) {
   ctx.sftp = new SftpService(ctx);
   ctx.git = new GitService(ctx);
+  ctx.copy = new CopyService({ pool: ctx.pool, hosts: ctx.hosts, journal: ctx.journal, config: ctx.config, sftp: ctx.sftp });
   ctx.compare = new CompareService({ sftp: ctx.sftp, hosts: ctx.hosts, journal: ctx.journal });
   ctx.monitor = new MonitorService(ctx);
   ctx.hostAdmin = new HostAdmin({ pool: ctx.pool, hosts: ctx.hosts, journal: ctx.journal });
@@ -94,5 +97,6 @@ export function extraRoutes(ctx) {
   r.use(productivityRoutes(ctx));
   r.use(hostAdminRoutes(ctx));
   r.use(compareRoutes(ctx));
+  r.use(copyRoutes(ctx));
   return r;
 }

@@ -65,3 +65,11 @@ test('comparer : le routeur refuse de lui-même un compte sans rôle valide, var
   // Rôle valide mais hôtes inconnus : 404 (jamais 403 qui révélerait quoi que ce soit)
   assert.equal(await call('viewer', 'POST', '/Compare/', { path: '~/x', hostIds: ['abcdefabcdef', 'bcdefabcdefa'] }), 404);
 });
+
+test('copie d\'hôte à hôte : le routeur refuse de lui-même un compte sans rôle « opérateur » (étape 4)', async () => {
+  for (const [m, u, b] of [['POST', '/fs/copy', {}], ['POST', '/Fs/Copy/', {}], ['GET', '/FS/COPY', undefined], ['GET', '/fs/copy/0123456789abcdef', undefined], ['DELETE', '/Fs/copy/0123456789abcdef/', undefined]]) {
+    assert.equal(await call('viewer', m, u, b), 403, `lecteur : ${m} ${u}`);
+    assert.equal(await call('aucun', m, u, b), 403, `rôle inconnu : ${m} ${u}`);
+  }
+  assert.notEqual(await call('operator', 'GET', '/fs/copy'), 403);
+});
