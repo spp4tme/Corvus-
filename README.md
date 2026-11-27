@@ -608,7 +608,7 @@ d'abord avec `--dry-run` : il affiche ce qui serait fait sans rien modifier.
 
 ```bash
 # 1. Le binaire : depuis la release (x86_64 ou aarch64), vérifié par SHA256SUMS…
-V=1.0.0; A=$(uname -m)      # x86_64 ou aarch64
+V=1.0.1; A=$(uname -m)      # x86_64 ou aarch64
 curl -fLO https://github.com/spp4tme/Corvus-/releases/download/v$V/corvus-agent-$V-linux-$A
 curl -fLO https://github.com/spp4tme/Corvus-/releases/download/v$V/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing && sudo install -m 755 corvus-agent-$V-linux-$A /usr/local/bin/corvus-agent

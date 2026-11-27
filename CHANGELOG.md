@@ -4,6 +4,14 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [1.0.1] - 2026-11-27
+
+### Corrigé
+- Droits par hôte : le contrôle de rôle ne tient plus compte de la casse ni d'un `/` final dans le chemin.
+
+### Validé sur le Pi (agent 1.0.0)
+- Isolement réseau : API, bouton de l'interface et levée automatique à l'expiration (voir `docs/suite-pi.md`).
+
 ## [1.0.0] - 2026-11-26
 
 La première version stable : l'agent s'installe en une commande et sait désigner exactement qui écrit.
