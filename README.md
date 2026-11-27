@@ -30,7 +30,7 @@ Corvus n'écoute que sur `127.0.0.1:7680`. Au premier lancement, un token s'affi
 ## Ce que fait Corvus
 
 - **Terminal, fichiers, git, supervision, Docker** sur vos machines, en SSH, avec une interface pensée d'abord pour le téléphone (PWA).
-- **Comptes** avec TOTP obligatoire, passkeys, rôles, droits par hôte, journal d'audit infalsifiable.
+- **Comptes** avec TOTP obligatoire, passkeys, rôles, droits par hôte, journal d'audit à chaînage cryptographique (toute modification est détectable).
 - **Défense avec l'agent facultatif** (Rust, 3 Mo, aucun port ouvert sur l'hôte) : **Rembobiner** les fichiers, **prévisualiser** une
   commande risquée, **radiographier** les processus, repérer l'inhabituel, bloquer un **ransomware**.
 - Règles et statistiques, **jamais d'IA**. Toute action destructive demande une confirmation et laisse une trace.

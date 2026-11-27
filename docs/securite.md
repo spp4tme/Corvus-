@@ -52,13 +52,13 @@ vers le port 443 de la machine Corvus).
   l'hôte (co-pilote : rôle opérateur exigé) ; un spectateur ne peut ni taper, ni redimensionner,
   ni fermer ; retrait immédiat ; tout est journalisé.
 
-### Journal d'audit infalsifiable
+### Journal d'audit à chaînage cryptographique
 - Connexions (réussies et échouées), terminaux, transferts SFTP, git, Docker, processus, comptes,
   hôtes, sauvegardes : chaque entrée indique le compte, l'IP et l'hôte.
-- **Chaînage SHA-256** : chaque entrée contient l'empreinte de la précédente. *Journal → Vérifier
+- **Chaînage SHA-256** (« infalsifiable » serait trop dire : toute modification est *détectable*, pas *impossible*) : chaque entrée contient l'empreinte de la précédente. *Journal → Vérifier
   l'intégrité* recalcule toute la chaîne et signale la première entrée modifiée ou supprimée.
 - Le journal n'est jamais vidé ni purgé. **Limite** : un attaquant root sur le serveur Corvus
-  peut recalculer toute la chaîne ; notez l'empreinte de tête affichée (ou exportez-la) pour
+  peut recalculer toute la chaîne ; notez l'empreinte de tête (`sudo corvus journal-head`, ou *Journal → Vérifier l'intégrité*) ailleurs que sur ce serveur pour
   comparer plus tard.
 
 ### API et WebSocket

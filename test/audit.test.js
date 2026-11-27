@@ -1,6 +1,8 @@
 // Audit de sécurité 1.1.0 : chaque correctif a d'abord eu un test qui échoue. Voir docs/audit-1.1.0.md.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { startCorvus, CorvusClient, makeUser } from './helpers/corvus.js';
 
 describe('droits de lecture trop larges (audit 1.1.0, point 9)', () => {
@@ -106,5 +108,57 @@ describe('gestion des comptes : session de navigateur exigée (audit 1.1.0, poin
     const del = await fetch(`${env.base}/api/Users/${env.admin.id}/`, { method: 'DELETE', headers: h });
     assert.equal(del.status, 403);
     assert.equal((await fetch(`${env.base}/api/users`, { headers: h })).status, 200);
+  });
+});
+
+describe('journal d\'audit : empreinte de tête exportable (audit 1.1.0, point 8)', () => {
+  let env;
+  before(async () => { env = await startCorvus(); await env.client.login(); await env.client.api('POST', '/api/hosts', { name: 'h', hostname: 'h.example', username: 'pi', password: 'x' }); });
+  after(() => env.close());
+  const cli = (...args) => spawnSync(process.execPath, ['server/cli.js', ...args], { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, CORVUS_DATA: env.dataDir, CORVUS_STORAGE: '' }, encoding: 'utf8' });
+
+  test('node server/cli.js journal-head : empreinte, nombre d\'entrées et état de la chaîne', () => {
+    const r = cli('journal-head');
+    assert.equal(r.status, 0, r.stderr);
+    const head = env.corvus.ctx.journal.head();
+    assert.match(r.stdout, new RegExp(`Empreinte de tête : ${head.hash}`));
+    assert.match(r.stdout, /Entrées : \d+/);
+    assert.match(r.stdout, /Chaîne : intacte/);
+    assert.ok(!/token|password|secret/i.test(r.stdout.replace(/Empreinte de tête/, '')), 'rien de sensible dans la sortie');
+  });
+
+  test('chaîne rompue : code de sortie 2 et entrée fautive signalée', () => {
+    const { db } = env.corvus.ctx;
+    db.run("UPDATE audit SET detail = 'falsifié' WHERE seq = (SELECT MIN(seq) FROM audit)");
+    const r = cli('journal-head');
+    assert.equal(r.status, 2);
+    assert.match(r.stdout, /Chaîne : ROMPUE/);
+  });
+});
+
+describe('passphrase maître : avertissement visible (audit 1.1.0, point 7)', () => {
+  test('l\'état du système dit comment les secrets sont protégés', async () => {
+    const a = await startCorvus();
+    try {
+      await a.client.login();
+      const s = await a.client.api('GET', '/api/system/status');
+      assert.equal(s.body.security.masterPassphrase, false, 'sans passphrase : clé dérivée du token');
+      assert.match(s.body.security.warning, /passphrase/i);
+    } finally { await a.close(); }
+    const b = await startCorvus({ masterPassphrase: 'une phrase longue et unique pour les tests' });
+    try {
+      await b.client.login();
+      const s = await b.client.api('GET', '/api/system/status');
+      assert.equal(s.body.security.masterPassphrase, true);
+      assert.equal(s.body.security.warning, null);
+    } finally { await b.close(); }
+  });
+
+  test('le script d\'installation Linux avertit et ne continue pas en silence', async () => {
+    const sh = fs.readFileSync(new URL('../deploy/install-linux.sh', import.meta.url), 'utf8');
+    assert.match(sh, /AVERTISSEMENT[^\n]*passphrase/i);
+    assert.match(sh, /--accept-no-passphrase/);
+    const check = spawnSync('bash', ['-n', new URL('../deploy/install-linux.sh', import.meta.url).pathname]);
+    assert.equal(check.status, 0, String(check.stderr));
   });
 });

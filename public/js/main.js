@@ -133,9 +133,12 @@ async function checkSystem() {
     const parts = [];
     if (st.storage.low) parts.push('Espace disque faible');
     if (st.alerts.open) parts.push(`${st.alerts.open} alerte${st.alerts.open > 1 ? 's' : ''}`);
+    // Administrateurs : avertissement permanent tant qu'aucune passphrase maître ne protège les secrets des hôtes.
+    const noPass = state.me?.role === 'admin' && st.security && !st.security.masterPassphrase;
+    if (noPass) parts.push('Aucune passphrase maître : les secrets des hôtes sont mal protégés (CORVUS_MASTER_PASSPHRASE)');
     shell.banner.textContent = parts.length ? `⚠ ${parts.join(' · ')}` : '';
     shell.banner.hidden = !parts.length;
-    shell.banner.href = st.storage.low ? '#/settings' : '#/journal';
+    shell.banner.href = noPass ? '#/settings' : st.storage.low ? '#/settings' : '#/journal';
   } catch { /* hors ligne : on réessaiera */ }
 }
 

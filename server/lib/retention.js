@@ -3,7 +3,7 @@
 //    les points bruts sont gardés `metricsRawDays` jours, les agrégats `metricsHourlyDays` jours ;
 //  - enregistrements de session et sauvegardes « annulables » : purgés après leur durée ;
 //  - sessions de connexion expirées : supprimées ;
-//  - journal d'audit : JAMAIS purgé (chaîne infalsifiable).
+//  - journal d'audit : JAMAIS purgé (chaîne vérifiable).
 import { logger } from './log.js';
 
 const log = logger('retention');

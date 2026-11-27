@@ -120,7 +120,7 @@ export function hostRoutes(ctx) {
     res.json({ entries: journal.list({ limit, type, hostId, before, hostIds: req.allowedHostIds() || undefined }), head: req.user.role === 'admin' ? journal.head() : undefined });
   });
 
-  // Le journal d'audit n'est jamais vidé (chaîne infalsifiable) : vérification à la place.
+  // Le journal d'audit n'est jamais vidé (chaîne vérifiable) : vérification à la place.
   r.get('/journal/verify', (req, res) => {
     res.json({ ...journal.verify(), head: journal.head() });
   });

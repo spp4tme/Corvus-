@@ -7,13 +7,14 @@
 #   sudo ./deploy/install-linux.sh --uninstall     retire le service et le code (garde les données)
 #   sudo ./deploy/install-linux.sh --uninstall --purge   … et supprime aussi les données (tokens, secrets !)
 #   sudo NODE_MAJOR=22 ./deploy/install-linux.sh   choisir la version de Node.js à installer si absente
+#   --accept-no-passphrase                         installer sans passphrase maître, sans question (déconseillé)
 #
 # Ce script :
 #   1. installe Node.js 22.13+ (binaire officiel nodejs.org, SHA256 vérifié) s'il manque ;
 #   2. crée l'utilisateur système « corvus », /opt/corvus (code) et /var/lib/corvus (données, 700) ;
 #   3. installe les dépendances (100 % JavaScript, aucune compilation) et l'unité systemd durcie ;
 #   4. démarre Corvus sur 127.0.0.1:7680 (jamais exposé) et affiche le token d'accès ;
-#   5. installe la commande `corvus` (token, status, logs, rotate-token).
+#   5. installe la commande `corvus` (token, status, logs, rotate-token, journal-head).
 #
 # Variables de personnalisation (rarement utiles) : CORVUS_APP_DIR, CORVUS_DATA_DIR, CORVUS_ENV_FILE, CORVUS_CLI.
 set -euo pipefail
@@ -26,12 +27,13 @@ UNIT=/etc/systemd/system/corvus.service
 CLI="${CORVUS_CLI:-/usr/local/bin/corvus}"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-SERVICE=1 UNINSTALL=0 PURGE=0
+SERVICE=1 UNINSTALL=0 PURGE=0 ACCEPT_NO_PASS=0 FIRST_INSTALL=0
 for arg in "$@"; do
   case "$arg" in
     --no-service) SERVICE=0 ;;
     --uninstall) UNINSTALL=1 ;;
     --purge) PURGE=1 ;;
+    --accept-no-passphrase) ACCEPT_NO_PASS=1 ;;
     -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'Option inconnue : %s (voir --help)\n' "$arg" >&2; exit 2 ;;
   esac
@@ -139,6 +141,7 @@ say "Installation des dépendances (production, sans compilation native)"
 (cd "$APP_DIR" && "$NPM_BIN" ci --omit=dev --no-audit --no-fund --loglevel=error)
 
 if [ ! -f "$ENV_FILE" ]; then
+  FIRST_INSTALL=1
   cat > "$ENV_FILE" <<EOF
 # Configuration Corvus (voir README). Redémarrer après modification : sudo systemctl restart corvus
 BIND=127.0.0.1
@@ -156,6 +159,43 @@ EOF
 fi
 chown root:corvus "$ENV_FILE"
 chmod 640 "$ENV_FILE"
+
+# --- Passphrase maître : avertissement BLOQUANT ----------------------------------------------
+# Sans passphrase, la clé qui chiffre les mots de passe et clés SSH de vos hôtes est dérivée d'un fichier posé à côté
+# de la base : copier le dossier de données suffit alors à tout lire. On ne laisse pas passer cela en silence.
+has_pass() { grep -Eq '^CORVUS_MASTER_PASSPHRASE=.+' "$ENV_FILE" 2>/dev/null; }
+if ! has_pass && [ "$ACCEPT_NO_PASS" -eq 0 ]; then
+  printf '\033[1;31m'
+  echo
+  echo "  AVERTISSEMENT : aucune passphrase maître (CORVUS_MASTER_PASSPHRASE) n'est définie."
+  echo "  Les mots de passe et clés SSH de vos hôtes seraient chiffrés avec une clé stockée dans $DATA_DIR,"
+  echo "  à côté de la base : quiconque copie ce dossier (sauvegarde non chiffrée, disque volé…) peut les lire."
+  printf '\033[0m'
+  if [ -t 0 ] && [ -t 1 ]; then
+    read -r -p "  Définir une passphrase maître maintenant ? [O/n] " ANS
+    case "${ANS:-O}" in
+      n|N|non|NON)
+        read -r -p "  Tapez « je comprends » pour continuer SANS passphrase : " ANS
+        [ "$ANS" = "je comprends" ] || die "installation interrompue : définissez CORVUS_MASTER_PASSPHRASE dans $ENV_FILE puis relancez (ou utilisez --accept-no-passphrase)." ;;
+      *)
+        while :; do
+          read -rs -p "  Passphrase (12 caractères au moins, sans \" ' \\ ) : " P1; echo
+          read -rs -p "  Confirmez : " P2; echo
+          case "$P1" in *\"*|*\'*|*\\*) warn "caractères \" ' \\ interdits dans ce fichier."; continue ;; esac
+          [ "${#P1}" -ge 12 ] || { warn "12 caractères au moins."; continue; }
+          [ "$P1" = "$P2" ] || { warn "les deux saisies diffèrent."; continue; }
+          break
+        done
+        printf 'CORVUS_MASTER_PASSPHRASE="%s"\n' "$P1" >> "$ENV_FILE"
+        unset P1 P2
+        say "Passphrase enregistrée dans $ENV_FILE (lecture réservée à root et au groupe corvus). Conservez-la : sans elle, les secrets sont perdus." ;;
+    esac
+  elif [ "$FIRST_INSTALL" -eq 1 ]; then
+    die "première installation sans terminal : définissez CORVUS_MASTER_PASSPHRASE dans $ENV_FILE, ou relancez avec --accept-no-passphrase pour l'accepter en connaissance de cause."
+  else
+    warn "mise à jour sans passphrase maître : activez CORVUS_MASTER_PASSPHRASE dans $ENV_FILE (puis : sudo corvus restart)."
+  fi
+fi
 
 PORT_NOW="$(sed -n 's/^PORT=\([0-9]*\).*/\1/p' "$ENV_FILE" | tail -n1)"; PORT_NOW="${PORT_NOW:-7680}"
 
@@ -181,7 +221,8 @@ case "${1:-}" in
   status) systemctl status corvus --no-pager ;;
   logs) journalctl -u corvus -n "${2:-100}" --no-pager ;;
   restart) systemctl restart corvus ;;
-  *) echo "Usage : sudo corvus token | rotate-token | status | logs [n] | restart" >&2; exit 1 ;;
+  journal-head) cli journal-head ;;
+  *) echo "Usage : sudo corvus token | rotate-token | journal-head | status | logs [n] | restart" >&2; exit 1 ;;
 esac
 EOF
 sed -i "s|__ENV_FILE__|$ENV_FILE|g; s|__DATA_DIR__|$DATA_DIR|g; s|__NODE__|$NODE_BIN|g; s|__APP_DIR__|$APP_DIR|g" "$CLI"

@@ -35,6 +35,12 @@ export function systemRoutes(ctx) {
         low: space.some((s) => s.low),
       },
       alerts: { open: db.get('SELECT COUNT(*) AS n FROM alerts WHERE ack_at IS NULL').n },
+      // Comment les secrets (mots de passe et clés SSH des hôtes) sont protégés : sans passphrase maître, la clé est
+      // dérivée d'un fichier posé à côté de la base (voir docs/securite.md).
+      security: {
+        masterPassphrase: ctx.vault?.source === 'passphrase',
+        warning: ctx.vault?.source === 'passphrase' ? null : 'Aucune passphrase maître : les secrets sont chiffrés avec une clé stockée à côté de la base. Définissez CORVUS_MASTER_PASSPHRASE.',
+      },
       schema: db.version,
       restoredFrom: ctx.restoredFrom || null,
     });

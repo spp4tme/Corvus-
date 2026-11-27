@@ -110,6 +110,8 @@ export function renderStorageSettings(slot) {
     });
 
     replace(box,
+      st.security && !st.security.masterPassphrase ? h('div', { class: 'test-result ko', role: 'alert' },
+        'Aucune passphrase maître : les mots de passe et clés SSH de vos hôtes sont chiffrés avec une clé stockée à côté de la base ; copier le dossier de données suffit à les lire. Ajoutez CORVUS_MASTER_PASSPHRASE="une longue phrase" dans /etc/corvus/corvus.env (ou la configuration Docker), puis redémarrez : la migration est automatique. Gardez cette phrase : sans elle, les secrets sont perdus.') : null,
       s.low ? h('div', { class: 'test-result ko', role: 'alert' }, 'Espace disque faible : libérez de la place, ou déplacez le stockage sur un SSD (variable CORVUS_STORAGE, voir le wiki, page Stockage et sauvegardes).') : null,
       ...spaceRows,
       h('p', { class: 'dim' }, `Base : ${formatBytes(s.db)} · enregistrements et sauvegardes de fichiers : ${s.blobs.count} élément(s), ${formatBytes(s.blobs.stored)} sur disque${s.custom ? '' : ' · stockage sur le même disque que la configuration (CORVUS_STORAGE non défini)'}.`),

@@ -1,4 +1,4 @@
-// Journal d'audit infalsifiable, stocké dans SQLite.
+// Journal d'audit à chaînage cryptographique (toute modification est détectable), stocké dans SQLite.
 //
 // Chaque entrée contient l'empreinte (SHA-256) de la précédente : `hash = sha256(prev_hash | contenu)`.
 // Modifier, insérer ou supprimer une entrée au milieu casse la chaîne, ce que `verify()` détecte.
