@@ -240,6 +240,26 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
     }
   });
 
+  test('Radiographie en direct : le vrai agent liste ses processus (dont lui-même) sur Windows, macOS et Linux', async () => {
+    const d = dir();
+    const t = await (await post('/api/agents/enrollments', { hostId })).json();
+    await run(AGENT_BIN, ['enroll', '--server', env.base, '--token', t.token, '--dir', d]);
+    const identity = JSON.parse(fs.readFileSync(path.join(d, 'identity.json'), 'utf8'));
+    const child = spawn(AGENT_BIN, ['run', '--dir', d, '--interval', '1'], { stdio: 'pipe' });
+    try {
+      const { db } = env.corvus.ctx;
+      await waitFor(() => db.get("SELECT 1 AS x FROM agent_events WHERE agent_id = ? AND type = 'agent.start'", identity.agent_id), 40000);
+      const r = await fetch(`${env.base}/api/hosts/${hostId}/xray/live`, { headers: auth() });
+      assert.equal(r.status, 200);
+      const live = await r.json();
+      const list = live.processes ?? live.procs ?? [];
+      assert.ok(list.length > 5, `processus attendus : ${JSON.stringify(live).slice(0, 200)}`);
+      assert.ok(list.some((p) => p.pid === child.pid), "l'agent se voit lui-même");
+    } finally {
+      child.kill();
+    }
+  });
+
   test('un fichier créé dans un dossier surveillé est détecté bien avant le balayage périodique (évènements du système)', async () => {
     const d = dir();
     const watched = dir();
