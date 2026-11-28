@@ -4,6 +4,17 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [Non publié]
+
+### Corrigé
+- **Supervision** : `df` n'est plus mal découpé quand le nom du système de fichiers ou le point de montage contient des espaces (ex. `C:/Program Files/Git`).
+- **Interface** : le libellé « SIGSTOP » de la case de gel automatique n'apparaît plus là où le gel n'existe pas (hors Linux) ; helper `agentFeature` partagé entre Rembobiner et Radiographie.
+
+### Tests
+- Les 3 échecs connus sous Windows sont résolus : traduction de `/tmp` par le faux SFTP (Git Bash récent) et `df`.
+- Échec intermittent « Malformed OpenSSH private key » expliqué : `ssh2` génère parfois une clé chiffrée qu'il ne relit pas (≈ 0,7 %, mesuré). Le faux sshd la contrôle, la régénère et la garde en cache. Ce n'est pas un défaut de Corvus.
+- Suite complète sous Windows : 332 tests, 0 échec, 7 sautés (raisons écrites).
+
 ## [1.2.0] - 2026-11-27
 
 L'agent Rust fonctionne aussi sous **Windows** et **macOS** (expérimental). Ce qui a été observé sur une machine réelle et ce qui ne l'a pas été est écrit
