@@ -14,8 +14,12 @@ Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.
 - Observé : l'ACL de `identity.json` nomme aussi le **compte de l'administrateur qui a enrôlé** (contrôle total), en plus de SYSTEM, des Administrateurs et du compte du service.
   Conforme au comportement décrit, mais à savoir.
 - *Essai fait contre un serveur Corvus local en HTTP (`127.0.0.1`), pas via Tailscale / HTTPS ; un seul PC.*
-- *Toujours **pas** observé* : un Mac réel (binaire, `install.sh`, LaunchDaemon) et un vrai OpenSSH Server pour Windows (terminal ConPTY, SFTP, chemins `/C:/…`). La fonctionnalité
-  Windows « OpenSSH Server » n'a pas pu s'installer sur ce PC (fichiers sources introuvables) et l'essai avec les binaires Win32-OpenSSH n'a pas été autorisé.
+- **Hôte Windows par SSH, avec un vrai OpenSSH pour Windows** (binaires Win32-OpenSSH 10.4.0.0p1, signés Microsoft, exécutés en local sur `127.0.0.1:2222`, authentification par clé) :
+  détection du système « windows », fonctions POSIX refusées (409 `POSIX_ONLY`), `~` résolu en `/C:/Users/<nom>`, SFTP (liste, création de dossier, écriture et lecture d'un nom accentué,
+  suppression confirmée) et **terminal ConPTY** (une commande tapée renvoie sa sortie, sans tmux). Aucun défaut trouvé. Nouveau test `test/real-openssh-windows.test.js`, ignoré tant que
+  `CORVUS_REAL_WIN_SSH` n'est pas défini. *La fonctionnalité Windows « OpenSSH Server » n'a pas pu être installée sur ce PC (fichiers sources introuvables) : l'essai n'a pas porté sur le
+  service `sshd` fourni par Windows, ni sur une authentification par mot de passe.*
+- *Toujours **pas** observé* : un Mac réel (binaire, `install.sh`, LaunchDaemon).
 
 ### Corrigé
 - **Supervision** : `df` n'est plus mal découpé quand le nom du système de fichiers ou le point de montage contient des espaces (ex. `C:/Program Files/Git`).
