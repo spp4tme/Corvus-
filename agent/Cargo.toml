@@ -10,7 +10,7 @@ license = "MIT"
 #  - SQLite embarqué (« bundled ») pour le tampon local ;
 #  - TLS rustls (pas d'OpenSSL à installer sur l'hôte), binaire statique possible en musl.
 [dependencies]
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "3", features = ["rand_core"] }
 rand = "0.8"
 base64 = "0.23"
 sha2 = "0.11"
