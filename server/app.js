@@ -30,6 +30,7 @@ import { logger, setLogLevel } from './lib/log.js';
 import { hostRoutes } from './routes/core.js';
 import { authRoutes, accountRoutes } from './routes/accounts.js';
 import { accessGuard } from './lib/access.js';
+import { AutomationService } from './lib/automation/service.js';
 import { RequestLimiter, isStrictPath } from './lib/ratelimit.js';
 import { Users, publicUser } from './lib/users.js';
 import { requestContext } from './lib/context.js';
@@ -106,6 +107,8 @@ export function createCorvus(overrides = {}) {
   ctx.recorder = new Recorder({ db, blobs: ctx.blobs, maxBytes: config.recordingMaxBytes, enabled: config.recordSessions });
   ctx.claude = new ClaudeService({ pool, hosts, journal });
   ctx.agents = new AgentService({ db, vault, journal, hosts, alerts: ctx.alerts, blobs: ctx.blobs });
+  // Automatisation (playbooks) : DÉSACTIVÉE par défaut (`automation.enabled` faux) tant qu'un administrateur ne l'active pas.
+  ctx.automation = new AutomationService({ db, hosts, vault, journal, agents: ctx.agents, alerts: ctx.alerts });
   ctx.terminals = new TerminalManager({
     pool, hosts, journal, config, claude: ctx.claude,
     requireHost: (user, hostId, level) => ctx.requireHost(user, hostId, level),

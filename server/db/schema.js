@@ -273,4 +273,70 @@ CREATE INDEX agent_events_type ON agent_events(host_id, type, ts);
 ALTER TABLE agents ADD COLUMN platform TEXT;
 `,
   },
+  {
+    version: 5,
+    name: 'playbooks : définitions versionnées, exécutions et sorties par hôte (automatisation désactivée par défaut)',
+    sql: `
+-- Un playbook : script NOMMÉ exécuté sur l'hôte cible par SSH. Le risque est CALCULÉ par le serveur. auto_authorized = faux par défaut.
+CREATE TABLE playbooks (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  description TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL,
+  definition TEXT NOT NULL,
+  risk TEXT NOT NULL,
+  auto_authorized INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+-- Historique : une ligne par version (qui, quand). Jamais modifiée ni supprimée tant que le playbook existe.
+CREATE TABLE playbook_versions (
+  playbook_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  definition TEXT NOT NULL,
+  risk TEXT NOT NULL,
+  auto_authorized INTEGER NOT NULL DEFAULT 0,
+  author TEXT,
+  ts INTEGER NOT NULL,
+  PRIMARY KEY (playbook_id, version)
+) WITHOUT ROWID;
+-- Exécutions : le nom du playbook est recopié (l'historique survit à la suppression du playbook). Aucune valeur de secret.
+CREATE TABLE playbook_runs (
+  id TEXT PRIMARY KEY,
+  playbook_id TEXT,
+  playbook_name TEXT NOT NULL,
+  playbook_version INTEGER NOT NULL,
+  trigger TEXT NOT NULL,
+  actor TEXT,
+  user_id TEXT,
+  status TEXT NOT NULL,
+  dry INTEGER NOT NULL DEFAULT 0,
+  params TEXT,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  summary TEXT
+);
+CREATE INDEX playbook_runs_ts ON playbook_runs(started_at DESC);
+CREATE INDEX playbook_runs_pb ON playbook_runs(playbook_id, started_at DESC);
+-- Sortie (masquée, bornée) par hôte et par commande.
+CREATE TABLE playbook_run_steps (
+  run_id TEXT NOT NULL,
+  host_id TEXT NOT NULL,
+  host_label TEXT NOT NULL,
+  idx INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  code INTEGER,
+  output TEXT,
+  truncated INTEGER NOT NULL DEFAULT 0,
+  started_at INTEGER,
+  ended_at INTEGER,
+  PRIMARY KEY (run_id, host_id, idx)
+) WITHOUT ROWID;
+CREATE INDEX playbook_run_steps_host ON playbook_run_steps(host_id, started_at DESC);
+`,
+  },
 ];
