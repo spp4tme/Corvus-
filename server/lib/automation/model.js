@@ -40,10 +40,23 @@ export function commandRisk(template) {
   return { level: a.level, reasons: a.reasons, sudo: a.sudo, dynamic: a.dynamic };
 }
 
-function validateRunStep(raw, where, paramNames, used) {
+// Types de paramètres que celui qui LANCE le playbook peut remplir librement : jamais combinés à un secret dans la même commande.
+const FREE_TYPES = new Set(['string', 'path', 'host']);
+
+function validateRunStep(raw, where, defs, used) {
+  const paramNames = defs.map((d) => d.name);
   const command = checkText(raw.run, `${where} : commande`, LIMITS.maxCommandChars);
   if (!command.trim()) throw bad(`${where} : commande vide`);
   const { params, secrets } = scanTemplate(command, { allowedParams: paramNames, label: where });
+  // AUDIT 1.3, point 1 (haute) : `curl -H {{secret.TOKEN}} {{url}}` — l'opérateur qui lance le playbook choisissait l'URL, donc la destination
+  // du secret. Une commande qui porte un secret n'accepte aucun paramètre libre ; seuls restent possibles ceux que l'administrateur a bornés
+  // d'avance (liste de choix, entier).
+  if (secrets.length) {
+    const libre = params.find((n) => FREE_TYPES.has(defs.find((d) => d.name.toLowerCase() === n.toLowerCase())?.type));
+    if (libre) {
+      throw bad(`${where} : le secret « ${secrets[0]} » ne peut pas être utilisé dans une commande qui contient le paramètre libre « ${libre} » (texte, chemin ou hôte) : celui qui lance le playbook pourrait envoyer le secret où il veut. Mettez ce paramètre dans une autre commande, ou faites-en une liste de choix.`);
+    }
+  }
   params.forEach((p) => used.params.add(p));
   secrets.forEach((s) => used.secrets.add(s));
   const risk = commandRisk(command);
@@ -89,7 +102,7 @@ export function validatePlaybook(input) {
     count += 1;
 
     if (kinds[0] === 'run') {
-      const { step, risk: r } = validateRunStep(raw, where, paramNames, used);
+      const { step, risk: r } = validateRunStep(raw, where, params, used);
       note(r);
       return { ...step, name: stepName };
     }
@@ -120,7 +133,7 @@ export function validatePlaybook(input) {
       if (!s || typeof s !== 'object' || Array.isArray(s) || s.run === undefined) throw bad(`${w} : { run } attendu`);
       const extra = Object.keys(s).filter((k) => !['name', 'run', 'timeoutSec', 'continueOnError'].includes(k));
       if (extra.length) throw bad(`${w} : champ inconnu « ${String(extra[0]).slice(0, 40)} »`);
-      const { step, risk: r } = validateRunStep(s, w, paramNames, used);
+      const { step, risk: r } = validateRunStep(s, w, params, used);
       note(r);
       count += 1;
       return { ...step, name: s.name === undefined ? `${stepName}.${j + 1}` : checkText(s.name, `${w} : nom`, 80).trim() };
