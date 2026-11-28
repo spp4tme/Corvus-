@@ -6,13 +6,13 @@ import { state, sortedHosts, sshHosts } from '../state.js';
  * @param {(hostId: string) => void} onChange
  * @returns {HTMLElement & {destroy: Function}}
  */
-export function hostPicker(onChange, { label = 'Hôte' } = {}) {
+export function hostPicker(onChange, { label = 'Hôte', includeAgentOnly = false } = {}) {
   const sel = h('select', { class: 'select', 'aria-label': label });
   const render = () => {
     const current = state.activeHostId;
     while (sel.firstChild) sel.removeChild(sel.firstChild);
     sel.appendChild(h('option', { value: '', disabled: true, selected: !current }, 'Choisir un hôte…'));
-    for (const host of sortedHosts(sshHosts())) {
+    for (const host of sortedHosts(includeAgentOnly ? undefined : sshHosts())) {
       sel.appendChild(h('option', { value: host.id, selected: host.id === current }, `${host.pinned ? '★ ' : ''}${host.name}`));
     }
   };

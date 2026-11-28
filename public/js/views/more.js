@@ -6,6 +6,7 @@ const ITEMS = [
   { href: '#/commands', icon: 'terminal', title: 'Commandes', text: 'Snippets, multi-hôtes, routines' },
   { href: '#/compare', icon: 'search', title: 'Comparer', text: 'Un fichier de configuration sur 2 à 5 hôtes' },
   { href: '#/admin', icon: 'settings', title: 'Admin', text: 'Services, journal système, pare-feu, mises à jour' },
+  { href: '#/playbooks', icon: 'play', title: 'Playbooks', text: 'Scripts lancés sur vos hôtes (désactivés par défaut)' },
   { href: '#/agents', icon: 'server', title: 'Agents', text: 'Installer et surveiller les agents Corvus' },
   { href: '#/rewind', icon: 'history', title: 'Rembobiner', text: 'Revenir à un état antérieur des fichiers (agent requis)' },
   { href: '#/xray', icon: 'activity', title: 'Radiographie', text: 'Processus, connexions, lignée des commandes (agent requis)' },

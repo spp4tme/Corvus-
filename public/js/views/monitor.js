@@ -23,7 +23,8 @@ export default {
     let inflight = null;
     let charts = null;
     const content = h('div');
-    const picker = hostPicker((id) => { hostId = id; start(); });
+    // Les hôtes « agent seul » (sans SSH) sont proposés ici : leurs métriques viennent de l'agent (renderAgentMetrics).
+    const picker = hostPicker((id) => { hostId = id; start(); }, { includeAgentOnly: true });
     const tabs = segmented([
       { value: 'system', label: 'Système' }, { value: 'history', label: 'Historique' }, { value: 'processes', label: 'Processus' }, { value: 'docker', label: 'Docker' },
     ], tab, (v) => { tab = v; prefs.set('monTab', v); start(); }, { label: 'Section supervision' });
@@ -46,6 +47,7 @@ export default {
         tabs.hidden = true;
         return replace(content, emptyState({ icon: 'activity', title: 'Choisissez un hôte', text: 'Ses ressources s\'afficheront en temps réel.' }));
       }
+      if (state.host(hostId)?.authType === 'none') { tabs.hidden = true; return renderAgentMetrics(); }
       tabs.hidden = false;
       if (tab === 'processes') return renderProcesses();
       if (tab === 'docker') return renderDocker();
@@ -143,6 +145,55 @@ export default {
       charts = cs;
       replace(box, h('p', { class: 'dim' }, `${data.points.length} points, un point = ${Math.round(data.bucketMs / 60000) >= 60 ? `${Math.round(data.bucketMs / 3600000)} h` : `${Math.round(data.bucketMs / 60000) || 0.5} min`} (moyenne).`),
         h('div', { class: 'charts' }, cs.map((c) => c.el)));
+    }
+
+    // ---------- Hôte « agent seul » : métriques envoyées par l'AGENT (aucun SSH) ----------
+    async function renderAgentMetrics() {
+      const rangeSel = segmented(Object.entries(RANGE_LABEL).map(([value, label]) => ({ value, label })), range,
+        (x) => { range = x; prefs.set('monRange', x); renderAgentMetrics(); }, { label: 'Période' });
+      const host = state.host(hostId);
+      const agent = host?.agent;
+      const etat = !agent ? 'Aucun agent enrôlé sur cet hôte : écran Agents → « Installer un agent ».'
+        : (agent.online ? `Agent en ligne (${agent.platformLabel || agent.platform}). Les métriques arrivent toutes les 30 secondes environ.` : `Agent HORS LIGNE (${agent.platformLabel || agent.platform}) : les dernières métriques reçues sont affichées.`);
+      const box = h('div', null, loadingState('Lecture des métriques de l\'agent…'));
+      replace(content,
+        h('p', { class: 'dim' }, 'Hôte « agent seul » : pas de SSH, donc ni processus ni Docker ici. Les processus sont dans Radiographie, les changements de fichiers dans Rembobiner.'),
+        h('p', { class: 'dim' }, etat), h('div', { class: 'toolbar' }, rangeSel), box);
+      const forHost = hostId;
+      let data; let disks = [];
+      try {
+        const { metrics: avail } = await get(api('monitor/metrics'));
+        disks = avail.filter((m) => m.startsWith('df:')).sort();
+        const wanted = ['cpu', 'mem', 'swap', 'net:rx', 'net:tx', 'load1', ...disks];
+        data = await get(`${api('monitor/history')}?${new URLSearchParams({ metrics: wanted.join(','), range })}`);
+      } catch (err) { return replace(box, errorState(err, renderAgentMetrics)); }
+      if (forHost !== hostId) return;
+      if (!data.points.length) {
+        return replace(box, emptyState({ icon: 'activity', title: 'Aucune métrique reçue de l\'agent', text: agent?.online ? 'L\'agent est connecté : la première série arrive en moins d\'une minute (le processeur demande deux relevés).' : 'Vérifiez que l\'agent tourne (Agents) puis revenez ici.' }));
+      }
+      const last = data.points[data.points.length - 1].values;
+      const fmtTime = (t) => new Date(t).toLocaleString('fr-FR', range === '1y' || range === '7d' ? { dateStyle: 'short', timeStyle: 'short' } : { timeStyle: 'short' });
+      const mk = (title, series, format, extra = {}) => {
+        const c = lineChart({ title, series, format, spanLabel: RANGE_LABEL[range], tipTime: fmtTime, ...extra });
+        c.setAll(data.points.map((p) => ({ t: p.t, values: p.values })));
+        return c;
+      };
+      const has = (k) => data.points.some((p) => k in p.values);
+      const cs = [
+        has('cpu') ? mk('CPU', [{ key: 'cpu', label: 'CPU', color: '--c-chart-1' }], pct, { max: 100 }) : null,
+        has('mem') ? mk('Mémoire', [{ key: 'mem', label: 'RAM', color: '--c-chart-1' }, ...(has('swap') ? [{ key: 'swap', label: 'Swap', color: '--c-chart-2' }] : [])], pct, { max: 100 }) : null,
+        has('net:rx') ? mk('Réseau', [{ key: 'net:rx', label: 'Reçu', color: '--c-chart-1' }, { key: 'net:tx', label: 'Envoyé', color: '--c-chart-2' }], rate, { minMax: 1024 }) : null,
+        disks.length ? mk('Disques (utilisation)', disks.map((k, i) => ({ key: k, label: k.slice(3), color: `--c-chart-${(i % 4) + 1}` })), pct, { max: 100 }) : null,
+        has('load1') ? mk('Charge (1 min)', [{ key: 'load1', label: 'load', color: '--c-chart-3' }], (x) => x.toFixed(2)) : null,
+      ].filter(Boolean);
+      charts = cs;
+      const tiles = [
+        last.cpu !== undefined ? tile('CPU', pct(last.cpu), null, 'cpu') : null,
+        last.mem !== undefined ? tile('Mémoire', pct(last.mem), null, 'memory') : null,
+        ...disks.filter((k) => last[k] !== undefined).map((k) => tile(`Disque ${k.slice(3)}`, pct(last[k]), null, 'disk', last[k] > 90 ? { text: 'presque plein', kind: 'danger' } : null)),
+      ].filter(Boolean);
+      replace(box, h('div', { class: 'tiles' }, tiles), h('div', { class: 'charts' }, cs.map((c) => c.el)));
+      timer = setTimeout(() => { if (forHost === hostId && state.host(hostId)?.authType === 'none') renderAgentMetrics(); }, 30_000);
     }
 
     function tile(label, valueText, sub, ic, level) {
