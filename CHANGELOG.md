@@ -4,6 +4,21 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [1.3.1] - 2026-11-28
+
+Correctif d'interface, trouvé en essayant un PC Windows suivi par un hôte « agent seul » : l'agent fonctionnait (connecté, métriques envoyées) mais l'interface n'affichait rien.
+
+### Corrigé
+- **Sur ordinateur, la barre latérale n'avait pas Agents, Rembobiner, Radiographie, Playbooks, Comparer ni Services web.** Ces écrans n'existaient que dans « Plus », page réservée au mobile : ils étaient
+  inaccessibles autrement que par l'adresse. Ils sont maintenant dans la barre latérale (grands écrans) ; **« Plus » (mobile) liste aussi Playbooks**, que j'avais oublié en 1.3.
+- **Un hôte « agent seul » n'avait aucun écran de métriques** : Supervision est bâti sur SSH et l'excluait depuis la 1.2.5, alors que les métriques de l'agent étaient bien stockées. Supervision propose
+  maintenant ces hôtes et affiche **ce que l'agent envoie** (CPU, mémoire, swap, réseau, disques, charge ; tuiles et graphiques, période au choix, rafraîchi toutes les 30 s), en disant si l'agent est en
+  ligne ou hors ligne. Pas d'onglets SSH (processus, Docker) pour ces hôtes : les processus sont dans Radiographie, les changements de fichiers dans Rembobiner.
+- La carte d'un hôte « agent seul » avec agent a des raccourcis **Métriques, Radiographie, Rembobiner**.
+
+### Pas fait
+- Le navigateur de fichiers (Fichiers) reste SSH : un hôte « agent seul » n'a pas de navigation de fichiers, seulement l'historique des changements (Rembobiner) sur les dossiers surveillés.
+
 ## [1.3.0] - 2026-11-28
 
 **Playbooks** : des scripts nommés, versionnés, lancés sur un ou plusieurs hôtes, à la main, sur planning ou sur déclencheur. C'est l'endroit le plus dangereux de Corvus

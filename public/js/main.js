@@ -26,7 +26,8 @@ const ROUTES = {
   settings: { title: 'Réglages', icon: 'settings', load: () => import('./views/settings.js'), secondary: true },
   more: { title: 'Plus', icon: 'more', load: () => import('./views/more.js'), mobileOnly: true },
 };
-const NAV = ['hosts', 'terminal', 'claude', 'files', 'git', 'monitor', 'commands', 'admin', 'journal', 'recordings', 'settings', 'more'];
+// Les entrées « secondary » n'apparaissent que sur grand écran (barre latérale) ; sur mobile elles sont dans « Plus » (more.js : à tenir à jour avec cette liste).
+const NAV = ['hosts', 'terminal', 'claude', 'files', 'git', 'monitor', 'commands', 'playbooks', 'compare', 'agents', 'rewind', 'xray', 'admin', 'journal', 'recordings', 'proxy', 'settings', 'more'];
 
 const root = document.getElementById('root');
 let shell = null;
