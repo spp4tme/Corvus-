@@ -62,6 +62,9 @@ export function toVirtual(real) {
 export function toReal(virt) {
   const p = path.posix.normalize(virt);
   if (!isWin) return p;
+  // Git Bash récent monte /tmp sur %TEMP% : `~` y apparaît sous la forme /tmp/corvus-sshd-xxx.
+  const tmp = /^\/tmp(\/.*)?$/.exec(p);
+  if (tmp) return path.join(os.tmpdir(), (tmp[1] || '').replace(/\//g, '\\'));
   const m = /^\/([A-Za-z])(\/.*)?$/.exec(p);
   if (!m) return null;
   return `${m[1].toUpperCase()}:${(m[2] || '/').replace(/\//g, '\\')}`;
@@ -82,6 +85,8 @@ function longname(name, st) {
   return `${type}rw-r--r-- 1 tester tester ${st.size} Jan 1 00:00 ${name}`;
 }
 
+let sharedClientKey = null;
+
 /**
  * Démarre un sshd de test.
  * @returns {Promise<{port, root, rootVirtual, user, password, clientKey, hostKey, close, sessions}>}
@@ -90,7 +95,16 @@ export async function startFakeSshd({ port = 0, hostKey, root, fakeTmux = false,
   const { bash, extraPath } = findBash();
   const hk = hostKey || utils.generateKeyPairSync('ed25519').private;
   const workdir = root || fs.mkdtempSync(path.join(os.tmpdir(), 'corvus-sshd-'));
-  const clientKey = utils.generateKeyPairSync('ed25519', { passphrase: 'phrase-test', cipher: 'aes256-ctr' });
+  // ssh2 produit parfois (≈ 0,7 % des cas, mesuré : 2 sur 300) une clé chiffrée que lui-même ne relit pas (« Malformed OpenSSH
+  // private key ») : on la contrôle et on la régénère, sinon le test « clé privée chiffrée + passphrase » échoue au hasard.
+  // Générée une seule fois par processus de test (le chiffrement bcrypt coûte ≈ 1 s).
+  if (!sharedClientKey) {
+    for (let essai = 0; essai < 20; essai++) {
+      sharedClientKey = utils.generateKeyPairSync('ed25519', { passphrase: 'phrase-test', cipher: 'aes256-ctr' });
+      if (!(utils.parseKey(sharedClientKey.private, 'phrase-test') instanceof Error)) break;
+    }
+  }
+  const clientKey = sharedClientKey;
   const allowedPub = utils.parseKey(clientKey.public);
   const user = 'tester';
   const password = 'motdepasse-test';
