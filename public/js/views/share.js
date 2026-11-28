@@ -3,7 +3,7 @@
 import { upload, qs } from '../api.js';
 import { h, replace, formatBytes, prefs } from '../ui/dom.js';
 import { button, select, input, field, loadingState, emptyState, badge, toast, toastError } from '../ui/components.js';
-import { state } from '../state.js';
+import { state, sshHosts } from '../state.js';
 
 function loadStore() {
   if (window.CorvusShare) return Promise.resolve(window.CorvusShare);
@@ -39,7 +39,7 @@ export default {
     })().catch((err) => replace(root, h('p', { class: 'danger-text' }, err.message)));
 
     function card(store, owner, it) {
-      const hosts = state.hosts.filter((x) => state.canOperate(x.id));
+      const hosts = sshHosts().filter((x) => state.canOperate(x.id));
       const out = h('div', { class: 'stack' });
       if (!hosts.length) return h('section', { class: 'stack' }, h('p', null, 'Aucun hôte sur lequel vous pouvez écrire.'));
       const hostSel = select(hosts.map((x) => ({ value: x.id, label: x.name })), { value: hosts.find((x) => x.id === state.activeHostId)?.id || hosts[0].id });

@@ -1,6 +1,6 @@
 // Sélecteur d'hôte partagé par les vues Fichiers, Git, Supervision.
 import { h } from './dom.js';
-import { state, sortedHosts } from '../state.js';
+import { state, sortedHosts, sshHosts } from '../state.js';
 
 /**
  * @param {(hostId: string) => void} onChange
@@ -12,7 +12,7 @@ export function hostPicker(onChange, { label = 'Hôte' } = {}) {
     const current = state.activeHostId;
     while (sel.firstChild) sel.removeChild(sel.firstChild);
     sel.appendChild(h('option', { value: '', disabled: true, selected: !current }, 'Choisir un hôte…'));
-    for (const host of sortedHosts()) {
+    for (const host of sortedHosts(sshHosts())) {
       sel.appendChild(h('option', { value: host.id, selected: host.id === current }, `${host.pinned ? '★ ' : ''}${host.name}`));
     }
   };

@@ -12,7 +12,7 @@ async function copy(text) {
 
 /** Crée un jeton et affiche la commande à coller sur l'hôte (le jeton n'est montré qu'une fois). */
 async function installDialog(hosts, onDone) {
-  const sel = select(hosts.map((x) => ({ value: x.id, label: `${x.name} (${x.hostname})` })), { value: hosts[0]?.id });
+  const sel = select(hosts.map((x) => ({ value: x.id, label: x.hostname ? `${x.name} (${x.hostname})` : x.name })), { value: hosts[0]?.id });
   const os = select([{ value: 'linux', label: 'Linux (x86_64 ou aarch64)' }, { value: 'macos', label: 'macOS — expérimental, jamais essayé sur un Mac réel' }, { value: 'windows', label: 'Windows (x64) — PowerShell en administrateur' }], { value: 'linux' });
   const full = h('input', { type: 'checkbox', id: 'ag-full' });
   const out = h('div', { class: 'stack' });

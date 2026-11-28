@@ -3,10 +3,10 @@
 import { get, post, del } from '../api.js';
 import { h, replace, formatBytes } from '../ui/dom.js';
 import { button, openDialog, confirmDialog, select, input, checkbox, field, badge, toastError } from '../ui/components.js';
-import { state } from '../state.js';
+import { state, sshHosts } from '../state.js';
 
 export function copyDialog({ fromHostId, path, name, isDir, onDone }) {
-  const targets = state.hosts.filter((x) => state.canOperate(x.id));
+  const targets = sshHosts().filter((x) => state.canOperate(x.id));
   const hostSel = select(targets.map((x) => ({ value: x.id, label: x.name })), { value: targets.find((x) => x.id !== fromHostId)?.id || targets[0]?.id });
   const dir = input({ value: '~', 'aria-label': 'Dossier de destination', placeholder: '~/dossier' });
   const newName = input({ value: '', 'aria-label': 'Nouveau nom (facultatif)', placeholder: name });

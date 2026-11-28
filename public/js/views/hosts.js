@@ -55,20 +55,21 @@ export default {
     function hostCard(host) {
       const result = h('div', { hidden: true });
       const status = hostStatusBadge(host);
-      const missing = !host.hasPassword && !host.hasKey && host.authType !== 'agent' ? badge('secret manquant', 'warn') : null;
+      const agentOnly = host.authType === 'none';
+      const missing = !agentOnly && !host.hasPassword && !host.hasKey && host.authType !== 'agent' ? badge('secret manquant', 'warn') : null;
       const testBtn = button({ label: 'Tester', icon: 'plug', onClick: () => testHost(host, testBtn, result) });
       return h('article', { class: 'card host-card' },
         h('div', { class: 'host-head' },
           h('div', { class: 'host-icon' }, icon(host.icon)),
           h('div', { class: 'grow' },
             h('div', { class: 'row' }, h('h3', { class: 'host-name ellipsis' }, host.name), host.pinned ? icon('pin', { size: 14, label: 'épinglé' }) : null),
-            h('div', { class: 'host-addr ellipsis' }, `${host.username}@${host.hostname}${host.port !== 22 ? `:${host.port}` : ''}`)),
+            h('div', { class: 'host-addr ellipsis' }, agentOnly ? (host.hostname || 'agent seul, sans accès SSH') : `${host.username}@${host.hostname}${host.port !== 22 ? `:${host.port}` : ''}`)),
           state.isAdmin ? button({ label: host.pinned ? 'Désépingler' : 'Épingler', icon: 'pin', iconOnly: true, variant: 'ghost', pressed: host.pinned, onClick: () => togglePin(host) }) : null,
           state.isAdmin ? button({ label: 'Modifier', icon: 'edit', iconOnly: true, variant: 'ghost', onClick: () => editHost(host) }) : null),
-        (status || missing || host.tmux || host.agent || host.osEffective === 'windows') ? h('div', { class: 'row' }, status, missing, host.osEffective === 'windows' ? badge('Windows') : null, host.agent ? badge(host.agent.online ? 'agent' : 'agent hors ligne', host.agent.online ? 'accent' : 'warn') : null, host.tmux ? badge(`tmux · ${host.tmuxSession}`, 'accent') : null) : null,
+        (status || missing || agentOnly || host.tmux || host.agent || host.osEffective === 'windows') ? h('div', { class: 'row' }, status, missing, agentOnly ? badge('agent seul') : null, host.osEffective === 'windows' ? badge('Windows') : null, host.agent ? badge(host.agent.online ? 'agent' : 'agent hors ligne', host.agent.online ? 'accent' : 'warn') : null, host.tmux ? badge(`tmux · ${host.tmuxSession}`, 'accent') : null) : null,
         result,
         host.role === 'viewer' ? h('div', null, badge('lecture seule')) : null,
-        h('div', { class: 'host-actions' },
+        agentOnly ? h('div', { class: 'host-actions' }, button({ label: host.agent ? 'Voir l\'agent' : 'Installer l\'agent', icon: 'plug', variant: 'primary', onClick: () => { location.hash = '#/agents'; } })) : h('div', { class: 'host-actions' },
           host.role !== 'viewer' ? button({ label: 'Terminal', icon: 'terminal', variant: 'primary', onClick: () => openTerminal(host) }) : null,
           host.role !== 'viewer' ? button({ label: 'Claude Code', icon: 'sparkle', onClick: () => { state.setActiveHost(host.id); location.hash = '#/claude'; } }) : null,
           button({ label: 'Fichiers', icon: 'folder', onClick: () => { state.setActiveHost(host.id); location.hash = '#/files'; } }),
@@ -163,15 +164,28 @@ export function editHost(host) {
   const fKey = field({ label: 'Clé privée (OpenSSH / PEM)', control: textarea({ rows: 5, placeholder: v.hasKey ? '(clé enregistrée — coller pour remplacer)' : '-----BEGIN OPENSSH PRIVATE KEY-----' }), span2: true });
   const fPhrase = field({ label: 'Passphrase de la clé', control: input({ type: 'password', autocomplete: 'new-password', placeholder: v.hasPassphrase ? '•••••• (enregistrée)' : 'si la clé est chiffrée' }) });
   const agentNote = h('p', { class: 'dim span-2' }, 'Utilise l\'agent SSH du serveur Corvus (variable SSH_AUTH_SOCK).');
+  const agentOnlyNote = h('p', { class: 'dim span-2' }, 'Hôte « agent seul » : aucun accès SSH, donc ni terminal, ni fichiers, ni Git, ni supervision par SSH, et aucun mot de passe ni clé enregistré. '
+    + 'La machine est suivie par son agent (métriques, processus, fichiers surveillés) : installez-le ensuite depuis l\'écran Agents. '
+    + 'Choisir cette méthode pour un hôte existant efface ses secrets SSH enregistrés.');
+  // Ce qui n'a de sens qu'avec SSH disparaît pour un hôte « agent seul » ; l'adresse devient facultative.
+  const sshOnly = [];
+  const syncMode = () => {
+    const none = authType === 'none';
+    for (const el of sshOnly) el.hidden = none;
+    fHost.querySelector('input').required = !none;
+    fHost.querySelector('.field-label')?.replaceChildren(none ? 'Adresse (facultative, affichage seulement)' : 'Hôte');
+  };
   const authFields = h('div', { class: 'form-grid span-2' });
   const renderAuth = () => {
     replace(authFields,
       authType === 'password' ? fPass : null,
       authType === 'key' ? [fKey, fPhrase] : null,
-      authType === 'agent' ? agentNote : null);
+      authType === 'agent' ? agentNote : null,
+      authType === 'none' ? agentOnlyNote : null);
+    syncMode();
   };
   const authSeg = segmented([
-    { value: 'password', label: 'Mot de passe' }, { value: 'key', label: 'Clé privée' }, { value: 'agent', label: 'Agent SSH' },
+    { value: 'password', label: 'Mot de passe' }, { value: 'key', label: 'Clé privée' }, { value: 'agent', label: 'Agent SSH' }, { value: 'none', label: 'Aucune (agent seul)' },
   ], authType, (x) => { authType = x; renderAuth(); }, { label: 'Méthode d\'authentification' });
   renderAuth();
 
@@ -227,6 +241,10 @@ export function editHost(host) {
       tmuxSession: val(fTmux).trim() || 'corvus',
       claudeDir: val(fClaudeDir).trim(), claudeCmd: val(fClaudeCmd).trim() || 'claude',
     };
+    if (authType === 'none') {
+      for (const k of ['port', 'username', 'os', 'tmux', 'tmuxSession', 'claudeDir', 'claudeCmd']) delete body[k];
+      return body;
+    }
     if (authType === 'password' && val(fPass)) body.password = val(fPass);
     if (authType === 'key') {
       if (val(fKey).trim()) body.privateKey = val(fKey);
@@ -236,6 +254,12 @@ export function editHost(host) {
   };
   const check = () => {
     let ok = true;
+    if (authType === 'none') {
+      const vide = !fName.querySelector('input').value.trim();
+      fName.setError(vide ? 'Alias requis (un hôte agent seul n\'a pas d\'adresse pour le nommer)' : null);
+      return !vide;
+    }
+    fName.setError(null);
     for (const [f, msg] of [[fHost, 'Hôte requis'], [fUser, 'Utilisateur requis']]) {
       const empty = !f.querySelector('input').value.trim();
       f.setError(empty ? msg : null);
@@ -269,6 +293,8 @@ export function editHost(host) {
     testBtn, saveBtn,
   ].filter(Boolean);
 
+  sshOnly.push(fUser, fPort, fOs, fTmux, fClaudeDir, fClaudeCmd, tmux, testBtn);
+  syncMode();
   const d = openDialog({ title: isNew ? 'Nouvel hôte' : `Modifier ${host.name}`, body: form, actions, wide: true });
   form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
   // Focus initial, sauf si l'utilisateur a déjà choisi un champ (sinon la saisie en cours lui serait volée).
@@ -278,6 +304,13 @@ export function editHost(host) {
     if (!check()) return;
     try {
       const body = collect();
+      // Passer un hôte qui a des secrets SSH en « agent seul » les EFFACE : confirmation explicite (le serveur l'exige aussi).
+      if (!isNew && authType === 'none' && host.authType !== 'none' && (host.hasPassword || host.hasKey || host.hasPassphrase)) {
+        const ok = await confirmDialog({ title: 'Effacer les secrets SSH ?', danger: true, confirmLabel: 'Passer en agent seul',
+          message: `« ${host.name} » n'aura plus aucun accès SSH : son mot de passe ou sa clé enregistrés seront effacés définitivement (terminal, fichiers et Git cesseront de fonctionner pour cet hôte).` });
+        if (!ok) return;
+        body.confirm = true;
+      }
       await busy(saveBtn, () => (isNew ? post('/api/hosts', body) : patch(`/api/hosts/${host.id}`, body)));
       await state.refreshHosts();
       toast(isNew ? 'Hôte ajouté' : 'Hôte enregistré', 'ok');
