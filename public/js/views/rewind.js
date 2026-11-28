@@ -5,6 +5,7 @@ import { h, replace, formatDate, formatBytes } from '../ui/dom.js';
 import { button, openDialog, confirmDialog, select, input, checkbox, segmented, loadingState, emptyState, errorState, badge, toast, toastError } from '../ui/components.js';
 import { state } from '../state.js';
 import { renderDiff } from '../ui/diffview.js';
+import { agentFeature } from '../ui/agent-support.js';
 
 const TYPE_LABEL = {
   'file.baseline': 'état initial', 'file.created': 'créé', 'file.modified': 'modifié', 'file.meta': 'droits', 'file.deleted': 'supprimé',
@@ -75,7 +76,7 @@ export default {
     }
 
     // Fonctions que l'agent de CET hôte annonce (le serveur les calcule avec une explication) ; absent = disponible.
-    const feat = (f) => state.host(hostId)?.agent?.support?.[f] || { ok: true, reason: null };
+    const feat = agentFeature(hostId);
 
     async function load() {
       if (!feat('history').ok) {

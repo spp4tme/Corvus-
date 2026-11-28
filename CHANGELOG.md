@@ -4,6 +4,32 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [1.2.1] - 2026-11-28
+
+### Validé sur une machine réelle (2026-11-28, Windows 11 x64, binaire publié de la 1.2.0)
+- **`install.ps1` de bout en bout** : SHA-256 vérifié, installation dans `C:\Program Files\Corvus Agent` (lecture seule pour les utilisateurs), enrôlement, service **CorvusAgent**
+  sous `NT SERVICE\CorvusAgent` (démarrage automatique, redémarrage sur échec 5 s / 5 s / 30 s), puis `-Uninstall -RemoveData` : plus aucun service ni dossier.
+- **Le service Windows** (`run --service`) démarre, l'agent apparaît « en ligne » (plateforme `windows`, version 1.2.0), le compte du service lit bien `identity.json` (ACL sans héritage),
+  l'agent **revient en ligne tout seul** après la mort forcée de son processus, et l'arrêt du service est propre.
+- Observé : l'ACL de `identity.json` nomme aussi le **compte de l'administrateur qui a enrôlé** (contrôle total), en plus de SYSTEM, des Administrateurs et du compte du service.
+  Conforme au comportement décrit, mais à savoir.
+- *Essai fait contre un serveur Corvus local en HTTP (`127.0.0.1`), pas via Tailscale / HTTPS ; un seul PC.*
+- **Hôte Windows par SSH, avec un vrai OpenSSH pour Windows** (binaires Win32-OpenSSH 10.4.0.0p1, signés Microsoft, exécutés en local sur `127.0.0.1:2222`, authentification par clé) :
+  détection du système « windows », fonctions POSIX refusées (409 `POSIX_ONLY`), `~` résolu en `/C:/Users/<nom>`, SFTP (liste, création de dossier, écriture et lecture d'un nom accentué,
+  suppression confirmée) et **terminal ConPTY** (une commande tapée renvoie sa sortie, sans tmux). Aucun défaut trouvé. Nouveau test `test/real-openssh-windows.test.js`, ignoré tant que
+  `CORVUS_REAL_WIN_SSH` n'est pas défini. *La fonctionnalité Windows « OpenSSH Server » n'a pas pu être installée sur ce PC (fichiers sources introuvables) : l'essai n'a pas porté sur le
+  service `sshd` fourni par Windows, ni sur une authentification par mot de passe.*
+- *Toujours **pas** observé* : un Mac réel (binaire, `install.sh`, LaunchDaemon).
+
+### Corrigé
+- **Supervision** : `df` n'est plus mal découpé quand le nom du système de fichiers ou le point de montage contient des espaces (ex. `C:/Program Files/Git`).
+- **Interface** : le libellé « SIGSTOP » de la case de gel automatique n'apparaît plus là où le gel n'existe pas (hors Linux) ; helper `agentFeature` partagé entre Rembobiner et Radiographie.
+
+### Tests
+- Les 3 échecs connus sous Windows sont résolus : traduction de `/tmp` par le faux SFTP (Git Bash récent) et `df`.
+- Échec intermittent « Malformed OpenSSH private key » expliqué : `ssh2` génère parfois une clé chiffrée qu'il ne relit pas (≈ 0,7 %, mesuré). Le faux sshd la contrôle, la régénère et la garde en cache. Ce n'est pas un défaut de Corvus.
+- Suite complète sous Windows : 332 tests, 0 échec, 7 sautés (raisons écrites).
+
 ## [1.2.0] - 2026-11-27
 
 L'agent Rust fonctionne aussi sous **Windows** et **macOS** (expérimental). Ce qui a été observé sur une machine réelle et ce qui ne l'a pas été est écrit
