@@ -99,7 +99,8 @@ describe('start-corvus.ps1 : le serveur reste en vie', { skip: WIN ? false : 'Po
       assert.ok(stdout.toLowerCase().includes(path.join(racine, 'server', 'index.js').toLowerCase()), `ligne de commande de Corvus : ${stdout.trim()}`);
     } finally {
       try { await run('taskkill', ['/PID', String(child.pid), '/T', '/F']); } catch { /* déjà arrêté */ }
-      fs.rmSync(data, { recursive: true, force: true });
+      // Windows relâche les verrous de fichiers avec un léger retard : on réessaie, et un nettoyage raté ne masque jamais le résultat du test.
+      try { fs.rmSync(data, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); } catch { /* dossier temporaire : sans importance */ }
     }
   });
 });
