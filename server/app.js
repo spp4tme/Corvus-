@@ -30,6 +30,8 @@ import { logger, setLogLevel } from './lib/log.js';
 import { hostRoutes } from './routes/core.js';
 import { authRoutes, accountRoutes } from './routes/accounts.js';
 import { accessGuard } from './lib/access.js';
+import { AutomationService } from './lib/automation/service.js';
+import { automationSocket } from './routes/automation.js';
 import { RequestLimiter, isStrictPath } from './lib/ratelimit.js';
 import { Users, publicUser } from './lib/users.js';
 import { requestContext } from './lib/context.js';
@@ -106,6 +108,8 @@ export function createCorvus(overrides = {}) {
   ctx.recorder = new Recorder({ db, blobs: ctx.blobs, maxBytes: config.recordingMaxBytes, enabled: config.recordSessions });
   ctx.claude = new ClaudeService({ pool, hosts, journal });
   ctx.agents = new AgentService({ db, vault, journal, hosts, alerts: ctx.alerts, blobs: ctx.blobs });
+  // Automatisation (playbooks) : DÉSACTIVÉE par défaut (`automation.enabled` faux) tant qu'un administrateur ne l'active pas.
+  ctx.automation = new AutomationService({ db, hosts, vault, journal, agents: ctx.agents, alerts: ctx.alerts });
   ctx.terminals = new TerminalManager({
     pool, hosts, journal, config, claude: ctx.claude,
     requireHost: (user, hostId, level) => ctx.requireHost(user, hostId, level),
@@ -138,6 +142,27 @@ export function createCorvus(overrides = {}) {
   api.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
+  });
+  // Webhook ENTRANT des playbooks : PUBLIC (hors session), donc monté AVANT l'authentification et AVANT le parseur JSON (la signature HMAC porte sur le
+  // corps BRUT : express.json le consommerait). Protégé par : jeton `cvu_hk_…` limité à un playbook, signature HMAC, horodatage ±5 min, anti-rejeu, limite par IP et par jeton, limiteur d'échecs.
+  api.post('/hooks/run', express.raw({ type: () => true, limit: '8kb' }), async (req, res, next) => {
+    const wait = auth.limiter.blockedFor(req.ip);
+    if (wait > 0) {
+      res.set('Retry-After', String(Math.ceil(wait / 1000)));
+      return next(new HttpError(429, 'RATE_LIMITED', 'Trop de tentatives'));
+    }
+    try {
+      const m = /^Bearer (\S+)$/.exec(String(req.get('authorization') || ''));
+      const out = await ctx.automationTriggers.handleInbound({
+        token: m ? m[1] : null, timestamp: req.get('x-corvus-timestamp'), signature: req.get('x-corvus-signature'),
+        rawBody: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), ip: req.ip,
+      });
+      res.status(202).json(out);
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 401) auth.limiter.fail(req.ip);
+      if (err?.retryAfterMs) res.set('Retry-After', String(Math.max(1, Math.ceil(err.retryAfterMs / 1000))));
+      next(err);
+    }
   });
   api.use(express.json({ limit: '4mb' }));
   api.get('/health', (req, res) => res.json({ ok: true }));
@@ -279,7 +304,7 @@ export function createCorvus(overrides = {}) {
   // --- Serveur HTTP + WebSocket ------------------------------------------
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-  ctx.wsRoutes = { '/ws/terminal': (ws, url, req) => ctx.terminals.handle(ws, url, req) };
+  ctx.wsRoutes = { '/ws/terminal': (ws, url, req) => ctx.terminals.handle(ws, url, req), '/ws/automation': automationSocket(ctx) };
   // Routes WebSocket sans session navigateur : l'authentification y est le défi signé (Ed25519) de l'agent.
   ctx.wsPublic = { '/agent': (ws, url, req) => ctx.agents.handle(ws, url, req) };
 
@@ -353,7 +378,7 @@ export function createCorvus(overrides = {}) {
     });
     ctx.storageMonitor.start();
     ctx.retention.start();
-    if (config.hostProbeSec > 0) { ctx.hostStatus.start(); ctx.agents.start(); }
+    if (config.hostProbeSec > 0) { ctx.hostStatus.start(); ctx.agents.start(); ctx.automationScheduler?.start(); }
     if (config.metricsIntervalSec > 0) ctx.metrics.start();
     return server.address();
   }
@@ -370,6 +395,7 @@ export function createCorvus(overrides = {}) {
     ctx.storageMonitor.stop();
     ctx.retention.stop();
     ctx.hostStatus.stop();
+    ctx.automationScheduler?.stop();
     ctx.agents.stop();
     ctx.metrics.stop();
     for (const t of ctx.timers || []) clearInterval(t);

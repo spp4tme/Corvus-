@@ -4,6 +4,49 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [1.3.0] - 2026-11-28
+
+**Playbooks** : des scripts nommés, versionnés, lancés sur un ou plusieurs hôtes, à la main, sur planning ou sur déclencheur. C'est l'endroit le plus dangereux de Corvus
+(des commandes s'exécutent sur vos machines sans que personne ne regarde) : **tout est désactivé par défaut**, tout est borné, tout est journalisé. Audit : `docs/audit-1.3.0.md`.
+
+### Ajouté
+- **Interrupteur général `automation.enabled`** (faux par défaut, visible dans l'interface, journalisé à chaque changement). Éteint : rien ne se lance, ni à la main, ni sur planning, alerte ou
+  webhook, et ce qui tourne est interrompu. **Arrêt d'urgence** (un opérateur peut le demander) et annulation d'un lancement (son auteur ou un administrateur).
+- **Playbooks** (`/api/automation/playbooks`, écran « Playbooks ») : étapes séquentielles ou parallèles (concurrence bornée par hôte et globale), délai maximal par commande et par lancement,
+  sortie bornée et **masquée**, pas de reprise automatique. Un playbook s'exécute **sur l'hôte cible par SSH**, jamais dans le processus Corvus. Versions conservées (qui, quand, différence,
+  retour en arrière = nouvelle version). Éditeur texte à **validation en direct** (rien n'est écrit).
+- **Paramètres typés** (texte borné, entier, choix, hôte, chemin) **injectés échappés** (quotes POSIX) ; un modèle est **refusé** si un paramètre tombe entre quotes, dans un backtick, un commentaire
+  ou avec un heredoc. **Secrets nommés** dans le coffre (`{{secret.NOM}}`) : transmis sur l'entrée standard (jamais dans une ligne de commande), masqués dans toute sortie, jamais journalisés.
+- **Risque calculé par le serveur** (`risk.js`) : un playbook risqué exige `confirm: true` ; un playbook « danger » exige en plus une **prévisualisation** récente quand l'agent d'un hôte en propose une.
+  Étapes d'agent : seulement des actions **nommées et existantes** (`xray.live`, `net.status`, `net.isolate`, `net.release`, `preview.run`), jamais de nouvelle ; les capacités annoncées par l'agent sont respectées.
+- **Droits** : l'administrateur crée et modifie ; un opérateur lance seulement les playbooks dont **tous** les hôtes cibles lui sont accordés au niveau opérateur (sinon 404) ; un lecteur lit l'historique des hôtes qu'il voit.
+  **Hôtes Windows** et hôtes **« agent seul »** refusés comme cibles de commandes, à la création **et à chaque exécution**.
+- **Planification** (cron pur, 5 champs, **fuseau horaire obligatoire**, heure d'été/hiver gérée : heure inexistante sautée, heure répétée déclenchée une fois), fenêtres de maintenance, intervalle minimal de
+  5 minutes, **jamais de rattrapage** après une panne (tolérance de 2 minutes). Exige un playbook `autoAutorise` (faux par défaut), jamais « danger ».
+- **Déclencheurs** : (a) alerte → playbook par **liste d'autorisations** explicite, repos, **coupe-circuit** (N déclenchements en M minutes → désactivé + alerte critique), aucune boucle possible ;
+  (b) **webhook entrant** `POST /api/hooks/run` (jeton `cvu_hk_…` limité à un playbook, signature HMAC, horodatage ±5 min, anti-rejeu, limites par IP et par jeton, refus uniformes) ;
+  (c) **webhook sortant** (n8n…) signé, sans redirection, sans sortie ni paramètre.
+- **Interface** : liste, éditeur, lancement avec confirmation, historique avec sortie par hôte (affichée comme **texte**), état en direct par **WebSocket authentifié** (`/ws/automation`, sans sortie,
+  filtré par hôtes visibles), arrêt d'urgence ; hôtes indisponibles grisés avec l'explication.
+
+### Sécurité
+- **Haute** : un secret pouvait partir vers une destination choisie par celui qui lance le playbook (`curl -H {{secret.TOKEN}} {{url}}`). Une commande qui utilise un secret n'accepte plus de
+  paramètre libre (texte, chemin, hôte). Détail et vérifications : `docs/audit-1.3.0.md`.
+- Le lancement d'un playbook et l'arrêt d'urgence sont soumis au plafond **strict** du limiteur de débit (comme les sauvegardes) ; le webhook entrant, public, a ses propres limites.
+
+### Modifié
+- `pool.exec` accepte un `AbortSignal` (la commande distante reçoit `KILL`) ; `Alerts.raise` appelle un crochet facultatif (déclencheurs) ; migrations 5 et 6.
+
+### Pas validé / limites
+- Playbooks exécutés **seulement contre le faux sshd** (vrai `bash`), jamais sur un vrai hôte Linux ni un Raspberry Pi ; webhooks essayés en local (pas via Tailscale Serve, pas avec n8n réel) ;
+  cron testé avec Paris et New York ; prévisualisation « danger » testée avec un faux agent. Le masquage des secrets ne peut pas attraper une commande qui encode elle-même le secret.
+
+### Corrigé
+- **Release : une panne du job macOS (expérimental) n'empêche plus de publier Linux et Windows.** `agent-macos` est en `continue-on-error` (et `fail-fast: false` : une architecture
+  ne fait plus annuler l'autre). `publier` continue de l'**attendre** (on ne le retire pas de `needs` : sans cela la publication pourrait partir avant les binaires macOS, même quand
+  ils réussissent) mais n'est plus bloqué par son échec. Les binaires macOS ne sont joints, et annoncés dans les notes, que **s'ils existent** ; sinon les notes le disent et le
+  workflow émet un avertissement. *Non rejoué en conditions réelles (le workflow ne tourne que sur un tag) : la logique shell des notes est testée en local, la syntaxe YAML est validée.*
+
 ## [1.2.5] - 2026-11-28
 
 ### Ajouté

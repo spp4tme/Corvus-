@@ -195,3 +195,46 @@ describe('rôles et droits par hôte / groupe', () => {
     assert.equal(ko.status, 401);
   });
 });
+
+describe('playbooks : routes insensibles à la casse et au « / » final (Express 5), jamais une faille d\'autorisation', () => {
+  let env; let admin; let viewer; let operator;
+  before(async () => {
+    env = await startCorvus();
+    admin = env.client;
+    await admin.login();
+    const mk = async (username, role) => {
+      const u = makeUser(env.corvus, { username, password: `mot-de-passe-${username}-test`, role });
+      const c = new CorvusClient(env.base, { corvus: env.corvus, user: u });
+      assert.equal((await c.login()).status, 200);
+      return c;
+    };
+    viewer = await mk('lecteur-pb', 'viewer');
+    operator = await mk('operateur-pb', 'operator');
+  });
+  after(() => env.close());
+
+  test('une même route, toutes les graphies : le rôle exigé ne change JAMAIS', async () => {
+    const graphies = (p) => [p, p.toUpperCase(), p.replace(/\/automation\//, '/Automation/'), `${p}/`, p.replace(/\/api\//, '/API/')];
+    const refused = (u, s) => (u.includes('//') ? [403, 404].includes(s) : s === 403);
+    // administration : refusée à l'opérateur ET au lecteur
+    for (const [m, p, b] of [
+      ['POST', '/api/automation/playbooks', { name: 'pirate', steps: [{ run: 'id' }], targets: { hostIds: ['aabbccdd11223344'] } }],
+      ['PUT', '/api/automation/settings', { enabled: true }], ['GET', '/api/automation/secrets'], ['PUT', '/api/automation/secrets/PIRATE_X', { value: 'valeur-assez-longue' }],
+    ]) {
+      for (const u of graphies(p)) {
+        for (const [nom, c] of [['opérateur', operator], ['lecteur', viewer]]) {
+          const r = await c.api(m, u, m === 'GET' ? undefined : b);
+          assert.ok(refused(u, r.status), `${nom} ${m} ${u} → ${r.status}`);
+        }
+      }
+    }
+    // lancer / arrêt d'urgence : refusés au lecteur, sous toutes les graphies
+    for (const u of [...graphies('/api/automation/stop'), ...graphies('/api/automation/playbooks/aabbccdd11223344/run'), ...graphies('/api/automation/runs/aabbccdd11223344/cancel')]) {
+      const r = await viewer.api('POST', u, {});
+      assert.ok(refused(u, r.status), `lecteur POST ${u} → ${r.status}`);
+    }
+    assert.equal(env.corvus.ctx.automation.enabled, false, 'l\'interrupteur n\'a pas bougé');
+    assert.equal(env.corvus.ctx.automation.list().length, 0, 'aucun playbook créé par un compte trop faible');
+    assert.deepEqual(env.corvus.ctx.automation.secretNames(), []);
+  });
+});
