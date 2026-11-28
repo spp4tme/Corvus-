@@ -52,6 +52,8 @@ export function automationRoutes(ctx) {
     const all = A.list();
     res.json({ playbooks: req.user.role === 'admin' ? all : all.filter((p) => runnable(req.user, A.definitionOf(p.id))) });
   });
+  // Validation « en direct » de l'éditeur : n'écrit RIEN.
+  r.post('/automation/playbooks/validate', admin, (req, res) => res.json(A.validateOnly(req.body)));
   r.post('/automation/playbooks', admin, (req, res) => res.status(201).json({ playbook: A.create(req.body, { user: req.user, ip: req.ip }) }));
   r.get('/automation/playbooks/:id', operator, (req, res) => { accessible(req, pid(req)); res.json({ playbook: A.get(pid(req)) }); });
   r.put('/automation/playbooks/:id', admin, (req, res) => res.json({ playbook: A.update(pid(req), req.body, { user: req.user, ip: req.ip }) }));
@@ -147,4 +149,37 @@ export function automationRoutes(ctx) {
   });
 
   return r;
+}
+
+/**
+ * WebSocket d'état en direct : /ws/automation (authentifié par la session ou le jeton, comme /ws/terminal ; origine contrôlée par app.js).
+ * Les évènements ne portent JAMAIS de sortie de commande ; chacun est filtré par les hôtes que le compte voit À CE MOMENT-LÀ
+ * (droits revérifiés à chaque évènement ; un compte désactivé est déconnecté).
+ */
+export function automationSocket(ctx) {
+  return (ws, url, req) => {
+    const uid = req.user?.id;
+    const visible = () => {
+      const u = uid && ctx.users.row(uid);
+      if (!u || u.disabled) return undefined;
+      return ctx.users.allowedHostIds(u); // null = tous (administrateur)
+    };
+    const send = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
+    const first = visible();
+    if (first === undefined) return ws.close(1008, 'compte indisponible');
+    const mine = [...ctx.automationRuns.active.entries()]
+      .filter(([, a]) => !first || a.hostIds.some((h) => first.includes(h))).map(([id, a]) => ({ runId: id, name: a.name, startedAt: a.startedAt }));
+    send({ type: 'hello', enabled: ctx.automation.enabled, active: mine });
+    const onEvent = (ev) => {
+      const allowed = visible();
+      if (allowed === undefined) return ws.close(1008, 'compte indisponible');
+      const ids = ev.hostId ? [ev.hostId] : (ev.hostIds || []);
+      if (allowed && !ids.some((h) => allowed.includes(h))) return;
+      const { hostIds, ...rest } = ev; // les identifiants d'hôtes du lancement entier ne sont pas diffusés
+      send(rest);
+    };
+    ctx.automationRuns.on('event', onEvent);
+    ws.on('close', () => ctx.automationRuns.off('event', onEvent));
+    ws.on('message', () => {}); // aucune commande n'arrive par ce canal : tout est ignoré
+  };
 }

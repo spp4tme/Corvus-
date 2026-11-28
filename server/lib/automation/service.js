@@ -121,6 +121,18 @@ export class AutomationService {
     return { ...JSON.parse(r.definition), id: r.id, name: r.name, version: r.version, risk: r.risk, autoAutorise: !!r.auto_authorized };
   }
 
+  /** Valide un playbook SANS rien écrire (éditeur en direct) : mêmes règles que `create`, mêmes refus (Windows, agent seul, cibles inconnues). */
+  validateOnly(input) {
+    let v;
+    try { v = validatePlaybook(input); } catch (err) { throw asHttp(err); }
+    this.#checkHostsExist(v.definition);
+    const hosts = this.assertTargetsUsable(v.definition);
+    return {
+      ok: true, risk: v.risk, riskReasons: v.riskReasons, secrets: v.secrets, autoAutorise: v.autoAutorise, params: v.definition.params.length,
+      commands: v.definition.steps.reduce((n, s) => n + (s.parallel ? s.parallel.length : 1), 0), hosts: hosts.map((h) => ({ id: h.id, name: h.name })),
+    };
+  }
+
   create(input, { user, ip } = {}) {
     let v;
     try { v = validatePlaybook(input); } catch (err) { throw asHttp(err); }

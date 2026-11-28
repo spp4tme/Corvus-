@@ -31,6 +31,7 @@ import { hostRoutes } from './routes/core.js';
 import { authRoutes, accountRoutes } from './routes/accounts.js';
 import { accessGuard } from './lib/access.js';
 import { AutomationService } from './lib/automation/service.js';
+import { automationSocket } from './routes/automation.js';
 import { RequestLimiter, isStrictPath } from './lib/ratelimit.js';
 import { Users, publicUser } from './lib/users.js';
 import { requestContext } from './lib/context.js';
@@ -303,7 +304,7 @@ export function createCorvus(overrides = {}) {
   // --- Serveur HTTP + WebSocket ------------------------------------------
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-  ctx.wsRoutes = { '/ws/terminal': (ws, url, req) => ctx.terminals.handle(ws, url, req) };
+  ctx.wsRoutes = { '/ws/terminal': (ws, url, req) => ctx.terminals.handle(ws, url, req), '/ws/automation': automationSocket(ctx) };
   // Routes WebSocket sans session navigateur : l'authentification y est le défi signé (Ed25519) de l'agent.
   ctx.wsPublic = { '/agent': (ws, url, req) => ctx.agents.handle(ws, url, req) };
 

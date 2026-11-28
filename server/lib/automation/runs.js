@@ -123,8 +123,9 @@ export class RunManager extends EventEmitter {
       JSON.stringify({ hostIds: hosts.map((h) => h.id), risk: def.risk }));
     this.journal.add({ type: 'automation', event: 'run-start', user: user || undefined, ip, ok: true, detail: `${def.name} v${def.version} (${trigger}${user ? '' : `, ${who}`}) sur ${hosts.length} hôte(s)` });
     const ac = new AbortController();
-    this.active.set(runId, { ac, playbookId: def.id, userId: user?.id ?? null, startedAt: t });
-    this.emit('event', { type: 'run-start', runId, playbookId: def.id, name: def.name });
+    const hostIds = hosts.map((h) => h.id);
+    this.active.set(runId, { ac, playbookId: def.id, userId: user?.id ?? null, startedAt: t, hostIds, name: def.name });
+    this.emit('event', { type: 'run-start', runId, playbookId: def.id, name: def.name, hostIds });
     // Exécution détachée : la requête répond tout de suite (202) ; le suivi se fait par l'historique et le WebSocket.
     this.#execute({ runId, def, hosts, vals, secrets, ac, user, ip, who, trigger }).catch((err) => {
       this.journal.add({ type: 'automation', event: 'run-error', user: user || undefined, ip, ok: false, detail: `${def.name} : ${String(err?.message || err).slice(0, 200)}` });
@@ -215,7 +216,7 @@ export class RunManager extends EventEmitter {
     this.active.delete(runId);
     this.journal.add({ type: 'automation', event: 'run-end', user: user || undefined, ip, ok: result.status === 'succeeded',
       detail: `${def.name} v${def.version} : ${result.status} (${counts.ok}/${counts.hosts} hôte(s) réussi(s))` });
-    this.emit('event', { type: 'run-end', runId, status: result.status, name: def.name, counts });
+    this.emit('event', { type: 'run-end', runId, status: result.status, name: def.name, counts, hostIds: hosts.map((h) => h.id) });
     if (result.status === 'failed' || result.status === 'timeout') {
       this.alerts?.raise({ kind: 'playbook-failed', severity: 'warn', message: `Playbook « ${def.name} » : ${result.status} (${counts.ok}/${counts.hosts} hôte(s) réussi(s))`, data: { runId } });
     }

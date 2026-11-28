@@ -1,7 +1,7 @@
 // Service worker Corvus : coquille de l'app disponible hors ligne.
 // L'API, les WebSockets, les téléchargements et le proxy ne sont JAMAIS mis en cache.
 importScripts('/sw-actions.js', '/sw-share.js'); // actions des notifications et « Partager vers Corvus » (logique pure, testée à part)
-const VERSION = 'corvus-v31';
+const VERSION = 'corvus-v32';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest',
   '/css/tokens.css', '/css/app.css',
@@ -10,7 +10,7 @@ const SHELL = [
   '/js/ui/dom.js', '/js/ui/icons.js', '/js/ui/components.js', '/js/ui/hostpicker.js', '/js/ui/chart.js',
   '/js/views/login.js', '/js/views/hosts.js', '/js/views/terminal.js', '/js/views/claude.js', '/js/views/files.js',
   '/js/views/git.js', '/js/views/monitor.js', '/js/views/journal.js', '/js/views/proxy.js',
-  '/js/views/agents.js', '/js/views/rewind.js', '/js/views/xray.js', '/js/views/compare.js', '/js/views/copy-dialog.js', '/js/views/share.js', '/js/ui/diffview.js', '/js/ui/agent-support.js', '/js/views/settings.js', '/js/views/more.js', '/js/views/storage-settings.js', '/js/views/accounts-settings.js', '/js/views/recordings.js', '/js/passkey.js', '/js/cmdbar.js', '/js/views/commands.js', '/js/views/admin.js',
+  '/js/views/agents.js', '/js/views/playbooks.js', '/js/views/rewind.js', '/js/views/xray.js', '/js/views/compare.js', '/js/views/copy-dialog.js', '/js/views/share.js', '/js/ui/diffview.js', '/js/ui/agent-support.js', '/js/views/settings.js', '/js/views/more.js', '/js/views/storage-settings.js', '/js/views/accounts-settings.js', '/js/views/recordings.js', '/js/passkey.js', '/js/cmdbar.js', '/js/views/commands.js', '/js/views/admin.js',
   '/icons/logo.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png',
 ];
 

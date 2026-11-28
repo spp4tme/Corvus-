@@ -375,6 +375,41 @@ describe('automatisation : routes', () => {
     assert.equal((await admin.c.api('GET', '/api/Automation/Playbooks/')).status, 200);
   });
 
+  test('ACTIONS D\'AGENT : un playbook appelle une action NOMMÉE ; elle respecte les capacités ANNONCÉES par l\'agent ; il ne peut pas en créer', async () => {
+    on();
+    const realFor = ctx.agents.forHost.bind(ctx.agents);
+    const realReq = ctx.agents.request.bind(ctx.agents);
+    const appels = [];
+    let agent = { online: true, platform: 'linux', capabilities: { actions: ['xray.live'] }, support: {} };
+    ctx.agents.forHost = (id) => (id === hostA.id ? agent : realFor(id));
+    ctx.agents.request = async (id, name, args) => { appels.push([name, args]); return { ok: true, processes: 3 }; };
+    try {
+      const pb = await create({ name: 'Étapes agent', steps: [{ name: 'radiographie', agent: { action: 'xray.live' } }, { name: 'état réseau', agent: { action: 'net.status' }, continueOnError: true }] });
+      const run = await waitRun(admin.c, (await admin.c.api('POST', `/api/automation/playbooks/${pb.id}/run`, {})).body.runId);
+      const [a, b] = run.steps;
+      assert.equal(a.status, 'ok');
+      assert.match(a.output, /"processes": 3/);
+      assert.equal(b.status, 'error', 'net.status n\'est pas annoncée par cet agent');
+      assert.match(b.output, /isolement|agent/i, 'la raison donnée par le serveur est affichée');
+      assert.deepEqual(appels.map((x) => x[0]), ['xray.live'], 'l\'action non annoncée n\'a jamais été envoyée à l\'agent');
+      // agent hors ligne : erreur claire, aucun appel
+      agent = { ...agent, online: false };
+      appels.length = 0;
+      const off = await waitRun(admin.c, (await admin.c.api('POST', `/api/automation/playbooks/${pb.id}/run`, {})).body.runId);
+      assert.equal(off.steps[0].status, 'error');
+      assert.match(off.steps[0].output, /pas connecté/);
+      assert.equal(appels.length, 0);
+      // un playbook ne crée pas de nouvelle action : seules les actions nommées existantes sont acceptées, par l'API aussi
+      for (const action of ['shell.exec', 'file.remove', 'preview.apply', 'proc.kill', 'xray.live; id']) {
+        assert.equal((await admin.c.api('POST', '/api/automation/playbooks', def({ steps: [{ agent: { action } }] }))).status, 400, action);
+      }
+      // action d'agent « danger » (isolement réseau) : risque calculé, confirmation exigée
+      const iso = await create({ name: 'Isoler', steps: [{ agent: { action: 'net.isolate' } }] });
+      assert.equal(iso.risk, 'danger');
+      assert.equal((await admin.c.api('POST', `/api/automation/playbooks/${iso.id}/run`, {})).body.error.code, 'CONFIRM_REQUIRED');
+    } finally { ctx.agents.forHost = realFor; ctx.agents.request = realReq; }
+  });
+
   test('limiteur de débit : lancer et l\'arrêt d\'urgence sont des routes à plafond STRICT (toutes variantes)', () => {
     for (const p of ['/automation/playbooks/aabbccdd11223344/run', '/Automation/Playbooks/aabbccdd11223344/Run/', '//automation//playbooks//x//run', '/automation/stop', '/AUTOMATION/Stop/']) {
       assert.equal(isStrictPath(p), true, p);
