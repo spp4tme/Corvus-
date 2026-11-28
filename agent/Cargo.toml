@@ -11,7 +11,7 @@ license = "MIT"
 #  - TLS rustls (pas d'OpenSSL à installer sur l'hôte), binaire statique possible en musl.
 [dependencies]
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-rand = "0.8"
+rand = "0.10"
 base64 = "0.23"
 sha2 = "0.11"
 hex = "0.4"
