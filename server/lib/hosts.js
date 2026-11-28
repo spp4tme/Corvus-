@@ -5,7 +5,9 @@ import ssh2 from 'ssh2';
 import * as v from './validate.js';
 import { effectiveOs } from './hostos.js';
 
-const AUTH_TYPES = ['password', 'key', 'agent'];
+// « none » = hôte « agent seul » : supervisé par l'agent Corvus uniquement, AUCUN accès SSH (ni utilisateur, ni secret, ni connexion sortante).
+const AUTH_TYPES = ['password', 'key', 'agent', 'none'];
+export const AGENT_ONLY = 'none';
 export const newId = () => crypto.randomBytes(8).toString('hex');
 
 // Colonnes de la table `hosts` ↔ objet hôte utilisé partout ailleurs.
@@ -76,23 +78,29 @@ export class HostRegistry {
       id: newId(), icon: 'server', group: '', pinned: false, tmux: false, tmuxSession: 'corvus',
       claudeDir: '', claudeCmd: 'claude', repos: [], createdAt: Date.now(),
     };
+    const authType = !existing || has('authType') ? v.oneOf(input.authType ?? 'password', AUTH_TYPES, 'méthode d\'authentification') : existing.authType;
+    const agentOnly = authType === AGENT_ONLY;
+    base.authType = authType;
     if (!existing || has('hostname')) {
-      const hostname = v.hostname(input.hostname);
+      const vide = input.hostname === undefined || input.hostname === null || input.hostname === '';
+      const hostname = agentOnly && vide ? '' : v.hostname(input.hostname); // agent seul : l'adresse est facultative (affichage seulement)
       if (existing && hostname !== existing.hostname) delete base.osDetected; // autre machine : on resondera
       base.hostname = hostname;
-    }
+    } else if (!agentOnly && !existing.hostname) throw v.bad('Adresse de l\'hôte requise pour un accès SSH');
     // Système de l'hôte : « auto » (détection), « posix » ou « windows » (réglage de l'administrateur).
     if (has('os')) {
       const os = v.oneOf(input.os ?? 'auto', ['auto', 'posix', 'windows'], 'système');
       if (os === 'auto') delete base.os; else base.os = os;
     }
-    if (!existing || has('username')) base.username = v.username(input.username);
+    if (agentOnly) base.username = '';
+    else if (!existing || has('username')) base.username = v.username(input.username);
+    else if (!existing.username) throw v.bad('Utilisateur requis pour un accès SSH');
     if (!existing || has('port')) base.port = v.port(input.port);
     if (!existing || has('name')) {
       const name = v.str(input.name ?? '', 'alias', { max: 64 }).trim();
       base.name = name || base.hostname;
     }
-    if (!existing || has('authType')) base.authType = v.oneOf(input.authType ?? 'password', AUTH_TYPES, 'méthode d\'authentification');
+    if (!base.name) throw v.bad('Alias requis (un hôte agent seul n\'a pas d\'adresse pour le nommer)');
     if (has('icon')) base.icon = v.oneOf(input.icon, v.ICONS, 'icône');
     if (has('group')) base.group = v.str(input.group ?? '', 'groupe', { max: 48 }).trim();
     if (has('pinned')) base.pinned = v.bool(input.pinned);
@@ -112,8 +120,12 @@ export class HostRegistry {
   }
 
   /** Extrait et valide les secrets fournis. Retourne null si aucun changement. */
-  parseSecrets(input, previous = {}) {
+  parseSecrets(input, previous = {}, authType = null) {
     const has = (k) => Object.prototype.hasOwnProperty.call(input, k) && input[k] !== '' && input[k] !== null;
+    if (authType === AGENT_ONLY) {
+      if (has('password') || has('passphrase') || has('privateKey')) throw v.bad('Un hôte « agent seul » n\'a aucun secret SSH : retirez le mot de passe, la clé et la passphrase');
+      return Object.keys(previous).length ? {} : null; // bascule vers « agent seul » : on n'en garde aucun
+    }
     const next = { ...previous };
     let changed = false;
     if (input.clearSecrets) { changed = true; for (const k of Object.keys(next)) delete next[k]; }
@@ -164,7 +176,7 @@ export class HostRegistry {
 
   create(input) {
     const host = this.parse(input);
-    const secrets = this.parseSecrets(input);
+    const secrets = this.parseSecrets(input, {}, host.authType);
     this.save(host, secrets);
     return this.publicView(host);
   }
@@ -172,7 +184,7 @@ export class HostRegistry {
   update(id, input) {
     const current = this.get(id);
     const next = this.parse(input, current);
-    const secrets = this.parseSecrets(input, this.vault.get(id) || {});
+    const secrets = this.parseSecrets(input, this.vault.get(id) || {}, next.authType);
     this.save(next, secrets);
     return this.publicView(next);
   }
@@ -188,6 +200,9 @@ export class HostRegistry {
   /** Construit la configuration ssh2 (avec secrets) — usage interne uniquement. */
   connectConfig(hostOrId, overrideSecrets) {
     const h = typeof hostOrId === 'string' ? this.get(hostOrId) : hostOrId;
+    if (h.authType === AGENT_ONLY) {
+      throw new v.HttpError(409, 'AGENT_ONLY', 'Cet hôte est « agent seul » : aucun accès SSH. Pour l\'activer, modifiez l\'hôte (adresse, utilisateur et méthode d\'authentification).');
+    }
     const s = overrideSecrets || this.vault.get(h.id) || {};
     const cfg = { host: h.hostname, port: h.port, username: h.username };
     if (h.authType === 'key') {

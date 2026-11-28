@@ -148,3 +148,70 @@ test('vue Agents : la commande d\'installation suit le système choisi (Linux, m
   assert.match(win, /^Invoke-WebRequest .*\/api\/agent\/install\.ps1 -OutFile install\.ps1; \.\\install\.ps1 -Server .* -Token /);
   assert.ok(!/Invoke-Expression|iex|\| *sh/i.test(win), 'jamais d\'exécution directe de contenu distant');
 });
+
+test('hôte « agent seul » : formulaire sans SSH, carte sans terminal ni fichiers, absent des sélecteurs SSH', async (t) => {
+  if (!browser) return t.skip('aucun navigateur Chromium/Edge disponible');
+  const page = await (await browser.newContext({ viewport: { width: 1100, height: 900 } })).newPage();
+  const erreurs = [];
+  page.on('pageerror', (e) => erreurs.push(String(e)));
+  await uiLogin(page);
+  await page.goto(`${env.base}/#/hosts`);
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  const dlg = page.locator('dialog');
+  await dlg.getByRole('tab', { name: 'Aucune (agent seul)' }).click();
+  // Rien de SSH : ni utilisateur, ni port, ni mot de passe ; adresse facultative ; note explicative visible.
+  await dlg.getByText(/aucun accès SSH, donc ni terminal/).waitFor();
+  assert.equal(await dlg.getByLabel('Utilisateur').isVisible(), false);
+  assert.equal(await dlg.getByLabel('Port').isVisible(), false);
+  assert.equal(await dlg.getByLabel('Mot de passe').count(), 0);
+  assert.equal(await dlg.getByRole('button', { name: 'Tester' }).isVisible(), false, 'rien à tester sans SSH');
+  // Alias obligatoire.
+  await dlg.getByRole('button', { name: 'Ajouter' }).click();
+  await dlg.getByText(/Alias requis/).waitFor();
+  await dlg.getByLabel('Alias').fill('PC du bureau');
+  await dlg.getByRole('button', { name: 'Ajouter' }).click();
+  await page.locator('dialog').waitFor({ state: 'detached' });
+
+  const carte = page.locator('.host-card', { hasText: 'PC du bureau' });
+  await carte.waitFor();
+  await carte.getByText('agent seul', { exact: true }).waitFor();
+  assert.equal(await carte.getByText('secret manquant').count(), 0, 'pas de faux « secret manquant »');
+  for (const nom of ['Terminal', 'Fichiers', 'Claude Code', 'Tester']) assert.equal(await carte.getByRole('button', { name: nom }).count(), 0, nom);
+  await carte.getByRole('button', { name: /Installer l'agent/ }).waitFor();
+
+  // Stocké sans aucun secret ni utilisateur.
+  const h = env.corvus.ctx.hosts.hosts.find((x) => x.name === 'PC du bureau');
+  assert.deepEqual([h.authType, h.username, h.hostname], ['none', '', '']);
+  assert.ok(!env.corvus.ctx.vault.get(h.id));
+
+  // Les écrans qui ouvrent du SSH ne le proposent pas ; l'écran Agents, si.
+  await page.goto(`${env.base}/#/files`);
+  await page.locator('select.select').first().waitFor();
+  assert.equal(await page.locator('select.select option', { hasText: 'PC du bureau' }).count(), 0, 'absent du sélecteur Fichiers');
+  await page.goto(`${env.base}/#/agents`);
+  await page.getByRole('button', { name: 'Installer un agent' }).first().click();
+  await page.locator('dialog select').first().selectOption({ label: 'PC du bureau' }); // proposé pour l'agent, sans « () »
+  assert.deepEqual(erreurs, []);
+});
+
+test('hôte « agent seul » : passer un hôte à secrets en « agent seul » demande confirmation, annuler ne change rien', async (t) => {
+  if (!browser) return t.skip('aucun navigateur Chromium/Edge disponible');
+  const { hosts, vault } = env.corvus.ctx;
+  const cree = hosts.create({ name: 'À basculer', hostname: '10.9.9.9', username: 'u', authType: 'password', password: 'secret-a-garder' });
+  await env.corvus.ctx.hosts.get(cree.id);
+  const page = await (await browser.newContext({ viewport: { width: 1100, height: 900 } })).newPage();
+  await uiLogin(page);
+  await page.goto(`${env.base}/#/hosts`);
+  await page.locator('.host-card', { hasText: 'À basculer' }).getByRole('button', { name: 'Modifier' }).click();
+  await page.locator('dialog').getByRole('tab', { name: 'Aucune (agent seul)' }).click();
+  await page.locator('dialog').getByRole('button', { name: 'Enregistrer' }).click();
+  await page.getByText('Effacer les secrets SSH ?').waitFor();
+  await page.getByRole('button', { name: 'Annuler' }).last().click();
+  assert.equal(vault.get(cree.id).password, 'secret-a-garder', 'annuler : secret intact');
+  assert.equal(hosts.find(cree.id).authType, 'password');
+  await page.locator('dialog').getByRole('button', { name: 'Enregistrer' }).click();
+  await page.getByRole('button', { name: 'Passer en agent seul' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('dialog').length === 0); // confirmation + formulaire fermés
+  assert.equal(hosts.find(cree.id).authType, 'none');
+  assert.deepEqual(vault.get(cree.id) || {}, {}, 'confirmé : secrets effacés');
+});

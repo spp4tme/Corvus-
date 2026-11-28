@@ -232,7 +232,7 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
       const list = (await (await fetch(`${env.base}/api/agents`, { headers: auth() })).json()).agents;
       const me = list.find((a) => a.id === identity.agent_id);
       assert.equal(me.online, true);
-      assert.equal(me.version, '1.2.1');
+      assert.equal(me.version, '1.2.5');
       assert.equal(me.capabilities.ebpf, false);
       assert.equal(me.platform, { win32: 'windows', darwin: 'macos' }[process.platform] ?? 'linux');
     } finally {
@@ -276,6 +276,30 @@ describe('agent Rust (binaire réel)', { skip: AGENT_BIN ? false : 'binaire non 
       await new Promise((r) => setTimeout(r, 1500));
       fs.writeFileSync(path.join(watched, 'nouveau.txt'), 'bonjour');
       await waitFor(() => db.get("SELECT 1 AS x FROM agent_events WHERE agent_id = ? AND type = 'file.created'", identity.agent_id), 20000);
+    } finally {
+      child.kill();
+    }
+  });
+
+  test('hôte « agent seul » : le vrai agent s’enrôle, passe en ligne et envoie ses métriques sans aucun SSH configuré', async () => {
+    const solo = (await post('/api/hosts', { name: 'PC agent seul', authType: 'none' }).then((r) => r.json())).host;
+    assert.equal(solo.authType, 'none');
+    const d = dir();
+    const t = await (await post('/api/agents/enrollments', { hostId: solo.id })).json();
+    await run(AGENT_BIN, ['enroll', '--server', env.base, '--token', t.token, '--dir', d]);
+    const identity = JSON.parse(fs.readFileSync(path.join(d, 'identity.json'), 'utf8'));
+    const child = spawn(AGENT_BIN, ['run', '--dir', d, '--interval', '1'], { stdio: 'pipe' });
+    try {
+      const { db } = env.corvus.ctx;
+      await waitFor(() => db.get('SELECT 1 AS x FROM metrics_raw WHERE host_id = ? AND metric = ?', solo.id, 'mem'), 40000);
+      const hosts = (await (await fetch(`${env.base}/api/hosts`, { headers: auth() })).json()).hosts;
+      const moi = hosts.find((x) => x.id === solo.id);
+      assert.equal(moi.agent.online, true);
+      assert.equal(moi.agent.id ?? identity.agent_id, identity.agent_id);
+      // Pas de SSH : refusé proprement, l'agent, lui, répond (Radiographie en direct).
+      assert.equal((await fetch(`${env.base}/api/hosts/${solo.id}/monitor/stats`, { headers: auth() })).status, 409);
+      const live = await fetch(`${env.base}/api/hosts/${solo.id}/xray/live`, { headers: auth() });
+      assert.equal(live.status, 200);
     } finally {
       child.kill();
     }

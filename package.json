@@ -1,6 +1,6 @@
 {
   "name": "corvus",
-  "version": "1.2.1",
+  "version": "1.2.5",
   "description": "Corvus — passerelle SSH/SFTP/DevOps auto-hébergée pour réseaux Tailscale, en PWA.",
   "type": "module",
   "private": true,
@@ -14,7 +14,7 @@
     "dev": "node --watch server/index.js",
     "token": "node server/cli.js token",
     "token:rotate": "node server/cli.js rotate-token",
-    "test": "node --test --test-concurrency=1 test/unit.test.js test/hardening.test.js test/terminal-revoke.test.js test/hostadmin-hardening.test.js test/proxy-hardening.test.js test/auth-backup-hardening.test.js test/routes-hardening.test.js test/agent.test.js test/agent-install.test.js test/rewind.test.js test/preview.test.js test/xray.test.js test/behavior.test.js test/ransom.test.js test/e2e.test.js test/accounts.test.js test/second-barrier.test.js test/compare.test.js test/recordings-search.test.js test/push-actions.test.js test/copy.test.js test/share.test.js test/audit.test.js test/passkeys.test.js test/productivity.test.js test/ratelimit.test.js test/agent-platform.test.js test/agent-install-windows.test.js test/windows-hosts.test.js test/real-openssh-windows.test.js test/ui.test.js test/ui-platform.test.js",
+    "test": "node --test --test-concurrency=1 test/unit.test.js test/hardening.test.js test/terminal-revoke.test.js test/hostadmin-hardening.test.js test/proxy-hardening.test.js test/auth-backup-hardening.test.js test/routes-hardening.test.js test/agent.test.js test/agent-install.test.js test/agent-only-host.test.js test/rewind.test.js test/preview.test.js test/xray.test.js test/behavior.test.js test/ransom.test.js test/e2e.test.js test/accounts.test.js test/second-barrier.test.js test/compare.test.js test/recordings-search.test.js test/push-actions.test.js test/copy.test.js test/share.test.js test/audit.test.js test/passkeys.test.js test/productivity.test.js test/ratelimit.test.js test/agent-platform.test.js test/agent-install-windows.test.js test/windows-hosts.test.js test/real-openssh-windows.test.js test/install-windows-server.test.js test/ui.test.js test/ui-platform.test.js",
     "test:e2e": "node --test --test-concurrency=1 test/e2e.test.js",
     "test:ui": "node --test test/ui.test.js",
     "check:pure": "node scripts/check-pure-js.js",

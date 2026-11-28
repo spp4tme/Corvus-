@@ -31,7 +31,7 @@ export function hostRoutes(ctx) {
   // Test d'une configuration non enregistrée (formulaire d'ajout).
   r.post('/hosts/test', async (req, res) => {
     const draft = hosts.parse(req.body);
-    const secrets = hosts.parseSecrets(req.body) || {};
+    const secrets = hosts.parseSecrets(req.body, {}, draft.authType) || {};
     const result = await pool.test(hosts.connectConfig(draft, secrets));
     journal.add({ type: 'test', event: 'test', host: draft, ok: result.ok });
     res.json(result);
@@ -44,6 +44,11 @@ export function hostRoutes(ctx) {
 
   r.patch('/hosts/:id', (req, res) => {
     const id = v.id(req.params.id);
+    // Passer en « agent seul » EFFACE les secrets SSH enregistrés (irréversible) : confirmation explicite côté serveur.
+    const actuel = hosts.get(id);
+    if (req.body?.authType === 'none' && actuel.authType !== 'none' && Object.keys(ctx.vault.get(id) || {}).length && req.body.confirm !== true) {
+      throw new HttpError(400, 'CONFIRM_REQUIRED', 'Confirmation explicite requise (confirm: true) : les secrets SSH enregistrés de cet hôte seront effacés');
+    }
     const connChanged = ['hostname', 'port', 'username', 'authType', 'password', 'privateKey', 'passphrase', 'clearSecrets']
       .some((k) => k in (req.body || {}));
     const host = hosts.update(id, req.body);

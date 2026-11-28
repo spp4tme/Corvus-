@@ -3,13 +3,13 @@
 import { post } from '../api.js';
 import { h, replace } from '../ui/dom.js';
 import { button, busy, input, checkbox, loadingState, emptyState, errorState, badge, toastError, confirmDialog } from '../ui/components.js';
-import { state } from '../state.js';
+import { state, sshHosts } from '../state.js';
 
 const KIND_LABEL = { '~': 'modifiée', '-': 'absente à droite', '+': 'absente à gauche' };
 
 export default {
   mount(el) {
-    const hosts = state.hosts;
+    const hosts = sshHosts();
     const chosen = new Set(state.activeHostId ? [state.activeHostId] : []);
     const out = h('div', { class: 'stack' });
     const pathInput = input({ value: '/etc/ssh/sshd_config', 'aria-label': 'Fichier à comparer', placeholder: '/etc/ssh/sshd_config' });

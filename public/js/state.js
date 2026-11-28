@@ -57,6 +57,11 @@ function emit() {
   }
 }
 
+/** Hôtes joignables en SSH : exclut les hôtes « agent seul » (authType « none »), qui n'ont ni terminal, ni fichiers, ni Git. */
+export function sshHosts(hosts = state.hosts) {
+  return hosts.filter((x) => x.authType !== 'none');
+}
+
 /** Tri : épinglés d'abord, puis alphabétique. */
 export function sortedHosts(hosts = state.hosts) {
   return [...hosts].sort((a, b) => (b.pinned - a.pinned) || a.name.localeCompare(b.name, 'fr'));

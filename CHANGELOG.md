@@ -4,6 +4,33 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [1.2.5] - 2026-11-28
+
+### Ajouté
+- **Hôte « agent seul »** : une machine suivie **uniquement par l'agent Corvus**, sans aucun accès SSH. Méthode d'authentification **« Aucune (agent seul) »** : seul l'alias est
+  obligatoire (l'adresse est facultative, pour l'affichage), **ni utilisateur, ni mot de passe, ni clé**. Pensé pour un PC Windows ou un Mac que l'on ne veut pas ouvrir en SSH.
+  - **Aucune connexion SSH ne part jamais vers un tel hôte** : test, terminal, fichiers, Git, supervision par SSH, Docker, copie d'hôte à hôte répondent `409 AGENT_ONLY` (garde unique dans
+    `connectConfig`). La sonde de disponibilité l'ignore : il n'est jamais déclaré « injoignable » (c'est l'agent qui dit s'il est en ligne). Vérifié par un faux « port SSH » qui compte
+    les connexions entrantes : zéro.
+  - **Aucun secret SSH** n'est accepté ni stocké (`400` si un mot de passe, une clé ou une passphrase est fourni).
+  - **Passer un hôte existant en « agent seul » efface ses secrets SSH** : irréversible, donc `confirm: true` exigé côté serveur (`CONFIRM_REQUIRED`) et écran de confirmation dans
+    l'interface ; annuler ne change rien. Création et changement de méthode restent réservés à l'**administrateur** (testé avec un opérateur et un lecteur, variantes de casse et « / » final).
+  - Interface : carte avec le badge « agent seul » (pas de faux « secret manquant »), sans Terminal / Fichiers / Claude Code / Tester, avec un bouton vers l'écran Agents ; absent des
+    sélecteurs d'hôte des écrans qui ouvrent du SSH ; proposé dans « Installer un agent » ; journal sans « () » ni secret.
+  - L'agent (métriques, processus, fichiers surveillés, Rembobiner, Radiographie) fonctionne normalement sur un hôte agent seul. *Testé avec le **vrai binaire de l'agent** (enrôlement, en ligne, métriques, Radiographie ; SSH refusé en 409), un faux port SSH et un vrai
+    navigateur, sur Windows ; pas sur Linux ni macOS réels.*
+
+### Corrigé (installation du serveur Corvus sous Windows, `deploy/windows/`)
+Premier essai réel du script sur un Windows 11 (2026-11-28) : **trois défauts**, tous corrigés et couverts par `test/install-windows-server.test.js`.
+- **Le serveur mourait une seconde après son démarrage** : Windows PowerShell 5.1, avec `$ErrorActionPreference = 'Stop'` et la sortie redirigée (tâche planifiée), transformait
+  l'avertissement `ExperimentalWarning: SQLite` de Node (stderr) en erreur fatale. `start-corvus.ps1` ne garde plus « Stop » que pour la préparation.
+- **Port 7680 déjà pris par Windows lui-même** (`svchost`, optimisation de distribution de Windows Update) : le script échouait sans explication. Il détecte maintenant le port occupé,
+  nomme le processus, prend le port libre suivant si `-Port` n'a pas été demandé, et refuse clairement (sans changer de port en silence) si `-Port` l'a été. Un Corvus déjà démarré
+  sur ce port n'est pas pris pour un conflit.
+- **`-Uninstall` n'arrêtait pas le serveur** (il le cherchait par son chemin absolu, mais il était lancé en chemin relatif) : il reste actif après la désinstallation.
+- Les accents s'affichaient mal (`Ã©`) : les deux scripts n'avaient pas de BOM UTF-8, que Windows PowerShell 5.1 exige. En cas d'échec de démarrage, la fin du journal est affichée.
+- *Essayé pour de vrai* sur ce PC : installation (port 7681 choisi), santé, redémarrage par la tâche planifiée, désinstallation propre. *Pas essayé* : redémarrage de Windows / ouverture de session.
+
 ## [1.2.1] - 2026-11-28
 
 ### Validé sur une machine réelle (2026-11-28, Windows 11 x64, binaire publié de la 1.2.0)

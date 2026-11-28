@@ -57,6 +57,8 @@ export class HostStatus {
   }
 
   async check(host) {
+    // Hôte « agent seul » : pas d'adresse SSH à sonder (et jamais « injoignable » : sa présence, c'est l'agent qui la dit).
+    if (host.authType === 'none') { this.nextAt.set(host.id, Date.now() + this.intervalSec * 1000); return null; }
     let result;
     if (this.pool.status(host.id).connected) result = { ok: true, latencyMs: null, error: null };
     else result = await this.probe(host.hostname, host.port);

@@ -6,7 +6,7 @@ import {
   button, busy, field, input, textarea, select, segmented, openDialog, confirmDialog, toast, toastError,
   loadingState, emptyState, errorState, badge, checkbox,
 } from '../ui/components.js';
-import { state, sortedHosts } from '../state.js';
+import { state, sortedHosts, sshHosts } from '../state.js';
 import { renderDiff } from '../ui/diffview.js';
 import { prefs } from '../ui/dom.js';
 
@@ -64,7 +64,7 @@ export function snippetDialog(snippet, onSaved) {
   const name = input({ value: snippet?.name || '' });
   const cmd = textarea({ rows: 4, value: snippet?.command || '', class: 'textarea mono' });
   const desc = input({ value: snippet?.description || '' });
-  const hostSel = select([{ value: '', label: 'Tous les hôtes' }, ...sortedHosts().map((x) => ({ value: x.id, label: x.name }))], { value: snippet?.hostId || '' });
+  const hostSel = select([{ value: '', label: 'Tous les hôtes' }, ...sortedHosts(sshHosts()).map((x) => ({ value: x.id, label: x.name }))], { value: snippet?.hostId || '' });
   const save = button({ label: 'Enregistrer', icon: 'save', variant: 'primary' });
   const d = openDialog({
     title: snippet?.id ? `Snippet « ${snippet.name} »` : 'Nouveau snippet', wide: true,
@@ -111,7 +111,7 @@ export default {
     }
 
     function renderMulti() {
-      const hosts = sortedHosts().filter((x) => x.role !== 'viewer');
+      const hosts = sortedHosts(sshHosts()).filter((x) => x.role !== 'viewer');
       const picks = hosts.map((x) => ({ host: x, box: checkbox(x.name, { checked: false }) }));
       const cmd = textarea({ rows: 3, class: 'textarea mono', placeholder: 'uptime && df -h /', 'aria-label': 'Commande' });
       const timeout = input({ value: '60', inputmode: 'numeric', 'aria-label': 'Délai en secondes' });

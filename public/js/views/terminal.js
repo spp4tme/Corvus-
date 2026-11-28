@@ -4,7 +4,7 @@ import { get, post, del } from '../api.js';
 import { h, clear, replace, prefs } from '../ui/dom.js';
 import { icon } from '../ui/icons.js';
 import { button, openDialog, emptyState, toast, badge } from '../ui/components.js';
-import { state, sortedHosts } from '../state.js';
+import { state, sortedHosts, sshHosts } from '../state.js';
 import { terminalTheme } from '../terminal-themes.js';
 import { parseUtterance, createVoice, voiceSupported } from '../voice.js';
 import { createCommandBar } from '../cmdbar.js';
@@ -368,7 +368,7 @@ function renderEmpty() {
 }
 
 function pickHost() {
-  const hosts = sortedHosts();
+  const hosts = sortedHosts(sshHosts());
   const d = openDialog({
     title: 'Ouvrir un terminal',
     body: hosts.length

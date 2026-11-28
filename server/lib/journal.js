@@ -41,7 +41,7 @@ export class Journal {
       user_id: user?.id ?? null,
       username: user?.username ?? null,
       host_id: e.host?.id ?? null,
-      host_label: e.host ? `${e.host.name} (${e.host.username ? `${e.host.username}@` : ''}${e.host.hostname})` : null,
+      host_label: e.host ? (e.host.hostname ? `${e.host.name} (${e.host.username ? `${e.host.username}@` : ''}${e.host.hostname})` : e.host.name) : null,
       ip: ip ? String(ip).slice(0, 64) : null,
       detail: e.detail ? String(e.detail).slice(0, 500) : null,
     };
