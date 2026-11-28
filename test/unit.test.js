@@ -644,6 +644,23 @@ describe('étape 0.3 : blobs, rétention, sauvegarde', () => {
 });
 
 describe('étape 2 : robustesse et métriques', () => {
+  test('df : un nom de système de fichiers contenant des espaces ne décale pas les colonnes', async () => {
+    const { parseDf } = await import('../server/lib/monitor.js');
+    const d = parseDf([
+      'Filesystem           1024-blocks      Used Available Capacity Mounted on',
+      '/dev/sda1                1000000    250000    750000      25% /',
+      'C:/Program Files/Git  966705148 528971232 437733916      55% /',
+      '/dev/sdb1                 500000    100000    400000      20% /mnt/Mon Disque',
+      'tmpfs                     100000         0    100000       0% /run',
+      'ligne trop courte',
+    ]);
+    assert.deepEqual(d.map((x) => x.fs), ['/dev/sda1', 'C:/Program Files/Git', '/dev/sdb1']);
+    assert.equal(d[1].size, 966705148 * 1024);
+    assert.equal(d[1].mount, '/');
+    assert.equal(d[2].mount, '/mnt/Mon Disque');
+    assert.equal(Math.round(d[2].percent), 20);
+  });
+
   test('diskstats : disques entiers seulement ; snmp TCP', async () => {
     const { parseDiskstats, parseSnmpTcp } = await import('../server/lib/monitor.js');
     const d = parseDiskstats([

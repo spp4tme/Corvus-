@@ -96,14 +96,14 @@ function parseNet(lines) {
   return ifaces;
 }
 
-function parseDf(lines) {
+export function parseDf(lines) {
   const seen = new Set();
   const disks = [];
   for (const l of lines.slice(1)) {
-    const f = l.trim().split(/\s+/);
-    if (f.length < 6) continue;
-    const [fs, size, used, avail] = f;
-    const mount = f.slice(5).join(' ');
+    // « <fs> <taille> <utilisé> <libre> <n>% <montage> » : le nom du système de fichiers et le montage peuvent contenir des espaces.
+    const m = /^(.+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s+(.+)$/.exec(l.trim());
+    if (!m) continue;
+    const [, fs, size, used, avail, mount] = m;
     if (PSEUDO_FS.test(fs) || PSEUDO_MOUNT.test(mount) || seen.has(fs)) continue;
     const s = Number(size) * 1024;
     if (!s) continue;
