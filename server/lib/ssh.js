@@ -98,8 +98,9 @@ export function connect(cfg, { knownHosts, readyTimeout }) {
   });
 }
 
-function runExec(client, command, { timeoutMs = 30_000, maxBytes = 8 * 1024 * 1024, stdin, pty } = {}) {
+function runExec(client, command, { timeoutMs = 30_000, maxBytes = 8 * 1024 * 1024, stdin, pty, signal: abortSignal } = {}) {
   return new Promise((resolve, reject) => {
+    if (abortSignal?.aborted) return reject(new HttpError(499, 'EXEC_ABORTED', 'Commande annulée'));
     client.exec(command, pty ? { pty } : {}, (err, stream) => {
       if (err) return reject(err);
       const out = [];
@@ -114,6 +115,17 @@ function runExec(client, command, { timeoutMs = 30_000, maxBytes = 8 * 1024 * 10
         stream.close();
         reject(new HttpError(504, 'EXEC_TIMEOUT', `Commande distante trop longue (> ${Math.round(timeoutMs / 1000)} s)`));
       }, timeoutMs);
+      // Annulation (playbooks) : la commande distante reçoit KILL puis le canal est fermé ; la promesse est rejetée tout de suite.
+      const onAbort = () => {
+        clearTimeout(timer);
+        try { stream.signal('KILL'); } catch { /* ignore */ }
+        stream.close();
+        reject(new HttpError(499, 'EXEC_ABORTED', 'Commande annulée'));
+      };
+      // (`abortSignal` et non `signal` : une variable locale `signal` porte déjà le signal de sortie du processus distant.)
+      if (abortSignal) {
+        if (abortSignal.aborted) onAbort(); else abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
       const push = (arr) => (chunk) => {
         if (size + chunk.length > maxBytes) {
           if (!truncated) arr.push(chunk.subarray(0, Math.max(0, maxBytes - size)));
@@ -129,6 +141,7 @@ function runExec(client, command, { timeoutMs = 30_000, maxBytes = 8 * 1024 * 10
       stream.on('exit', (c, s) => { code = c; signal = s; });
       stream.on('close', (c) => {
         clearTimeout(timer);
+        abortSignal?.removeEventListener('abort', onAbort);
         resolve({
           code: code ?? c ?? null,
           signal,
