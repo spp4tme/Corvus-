@@ -122,3 +122,30 @@ test('playbooks : le routeur refuse de lui-même sans le bon rôle, variantes de
   assert.equal(env.corvus.ctx.automation.enabled, false, 'rien n\'a changé l\'interrupteur');
   assert.equal(env.corvus.ctx.automation.list().length, 0);
 });
+
+test('playbooks, étape 6-7 : planifications, déclencheurs, webhooks et webhook sortant — le routeur refuse de lui-même sans le rôle « admin » (jalon 1.3)', async () => {
+  const id = '0123456789abcdef';
+  for (const base of ['schedules', 'triggers', 'hooks', 'outgoing']) {
+    for (const prefix of [`/automation/${base}`, `/Automation/${base[0].toUpperCase()}${base.slice(1)}/`, `/AUTOMATION/${base.toUpperCase()}`]) {
+      for (const [m, b] of [['GET'], ['POST', { playbookId: id, name: 'x', cron: '0 3 * * *', tz: 'UTC', alertKind: 'host-down' }], ['PUT', { url: 'http://127.0.0.1:9/' }], ['DELETE', { confirm: true }], ['PATCH', { enabled: true }]]) {
+        // 403 si la route existe ; 404 si ce verbe n'a aucune route (rien ne s'exécute) — jamais 200/201/202. Les assertions finales prouvent que rien n'a été créé.
+        for (const role of ['viewer', 'operator', 'aucun']) {
+          const st = await call(role, m, prefix, b);
+          assert.ok(st === 403 || st === 404, `${role} : ${m} ${prefix} → ${st}`);
+        }
+      }
+      if (base !== 'outgoing') {
+        for (const role of ['viewer', 'operator']) {
+          const put = await call(role, 'PUT', `${prefix.replace(/\/$/, '')}/${id}`, { confirm: true });
+          assert.ok(put === 403 || put === 404, `${role} : PUT ${prefix}/${id} → ${put}`); // les webhooks n'ont pas de PUT (PATCH et DELETE)
+          assert.equal(await call(role, 'DELETE', `${prefix.replace(/\/$/, '')}/${id}`, { confirm: true }), 403, `${role} : DELETE ${prefix}/${id}`);
+        }
+      }
+    }
+  }
+  assert.equal(await call('operator', 'POST', '/automation/outgoing/test', {}), 403);
+  assert.equal(await call('viewer', 'POST', '/Automation/Outgoing/Test/', {}), 403);
+  assert.equal(env.corvus.ctx.automationTriggers.listHooks().length, 0, 'aucun webhook créé');
+  assert.equal(env.corvus.ctx.automationScheduler.list().length, 0, 'aucune planification créée');
+  assert.equal(env.corvus.ctx.automationTriggers.outgoing().url, null, 'aucun webhook sortant configuré');
+});

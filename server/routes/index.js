@@ -34,6 +34,7 @@ import { copyRoutes } from './copy.js';
 import { automationRoutes } from './automation.js';
 import { RunManager } from '../lib/automation/runs.js';
 import { Scheduler } from '../lib/automation/scheduler.js';
+import { Triggers } from '../lib/automation/triggers.js';
 
 /** Services instanciés avant le montage des routes (le proxy est monté hors /api). */
 export function createServices(ctx) {
@@ -107,6 +108,8 @@ export function extraRoutes(ctx) {
   ctx.automationRuns = new RunManager({ automation: ctx.automation, db: ctx.db, hosts: ctx.hosts, pool: ctx.pool, agents: ctx.agents, journal: ctx.journal, alerts: ctx.alerts });
   ctx.automationRuns.recover();
   ctx.automationScheduler = new Scheduler({ automation: ctx.automation, runs: ctx.automationRuns, db: ctx.db, journal: ctx.journal });
+  ctx.automationTriggers = new Triggers({ automation: ctx.automation, runs: ctx.automationRuns, db: ctx.db, vault: ctx.vault, journal: ctx.journal, alerts: ctx.alerts });
+  ctx.alerts.onRaised = (a) => { ctx.automationTriggers.onAlert(a).catch(() => {}); };
   r.use(automationRoutes(ctx));
   return r;
 }

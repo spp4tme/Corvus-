@@ -18,6 +18,8 @@ export class Alerts {
     this.journal?.add({ type: 'alert', event: a.kind, ok: a.severity === 'info', detail: a.message });
     // `alertId` et `severity` servent à proposer « Acquitter » / « Isoler… » dans la notification (voir push.js).
     this.notify?.({ title: a.severity === 'critical' ? 'Corvus — alerte' : 'Corvus', body: a.message, hostId: a.hostId, alertId: id, severity: a.severity });
+    // Déclencheurs d'automatisation (liste d'autorisations d'un administrateur) : n'interrompt JAMAIS la levée d'une alerte.
+    try { this.onRaised?.({ id, kind: a.kind, severity: a.severity, hostId: a.hostId ?? null, message: a.message }); } catch { /* ignoré */ }
     return id;
   }
 

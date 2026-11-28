@@ -103,6 +103,37 @@ export function automationRoutes(ctx) {
     res.json({ ok: true });
   });
 
+  // Déclencheurs d'alerte (administrateur) : LISTE D'AUTORISATIONS explicite, limitée en fréquence, avec coupe-circuit.
+  const T = () => ctx.automationTriggers;
+  r.get('/automation/triggers', admin, (req, res) => res.json({ triggers: T().listAlertTriggers() }));
+  r.post('/automation/triggers', admin, (req, res) => res.status(201).json({ trigger: T().createAlertTrigger(req.body, { user: req.user, ip: req.ip }) }));
+  r.put('/automation/triggers/:id', admin, (req, res) => res.json({ trigger: T().updateAlertTrigger(pid(req), req.body, { user: req.user, ip: req.ip }) }));
+  r.delete('/automation/triggers/:id', admin, (req, res) => {
+    needConfirm(req, 'le déclencheur sera supprimé');
+    T().deleteAlertTrigger(pid(req), { user: req.user, ip: req.ip });
+    res.json({ ok: true });
+  });
+
+  // Webhooks entrants : le jeton et le secret ne sont montrés qu'UNE fois, à la création. L'appel public est /api/hooks/run (app.js).
+  r.get('/automation/hooks', admin, (req, res) => res.json({ hooks: T().listHooks() }));
+  r.post('/automation/hooks', admin, (req, res) => res.status(201).json({ hook: T().createHook(req.body || {}, { user: req.user, ip: req.ip }) }));
+  r.patch('/automation/hooks/:id', admin, (req, res) => { T().setHookEnabled(pid(req), req.body?.enabled, { user: req.user, ip: req.ip }); res.json({ ok: true }); });
+  r.delete('/automation/hooks/:id', admin, (req, res) => {
+    needConfirm(req, 'le jeton cessera de fonctionner immédiatement');
+    T().deleteHook(pid(req), { user: req.user, ip: req.ip });
+    res.json({ ok: true });
+  });
+
+  // Webhook sortant (n8n…) : cible définie par un administrateur, jamais par un utilisateur.
+  r.get('/automation/outgoing', admin, (req, res) => res.json({ outgoing: T().outgoing() }));
+  r.put('/automation/outgoing', admin, (req, res) => res.json({ outgoing: T().setOutgoing(req.body, { user: req.user, ip: req.ip }) }));
+  r.delete('/automation/outgoing', admin, (req, res) => {
+    needConfirm(req, 'le webhook sortant sera supprimé');
+    T().deleteOutgoing({ user: req.user, ip: req.ip });
+    res.json({ ok: true });
+  });
+  r.post('/automation/outgoing/test', admin, async (req, res) => res.json(await T().sendOutgoing({ event: 'playbook.test', status: 'test' })));
+
   // Secrets nommés : noms seulement, jamais les valeurs.
   r.get('/automation/secrets', admin, (req, res) => res.json({ secrets: A.secretNames() }));
   r.put('/automation/secrets/:name', admin, (req, res) => {

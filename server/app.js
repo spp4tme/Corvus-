@@ -142,6 +142,27 @@ export function createCorvus(overrides = {}) {
     res.set('Cache-Control', 'no-store');
     next();
   });
+  // Webhook ENTRANT des playbooks : PUBLIC (hors session), donc monté AVANT l'authentification et AVANT le parseur JSON (la signature HMAC porte sur le
+  // corps BRUT : express.json le consommerait). Protégé par : jeton `cvu_hk_…` limité à un playbook, signature HMAC, horodatage ±5 min, anti-rejeu, limite par IP et par jeton, limiteur d'échecs.
+  api.post('/hooks/run', express.raw({ type: () => true, limit: '8kb' }), async (req, res, next) => {
+    const wait = auth.limiter.blockedFor(req.ip);
+    if (wait > 0) {
+      res.set('Retry-After', String(Math.ceil(wait / 1000)));
+      return next(new HttpError(429, 'RATE_LIMITED', 'Trop de tentatives'));
+    }
+    try {
+      const m = /^Bearer (\S+)$/.exec(String(req.get('authorization') || ''));
+      const out = await ctx.automationTriggers.handleInbound({
+        token: m ? m[1] : null, timestamp: req.get('x-corvus-timestamp'), signature: req.get('x-corvus-signature'),
+        rawBody: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), ip: req.ip,
+      });
+      res.status(202).json(out);
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 401) auth.limiter.fail(req.ip);
+      if (err?.retryAfterMs) res.set('Retry-After', String(Math.max(1, Math.ceil(err.retryAfterMs / 1000))));
+      next(err);
+    }
+  });
   api.use(express.json({ limit: '4mb' }));
   api.get('/health', (req, res) => res.json({ ok: true }));
   api.use('/auth', authRoutes(ctx));
