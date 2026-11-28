@@ -339,4 +339,64 @@ CREATE TABLE playbook_run_steps (
 CREATE INDEX playbook_run_steps_host ON playbook_run_steps(host_id, started_at DESC);
 `,
   },
+  {
+    version: 6,
+    name: 'playbooks : planifications, déclencheurs d\'alerte (liste blanche + coupe-circuit), webhooks entrants (jeton, HMAC, anti-rejeu)',
+    sql: `
+-- Planification : expression cron + fuseau EXPLICITE (jamais de valeur par défaut) + fenêtre de maintenance facultative.
+CREATE TABLE automation_schedules (
+  id TEXT PRIMARY KEY,
+  playbook_id TEXT NOT NULL,
+  cron TEXT NOT NULL,
+  tz TEXT NOT NULL,
+  win TEXT,
+  params TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_at INTEGER,
+  last_at INTEGER,
+  last_status TEXT,
+  created_by TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX automation_schedules_due ON automation_schedules(enabled, next_at);
+-- Déclencheur alerte → playbook : LISTE D'AUTORISATIONS explicite (un type d'alerte, un playbook), limitée en fréquence, avec coupe-circuit.
+CREATE TABLE automation_alert_triggers (
+  id TEXT PRIMARY KEY,
+  playbook_id TEXT NOT NULL,
+  alert_kind TEXT NOT NULL,
+  min_severity TEXT NOT NULL DEFAULT 'warn',
+  host_id TEXT,
+  params TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  max_runs INTEGER NOT NULL DEFAULT 3,
+  window_min INTEGER NOT NULL DEFAULT 60,
+  cooldown_sec INTEGER NOT NULL DEFAULT 120,
+  tripped_at INTEGER,
+  created_by TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE automation_trigger_events (
+  trigger_id TEXT NOT NULL,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX automation_trigger_events_idx ON automation_trigger_events(trigger_id, ts);
+-- Webhook entrant : un jeton (haché) limité à UN playbook ; le secret HMAC est dans le coffre ; anti-rejeu par signature.
+CREATE TABLE automation_hooks (
+  id TEXT PRIMARY KEY,
+  playbook_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
+CREATE TABLE automation_hook_replays (
+  hook_id TEXT NOT NULL,
+  sig TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  PRIMARY KEY (hook_id, sig)
+) WITHOUT ROWID;
+`,
+  },
 ];

@@ -33,6 +33,7 @@ import { CopyService } from '../lib/copy.js';
 import { copyRoutes } from './copy.js';
 import { automationRoutes } from './automation.js';
 import { RunManager } from '../lib/automation/runs.js';
+import { Scheduler } from '../lib/automation/scheduler.js';
 
 /** Services instanciés avant le montage des routes (le proxy est monté hors /api). */
 export function createServices(ctx) {
@@ -105,6 +106,7 @@ export function extraRoutes(ctx) {
   // Playbooks : exécutions (désactivées par défaut, voir `automation.enabled`) puis routes.
   ctx.automationRuns = new RunManager({ automation: ctx.automation, db: ctx.db, hosts: ctx.hosts, pool: ctx.pool, agents: ctx.agents, journal: ctx.journal, alerts: ctx.alerts });
   ctx.automationRuns.recover();
+  ctx.automationScheduler = new Scheduler({ automation: ctx.automation, runs: ctx.automationRuns, db: ctx.db, journal: ctx.journal });
   r.use(automationRoutes(ctx));
   return r;
 }

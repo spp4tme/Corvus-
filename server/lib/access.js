@@ -31,7 +31,7 @@ const GLOBAL_RULES = [
   ['POST', /^\/automation\/stop\/?$/i, 'operator'],
   ['GET', /^\/automation\/playbooks\/[^/]+\/(versions|diff)\/?$/i, 'admin'],
   ['GET', /^\/automation\/playbooks(\/[^/]+)?\/?$/i, 'operator'],
-  [ANY, /^\/automation\/(playbooks|secrets|settings)(\/|$)/i, 'admin'],
+  [ANY, /^\/automation\/(playbooks|secrets|settings|schedules|triggers|hooks|outgoing)(\/|$)/i, 'admin'],
 ];
 
 const forbidden = (msg) => new HttpError(403, 'FORBIDDEN', msg);

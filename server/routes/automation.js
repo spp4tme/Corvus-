@@ -92,6 +92,17 @@ export function automationRoutes(ctx) {
   // Arrêt d'urgence : stoppe tout ce qui tourne. Sans danger (il n'exécute rien) : un opérateur peut le demander.
   r.post('/automation/stop', operator, (req, res) => res.json(runs().stopAll({ user: req.user, ip: req.ip })));
 
+  // Planifications (administrateur) : cron + fuseau EXPLICITE ; jamais pour un playbook non autoAutorise ni « danger ».
+  const S = () => ctx.automationScheduler;
+  r.get('/automation/schedules', admin, (req, res) => res.json({ schedules: S().list() }));
+  r.post('/automation/schedules', admin, (req, res) => res.status(201).json({ schedule: S().create(req.body, { user: req.user, ip: req.ip }) }));
+  r.put('/automation/schedules/:id', admin, (req, res) => res.json({ schedule: S().update(pid(req), req.body, { user: req.user, ip: req.ip }) }));
+  r.delete('/automation/schedules/:id', admin, (req, res) => {
+    needConfirm(req, 'la planification sera supprimée');
+    S().delete(pid(req), { user: req.user, ip: req.ip });
+    res.json({ ok: true });
+  });
+
   // Secrets nommés : noms seulement, jamais les valeurs.
   r.get('/automation/secrets', admin, (req, res) => res.json({ secrets: A.secretNames() }));
   r.put('/automation/secrets/:name', admin, (req, res) => {
