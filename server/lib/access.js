@@ -25,6 +25,13 @@ const GLOBAL_RULES = [
   // Copie d'hôte à hôte : opérateur au minimum ; les droits SUR CHAQUE HÔTE sont vérifiés par le service (requireHost).
   [ANY, /^\/fs\/copy(\/|$)/i, 'operator'],
   [ANY, /^\/agents(\/|$)/i, 'admin'],
+  // Playbooks (jalon 1.3). Ordre significatif : la première règle qui correspond décide.
+  ['POST', /^\/automation\/playbooks\/[^/]+\/run\/?$/i, 'operator'],
+  ['POST', /^\/automation\/runs\/[^/]+\/cancel\/?$/i, 'operator'],
+  ['POST', /^\/automation\/stop\/?$/i, 'operator'],
+  ['GET', /^\/automation\/playbooks\/[^/]+\/(versions|diff)\/?$/i, 'admin'],
+  ['GET', /^\/automation\/playbooks(\/[^/]+)?\/?$/i, 'operator'],
+  [ANY, /^\/automation\/(playbooks|secrets|settings)(\/|$)/i, 'admin'],
 ];
 
 const forbidden = (msg) => new HttpError(403, 'FORBIDDEN', msg);

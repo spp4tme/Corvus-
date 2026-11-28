@@ -92,3 +92,33 @@ test('routes d\'hôte : la barrière générique revérifie le droit SUR L\'HÔT
   // Les routes globales voisines ne sont pas happées par la barrière (« /hosts/test » n'est pas un identifiant d'hôte)
   assert.notEqual(await call('admin', 'POST', '/hosts/test', {}, u.id), 404);
 });
+
+test('playbooks : le routeur refuse de lui-même sans le bon rôle, variantes de casse et « / » final comprises (jalon 1.3)', async () => {
+  const id = '0123456789abcdef';
+  // Rôle inconnu : refusé partout (garde « viewer » posée sur tout /automation).
+  for (const [m, u, b] of [['GET', '/automation/state'], ['GET', '/Automation/State/'], ['GET', '/automation/runs'], ['POST', '/automation/stop', {}], ['POST', `/AUTOMATION/Playbooks/${id}/Run/`, {}], ['GET', '/automation/playbooks']]) {
+    assert.equal(await call('aucun', m, u, b), 403, `rôle inconnu : ${m} ${u}`);
+  }
+  // Lecteur : ni lancer, ni lire les définitions, ni administrer.
+  for (const [m, u, b] of [
+    ['GET', '/automation/playbooks'], ['GET', '/Automation/Playbooks/'], ['GET', `/automation/playbooks/${id}`], ['POST', '/automation/playbooks', {}], ['POST', '/Automation/Playbooks/', {}],
+    ['PUT', `/automation/playbooks/${id}`, {}], ['DELETE', `/automation/playbooks/${id}`, { confirm: true }], ['POST', `/automation/playbooks/${id}/run`, {}], ['POST', `/Automation/PLAYBOOKS/${id}/RUN/`, {}],
+    ['POST', `/automation/runs/${id}/cancel`, {}], ['POST', '/automation/stop', {}], ['POST', '/Automation/Stop/', {}], ['PUT', '/automation/settings', { enabled: true }], ['PUT', '/Automation/Settings/', { enabled: true }],
+    ['GET', '/automation/secrets'], ['GET', '/Automation/Secrets/'], ['PUT', '/automation/secrets/TOKEN_X', { value: 'valeur-assez-longue' }], ['DELETE', '/automation/secrets/TOKEN_X', { confirm: true }],
+    ['GET', `/automation/playbooks/${id}/versions`], ['GET', `/automation/playbooks/${id}/diff?from=1&to=2`], ['POST', `/automation/playbooks/${id}/rollback`, { version: 1, confirm: true }],
+  ]) {
+    assert.equal(await call('viewer', m, u, b), 403, `lecteur : ${m} ${u}`);
+  }
+  // Opérateur : lit et lance, n'administre pas.
+  for (const [m, u, b] of [
+    ['POST', '/automation/playbooks', {}], ['POST', '/Automation/Playbooks/', {}], ['PUT', `/automation/playbooks/${id}`, {}], ['DELETE', `/automation/playbooks/${id}`, { confirm: true }],
+    ['PUT', '/automation/settings', { enabled: true }], ['PUT', '/Automation/Settings', { enabled: true }], ['GET', '/automation/secrets'], ['PUT', '/automation/secrets/TOKEN_X', { value: 'valeur-assez-longue' }],
+    ['GET', `/automation/playbooks/${id}/versions`], ['POST', `/automation/playbooks/${id}/rollback`, { version: 1, confirm: true }],
+  ]) {
+    assert.equal(await call('operator', m, u, b), 403, `opérateur : ${m} ${u}`);
+  }
+  assert.notEqual(await call('operator', 'GET', '/automation/playbooks'), 403, 'l\'opérateur lit les playbooks');
+  assert.notEqual(await call('operator', 'POST', '/automation/stop', {}), 403, 'l\'opérateur peut demander l\'arrêt d\'urgence');
+  assert.equal(env.corvus.ctx.automation.enabled, false, 'rien n\'a changé l\'interrupteur');
+  assert.equal(env.corvus.ctx.automation.list().length, 0);
+});

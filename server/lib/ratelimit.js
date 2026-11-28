@@ -117,7 +117,11 @@ export class RequestLimiter {
 }
 
 /** Les routes sensibles/coûteuses : sauvegardes (création chiffrée, téléchargement, restauration). */
-const STRICT_PATHS = [/^\/backups(\/|$)/i];
+const STRICT_PATHS = [
+  /^\/backups(\/|$)/i,
+  // Lancer un playbook et l'arrêt d'urgence : coûteux (connexions SSH, exécutions) — même plafond strict que les sauvegardes.
+  /^\/automation\/(playbooks\/[^/]+\/run|stop)\/?$/i,
+];
 
 /** Forme canonique du chemin avant décision : « // » repliés, comme le fait le routage. */
 export function isStrictPath(reqPath) {

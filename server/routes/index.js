@@ -31,6 +31,8 @@ import { CompareService } from '../lib/compare.js';
 import { compareRoutes } from './compare.js';
 import { CopyService } from '../lib/copy.js';
 import { copyRoutes } from './copy.js';
+import { automationRoutes } from './automation.js';
+import { RunManager } from '../lib/automation/runs.js';
 
 /** Services instanciés avant le montage des routes (le proxy est monté hors /api). */
 export function createServices(ctx) {
@@ -100,5 +102,9 @@ export function extraRoutes(ctx) {
   r.use(hostAdminRoutes(ctx));
   r.use(compareRoutes(ctx));
   r.use(copyRoutes(ctx));
+  // Playbooks : exécutions (désactivées par défaut, voir `automation.enabled`) puis routes.
+  ctx.automationRuns = new RunManager({ automation: ctx.automation, db: ctx.db, hosts: ctx.hosts, pool: ctx.pool, agents: ctx.agents, journal: ctx.journal, alerts: ctx.alerts });
+  ctx.automationRuns.recover();
+  r.use(automationRoutes(ctx));
   return r;
 }
