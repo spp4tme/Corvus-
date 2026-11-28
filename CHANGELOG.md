@@ -4,6 +4,14 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
+## [Non publié] - jalon 1.3 (moteur d'automatisation et playbooks)
+
+### Corrigé
+- **Release : une panne du job macOS (expérimental) n'empêche plus de publier Linux et Windows.** `agent-macos` est en `continue-on-error` (et `fail-fast: false` : une architecture
+  ne fait plus annuler l'autre). `publier` continue de l'**attendre** (on ne le retire pas de `needs` : sans cela la publication pourrait partir avant les binaires macOS, même quand
+  ils réussissent) mais n'est plus bloqué par son échec. Les binaires macOS ne sont joints, et annoncés dans les notes, que **s'ils existent** ; sinon les notes le disent et le
+  workflow émet un avertissement. *Non rejoué en conditions réelles (le workflow ne tourne que sur un tag) : la logique shell des notes est testée en local, la syntaxe YAML est validée.*
+
 ## [1.2.5] - 2026-11-28
 
 ### Ajouté

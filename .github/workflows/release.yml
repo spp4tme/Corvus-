@@ -87,9 +87,12 @@ jobs:
   agent-macos:
     # Jalon 1.2 : binaires macOS (Apple Silicon et Intel), EXPÉRIMENTAUX : testés sur un runner, jamais sur un Mac réel.
     # Non signés : macOS les met en quarantaine à l'ouverture (voir les notes de version).
+    # NON BLOQUANT : une panne de ce job (expérimental) ne doit jamais empêcher de publier Linux et Windows. `continue-on-error` fait
+    # compter son échec comme un succès pour `publier`, qui l'attend quand même (donc ne rate pas ses binaires s'ils existent).
     needs: verifier
+    continue-on-error: true
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - { runner: macos-15, target: aarch64-apple-darwin, arch: aarch64 }
@@ -114,6 +117,8 @@ jobs:
           if-no-files-found: error
 
   publier:
+    # agent-macos reste dans `needs` pour être ATTENDU (sinon la publication pourrait partir avant ses binaires) ; il est non bloquant
+    # (continue-on-error) : s'il échoue, la release part sans binaires macOS, et les notes le disent.
     needs: [verifier, agent, agent-windows, agent-macos]
     runs-on: ubuntu-24.04
     permissions:
@@ -145,10 +150,16 @@ jobs:
           - \`corvus-$v.tar.gz\` : Corvus (Node.js 22.13+) ; \`sudo ./deploy/install-linux.sh\` après extraction.
           - \`corvus-agent-$v-linux-x86_64\` et \`-aarch64\` : agent facultatif (binaire statique).
           - \`corvus-agent-$v-windows-x86_64.exe\` : agent Windows (installez-le avec \`install.ps1\`, qui vérifie son empreinte).
-          - \`corvus-agent-$v-macos-aarch64\` et \`-x86_64\` : agent macOS, **EXPÉRIMENTAL** (jamais essayé sur un Mac réel) et **non signé**.
           - Image Docker : \`ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/corvus:$v\` (amd64 et arm64).
           - \`SHA256SUMS\` : \`sha256sum -c SHA256SUMS\` pour vérifier les fichiers.
           NOTES
+          # Binaires macOS : joints (et annoncés) seulement s'ils ont été compilés.
+          if ls dist/corvus-agent-*-macos-* >/dev/null 2>&1; then
+            echo "- \`corvus-agent-$v-macos-aarch64\` et \`-x86_64\` : agent macOS, **EXPÉRIMENTAL** (jamais essayé sur un Mac réel) et **non signé**." >> notes.md
+          else
+            echo "- **Binaires macOS non publiés pour cette version** : la compilation macOS (expérimentale) a échoué. Linux et Windows ne sont pas concernés." >> notes.md
+            echo "::warning::binaires macOS absents de la release $v"
+          fi
       - name: Créer la release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
