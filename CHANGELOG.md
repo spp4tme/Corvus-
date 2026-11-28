@@ -4,7 +4,7 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/). Les versi
 Publier une version : mettre à jour ce fichier, `package.json` et `agent/Cargo.toml`, puis `git tag vX.Y.Z && git push origin vX.Y.Z`
 (le workflow `.github/workflows/release.yml` fait le reste).
 
-## [Non publié]
+## [1.2.1] - 2026-11-28
 
 ### Validé sur une machine réelle (2026-11-28, Windows 11 x64, binaire publié de la 1.2.0)
 - **`install.ps1` de bout en bout** : SHA-256 vérifié, installation dans `C:\Program Files\Corvus Agent` (lecture seule pour les utilisateurs), enrôlement, service **CorvusAgent**
